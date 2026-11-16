@@ -1,3 +1,4 @@
+import json
 import datetime
 import streamlit as st
 import streamlit.components.v1 as components
@@ -99,20 +100,19 @@ with col2:
     addr = st.text_input("거주지 주소", placeholder="예: 경기도 성남시 분당구 ...")
     cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
 
-st.markdown("**아래 서명란에 손가락 또는 마우스로 자필 서명(사인)을 그려주세요.**")
+agree_confirm = st.checkbox(f"본인({emp_name})은 위 표준근로계약서 1조~17조의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다.")
 
-# 순수 HTML5 서명 패드 + Streamlit 상태 연동
-sign_strokes = components.declare_component(
-    "html_sign_pad",
-    path=None
-) if False else None
+st.markdown("**1단계: 아래 흰 칸에 손가락 또는 마우스로 자필 서명을 그린 뒤 `[서명 확정]` 버튼을 눌러주세요.**")
 
 components.html("""
-<div style="border: 2px dashed #6b7280; border-radius: 8px; background: #f9fafb; padding: 8px; width: 340px;">
-  <canvas id="pad" width="320" height="140" style="background: #ffffff; border-radius: 4px; touch-action: none; display: block;"></canvas>
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-    <span id="status" style="font-size: 12px; color: #4b5563;">위 흰 칸에 서명해 주세요</span>
-    <button type="button" onclick="clearPad()" style="padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer;">다시 쓰기</button>
+<div style="border: 2px dashed #6b7280; border-radius: 8px; background: #f9fafb; padding: 10px; max-width: 360px;">
+  <canvas id="pad" width="320" height="140" style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 4px; touch-action: none; display: block;"></canvas>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px;">
+    <span id="status" style="font-size: 12px; color: #4b5563;">위 칸에 서명 후 확정 클릭</span>
+    <div>
+      <button type="button" onclick="clearPad()" style="padding: 5px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer;">다시 쓰기</button>
+      <button type="button" onclick="confirmSign()" style="padding: 5px 12px; font-size: 12px; font-weight: bold; border: none; border-radius: 4px; background: #2563eb; color: #fff; cursor: pointer;">서명 확정</button>
+    </div>
   </div>
 </div>
 <script>
@@ -154,30 +154,23 @@ function endDraw(e) {
   drawing = false;
   if (curStroke.length > 0) strokes.push(curStroke);
   document.getElementById('status').innerText = '서명 입력됨 (' + strokes.length + '획)';
-  try {
-    const parentInputs = window.parent.document.querySelectorAll('input[aria-label="sign_data_hidden"]');
-    if (parentInputs.length > 0) {
-      const inp = parentInputs[0];
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeSetter.call(inp, JSON.stringify(strokes));
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-  } catch (err) {}
 }
 
 function clearPad() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   strokes = [];
-  document.getElementById('status').innerText = '위 흰 칸에 서명해 주세요';
-  try {
-    const parentInputs = window.parent.document.querySelectorAll('input[aria-label="sign_data_hidden"]');
-    if (parentInputs.length > 0) {
-      const inp = parentInputs[0];
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeSetter.call(inp, '');
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-  } catch (err) {}
+  document.getElementById('status').innerText = '위 칸에 서명 후 확정 클릭';
+}
+
+function confirmSign() {
+  if (strokes.length === 0) {
+    alert('먼저 위 흰 칸에 서명을 그려주세요.');
+    return;
+  }
+  const encoded = encodeURIComponent(JSON.stringify(strokes));
+  const url = new URL(window.parent.location.href);
+  url.searchParams.set('sig', encoded);
+  window.parent.location.href = url.toString();
 }
 
 canvas.addEventListener('mousedown', startDraw);
@@ -188,25 +181,10 @@ canvas.addEventListener('touchstart', startDraw, { passive: false });
 canvas.addEventListener('touchmove', moveDraw, { passive: false });
 canvas.addEventListener('touchend', endDraw);
 </script>
-""", height=200)
-
-# 숨겨진 데이터 수신용 입력창 (화면에서는 CSS로 숨김)
-st.markdown("""
-<style>
-div[data-testid="stTextInput"]:has(input[aria-label="sign_data_hidden"]) {
-    position: absolute;
-    left: -9999px;
-    height: 0;
-    overflow: hidden;
-}
-</style>
-""", unsafe_allow_html=True)
-sign_json = st.text_input("sign_data_hidden", label_visibility="collapsed")
-agree_confirm = st.checkbox(f"본인({emp_name})은 위 표준근로계약서 1조~17조의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다.")
+""", height=210)
 
 
 def _strokes_to_image(raw_json: str) -> Image.Image:
-    import json
     img = Image.new("RGBA", (320, 140), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
     strokes = json.loads(raw_json)
@@ -220,16 +198,25 @@ def _strokes_to_image(raw_json: str) -> Image.Image:
     return img
 
 
-if st.button("✅ 계약 내용 확인 및 전자서명 제출", type="primary", use_container_width=True):
+sig_param = st.query_params.get("sig", "")
+if sig_param:
+    try:
+        preview_img = _strokes_to_image(sig_param)
+        st.success("✅ 자필 서명이 정상 등록되었습니다. 아래 제출 버튼을 눌러 완료해 주세요.")
+        st.image(preview_img, caption="등록된 서명 미리보기", width=220)
+    except Exception:
+        sig_param = ""
+
+if st.button("✅ 2단계: 계약 내용 확인 및 전자서명 최종 제출", type="primary", use_container_width=True):
     if not rrn.strip() or not account.strip() or not phone.strip() or not addr.strip() or not email.strip():
         st.error("주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
     elif not agree_confirm:
         st.error("계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.")
-    elif not sign_json.strip() or sign_json.strip() == "[]":
-        st.error("서명란에 자필 서명을 그려주세요.")
+    elif not sig_param:
+        st.error("서명란에 서명을 그린 뒤 파란색 [서명 확정] 버튼을 먼저 눌러주세요.")
     else:
         with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
-            sign_img = _strokes_to_image(sign_json)
+            sign_img = _strokes_to_image(sig_param)
             emp_inputs = {
                 "주민번호": rrn.strip(),
                 "은행명": bank,
@@ -243,6 +230,8 @@ if st.button("✅ 계약 내용 확인 및 전자서명 제출", type="primary",
             pdf_bytes, filename, drive_link, email_ok, email_msg = complete_employee_signature(
                 st.secrets, contract, emp_inputs, sign_img
             )
+            st.query_params.clear()
+            st.query_params["contract_id"] = cid
             st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
             if email_ok:
                 st.info(f"입력하신 이메일({email.strip()})로 계약서 PDF 사본이 자동 발송되었습니다.")
