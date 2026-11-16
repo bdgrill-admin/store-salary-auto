@@ -32,7 +32,7 @@ def get_secret(key: str, default: str = ""):
 STORES = {
     "분당그릴": {
         "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",      # 통합근태DB & 직원목록 시트 ID
-        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",    # 기존 직원인적사항 시트 ID
+        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",    # 직원인적사항 시트 ID
         "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),              # 분당그릴_급여히스토리 시트 ID
         "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),            # 분당그릴_매출관리 시트 ID
         "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
@@ -188,7 +188,6 @@ def get_gspread_client():
 
 
 def get_settlement_period(base_date: datetime.date):
-    """기준일(예: 11월 5일) 기준 전월 5일 ~ 당월 4일 반환"""
     if base_date.day >= 5:
         end_date = base_date.replace(day=4)
         first_of_this_month = base_date.replace(day=1)
@@ -290,7 +289,6 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
     warnings = []
     attendance_map = {}
 
-    # 1) 새 통합근태DB에서 정산 기간 데이터 집계 (매니저확인 == TRUE 만 합산)
     att_ws = db_ss.worksheet("통합근태DB")
     att_rows = att_ws.get_all_values()
 
@@ -348,7 +346,6 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
                 "work_dates": ", ".join(unique_dates),
             }
 
-    # 2) 직원목록(통합근태DB 내) 및 직원인적사항 로드
     def get_records_auto_header(ws):
         all_rows = ws.get_all_values()
         header_idx = 0
@@ -365,7 +362,6 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             records.append(row_dict)
         return records
 
-    # 통합근태DB 내 '직원목록'에서 최신 시급/상태 보조 참조
     emp_master_map = {}
     try:
         emp_ws = db_ss.worksheet("직원목록")
@@ -405,7 +401,6 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
         if att["total_min"] == 0:
             continue
 
-        # 시급은 직원목록 최신값 우선, 없으면 직원인적사항 값 사용
         master_wage = clean_int(emp_master_map.get(report_name, {}).get("시급", 0))
         info_wage = clean_int(rec.get("시급", 0))
         wage = master_wage if master_wage > 0 else info_wage
@@ -433,7 +428,6 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             "이메일": str(rec.get("이메일", "")).strip(),
         })
 
-    # 직원인적사항에는 아직 없지만 통합근태DB에 승인된 근무기록이 있는 신규 직원도 누락 없이 포착
     for emp_n, att in attendance_map.items():
         if emp_n not in processed_lookup_names and att["total_min"] > 0:
             m_info = emp_master_map.get(emp_n, {})
@@ -441,7 +435,7 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             gross_pay = int(round(wage * (att["total_min"] / 60.0)))
             rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
             net_pay = int(round(gross_pay * (1.0 - rate_float)))
-            warnings.append(f"⚠️ [{emp_n}] '직원인적사항' 시트에 계좌/주민번호가 등록되지 않았습니다. '직원 · 시급/계좌 관리' 탭에서 등록해 주세요.")
+            warnings.append(f"⚠️ [{emp_n}] 사이드바 '직원 관리' 페이지에서 계좌/주민번호를 등록해 주세요.")
             part_list.append({
                 "이름": emp_n,
                 "주민번호": "",
@@ -486,96 +480,7 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
 
 
 # =========================================================================
-# 4. 직원 입·퇴사 및 시급/계좌 통합 관리 데이터 로드 & 저장
-# =========================================================================
-@st.cache_data(ttl=30, show_spinner="직원 명부를 불러오는 중...")
-def load_staff_management_data(db_id: str, info_id: str):
-    gc = get_gspread_client()
-    db_ss = gc.open_by_key(db_id)
-    info_ss = gc.open_by_key(info_id)
-
-    # 1) 통합근태DB의 직원목록 탭
-    emp_ws = db_ss.worksheet("직원목록")
-    emp_rows = emp_ws.get_all_values()
-    master_list = []
-    if len(emp_rows) >= 2:
-        headers = [c.strip() for c in emp_rows[0]]
-        for r in emp_rows[1:]:
-            d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
-            if d.get("이름"):
-                master_list.append(d)
-    df_master = pd.DataFrame(master_list)
-
-    # 2) 직원인적사항의 파트타임 / 4대보험 탭
-    def read_info_tab(tab_name: str):
-        titles = [s.title.strip() for s in info_ss.worksheets()]
-        if tab_name not in titles:
-            return pd.DataFrame()
-        ws = info_ss.worksheet(tab_name)
-        rows = ws.get_all_values()
-        h_idx = 0
-        for i, r in enumerate(rows[:5]):
-            if "이름" in [c.strip() for c in r]:
-                h_idx = i
-                break
-        if len(rows) <= h_idx + 1:
-            return pd.DataFrame()
-        headers = [c.strip() for c in rows[h_idx]]
-        out = []
-        for r in rows[h_idx + 1:]:
-            d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
-            if d.get("이름"):
-                out.append(d)
-        return pd.DataFrame(out)
-
-    df_part_info = read_info_tab("파트타임")
-    df_ins_info = read_info_tab("4대보험")
-    return df_master, df_part_info, df_ins_info
-
-
-def sync_save_staff_management(db_id: str, info_id: str, df_master_edited: pd.DataFrame, df_part_info_edited: pd.DataFrame):
-    """수정된 직원목록과 파트타임 직원인적사항을 양쪽 구글 시트에 동시 반영"""
-    gc = get_gspread_client()
-    db_ss = gc.open_by_key(db_id)
-    info_ss = gc.open_by_key(info_id)
-
-    # 1) 통합근태DB -> '직원목록' 업데이트
-    emp_ws = db_ss.worksheet("직원목록")
-    if not df_master_edited.empty:
-        cols_m = ["이름", "고용형태", "시급", "상태", "메모"]
-        for c in cols_m:
-            if c not in df_master_edited.columns:
-                df_master_edited[c] = ""
-        clean_m = df_master_edited[cols_m].fillna("").astype(str)
-        clean_m = clean_m[clean_m["이름"].str.strip() != ""]
-        emp_ws.clear()
-        emp_ws.update(range_name="A1", values=[cols_m] + clean_m.values.tolist())
-
-    # 2) 직원인적사항 -> '파트타임' 업데이트
-    if not df_part_info_edited.empty:
-        part_ws = info_ss.worksheet("파트타임")
-        existing_rows = part_ws.get_all_values()
-        h_idx = 0
-        for i, r in enumerate(existing_rows[:5]):
-            if "이름" in [c.strip() for c in r]:
-                h_idx = i
-                break
-        orig_headers = [c.strip() for c in existing_rows[h_idx] if c.strip()] if len(existing_rows) > h_idx else [
-            "이름", "주민번호", "은행명", "계좌번호", "시급", "비고", "텔레그램ID", "이메일"
-        ]
-        for c in orig_headers:
-            if c not in df_part_info_edited.columns:
-                df_part_info_edited[c] = ""
-        clean_p = df_part_info_edited[orig_headers].fillna("").astype(str)
-        clean_p = clean_p[clean_p["이름"].str.strip() != ""]
-
-        prefix_rows = existing_rows[:h_idx] if h_idx > 0 else []
-        part_ws.clear()
-        part_ws.update(range_name="A1", values=prefix_rows + [orig_headers] + clean_p.values.tolist())
-
-
-# =========================================================================
-# 5. 구글 시트 기반 급여 히스토리 + 매출 연동 분석
+# 4. 구글 시트 기반 급여 히스토리 + 매출 연동 분석
 # =========================================================================
 def _parse_grid_values(all_rows: list):
     ins_sum, part_sum = 0, 0
@@ -789,7 +694,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 
 
 # =========================================================================
-# 6. 은행 대량이체 / 세무사 양식 / 개별 급여명세서 / 발송 함수
+# 5. 은행 대량이체 / 세무사 양식 / 개별 급여명세서 / 발송 함수
 # =========================================================================
 def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
     rows = []
@@ -943,7 +848,7 @@ def send_telegram_to_chat(chat_id: str, message: str):
 
 
 # =========================================================================
-# 7. Streamlit 메인 대시보드 UI
+# 6. Streamlit 메인 대시보드 UI
 # =========================================================================
 head_c1, head_c2 = st.columns([3.2, 1], vertical_alignment="center")
 with head_c1:
@@ -951,7 +856,7 @@ with head_c1:
         """
         <div class="app-header">
             <div class="app-title">🥩 매장 통합 급여 정산 & 경영 분석</div>
-            <div class="app-subtitle">통합근태DB 실시간 연동 · 매출 대비 인건비율 · 직원 입퇴사/시급 통합 관리</div>
+            <div class="app-subtitle">통합근태DB 실시간 연동 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -961,10 +866,9 @@ with head_c2:
 
 store_cfg = STORES[selected_store]
 
-tab_calc, tab_trend, tab_staff = st.tabs([
+tab_calc, tab_trend = st.tabs([
     f"💰 {selected_store} 월별 급여 정산",
     f"📈 {selected_store} 매출 · 인건비 경영 분석",
-    f"👥 {selected_store} 직원 · 시급/계좌 관리",
 ])
 
 # =========================================================================
@@ -1003,7 +907,7 @@ with tab_calc:
 
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
-            st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭이 추가되면 자동으로 불러옵니다.")
+            st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭을 추가하면 자동으로 불러옵니다.")
             df_ins_edited = pd.DataFrame(
                 columns=["이름", "주민번호", "은행명", "계좌번호", "계약급여", "그외비용", "그외비용사유", "최종급여", "비고", "텔레그램ID", "이메일"]
             )
@@ -1465,125 +1369,3 @@ with tab_trend:
                         "누적원천세": st.column_config.NumberColumn("누적 공제세액", format="%,d"),
                     },
                 )
-
-# =========================================================================
-# [TAB 3] 직원 입·퇴사 및 시급/계좌 관리 (출퇴근기록부 + 인적사항 동시 연동)
-# =========================================================================
-with tab_staff:
-    st.caption("💡 여기서 신규 직원을 등록하거나 시급·계좌·재직상태(재직/퇴사)를 수정하면 **출퇴근기록부와 급여 정산 시트에 동시에 반영**됩니다.")
-
-    df_master, df_part_info, df_ins_info = load_staff_management_data(store_cfg["db_id"], store_cfg["info_id"])
-
-    # 1) 신규 직원 간편 등록 섹션
-    with st.expander("➕ 신규 직원 등록하기", expanded=False):
-        with st.form("new_staff_form", clear_on_submit=True):
-            fc1, fc2, fc3, fc4 = st.columns([1.1, 1.0, 1.0, 1.2])
-            new_name = fc1.text_input("이름 (계좌 예금주명)*", placeholder="예: 홍길동")
-            new_type = fc2.selectbox("고용형태", ["파트타임", "정규직"])
-            new_wage = fc3.number_input("시급 (원)", min_value=0, value=10320, step=100)
-            new_ssn = fc4.text_input("주민등록번호", placeholder="예: 000101-3123456")
-
-            fc5, fc6, fc7, fc8 = st.columns([1.0, 1.3, 1.2, 1.0])
-            new_bank = fc5.text_input("은행명", placeholder="예: 카카오뱅크")
-            new_acct = fc6.text_input("계좌번호", placeholder="예: 3333-01-1234567")
-            new_email = fc7.text_input("이메일 (명세서 발송용)", placeholder="example@gmail.com")
-            new_tg = fc8.text_input("텔레그램 ID (선택)", placeholder="숫자 ID")
-
-            new_memo = st.text_input("메모 / 실근무자 표기 (예금주와 실제 출근자가 다를 때만 실근무자 이름 입력)", placeholder="예: 강성원")
-
-            submitted_new = st.form_submit_button("✅ 신규 직원 등록 및 양쪽 시트 반영", type="primary", use_container_width=True)
-            if submitted_new:
-                clean_nm = new_name.strip()
-                if not clean_nm:
-                    st.error("직원 이름을 입력해 주세요.")
-                else:
-                    # 직원목록 행 추가
-                    new_m_row = pd.DataFrame([{
-                        "이름": clean_nm,
-                        "고용형태": new_type,
-                        "시급": str(int(new_wage)),
-                        "상태": "재직",
-                        "메모": new_memo.strip(),
-                    }])
-                    updated_m = pd.concat([df_master, new_m_row], ignore_index=True)
-
-                    # 파트타임 인적사항 행 추가
-                    remark_str = f"(실근무) {new_memo.strip()}" if new_memo.strip() else ""
-                    new_p_row = pd.DataFrame([{
-                        "이름": clean_nm,
-                        "주민번호": format_ssn(new_ssn),
-                        "은행명": new_bank.strip(),
-                        "계좌번호": new_acct.strip(),
-                        "시급": str(int(new_wage)),
-                        "비고": remark_str,
-                        "텔레그램ID": new_tg.strip(),
-                        "이메일": new_email.strip(),
-                    }])
-                    updated_p = pd.concat([df_part_info, new_p_row], ignore_index=True)
-
-                    sync_save_staff_management(store_cfg["db_id"], store_cfg["info_id"], updated_m, updated_p)
-                    st.success(f"🎉 [{clean_nm}] 님이 신규 등록되었습니다! 출퇴근기록부에서도 바로 선택할 수 있습니다.")
-                    st.cache_data.clear()
-                    st.rerun()
-
-    # 2) 출퇴근기록부 연동 '직원목록' (재직/퇴사 상태 & 시급 관리)
-    st.markdown('<div class="section-title">1. 출퇴근기록부 직원 명부 (재직/퇴사 상태 · 시급 관리)</div>', unsafe_allow_html=True)
-    if not df_master.empty:
-        df_master_disp = df_master.copy()
-        df_master_disp["시급"] = df_master_disp["시급"].apply(clean_int)
-        edited_master = st.data_editor(
-            df_master_disp,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            key=f"staff_master_editor_{selected_store}",
-            column_config={
-                "이름": st.column_config.TextColumn("이름", required=True),
-                "고용형태": st.column_config.SelectboxColumn("고용형태", options=["파트타임", "정규직"], default="파트타임"),
-                "시급": st.column_config.NumberColumn("시급 (원)", format="%,d"),
-                "상태": st.column_config.SelectboxColumn("상태 (퇴사 변경 시 출퇴근 드롭다운 제외)", options=["재직", "퇴사"], default="재직"),
-                "메모": st.column_config.TextColumn("메모 (실근무자명 등)"),
-            },
-        )
-    else:
-        edited_master = pd.DataFrame(columns=["이름", "고용형태", "시급", "상태", "메모"])
-        st.info("등록된 직원목록 데이터가 없습니다.")
-
-    # 3) 급여 정산 및 세무/명세서 발송용 '파트타임 인적사항' (계좌/주민번호/이메일/텔레그램)
-    st.markdown('<div class="section-title">2. 급여 이체 · 세무신고용 인적사항 (계좌 / 주민번호 / 연락처)</div>', unsafe_allow_html=True)
-    if not df_part_info.empty:
-        df_part_info_disp = df_part_info.copy()
-        if "시급" in df_part_info_disp.columns:
-            df_part_info_disp["시급"] = df_part_info_disp["시급"].apply(clean_int)
-        edited_part_info = st.data_editor(
-            df_part_info_disp,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            key=f"staff_part_info_editor_{selected_store}",
-            column_config={
-                "시급": st.column_config.NumberColumn("시급 (원)", format="%,d"),
-            },
-        )
-    else:
-        edited_part_info = pd.DataFrame(columns=["이름", "주민번호", "은행명", "계좌번호", "시급", "비고", "텔레그램ID", "이메일"])
-        st.info("등록된 파트타임 인적사항 데이터가 없습니다.")
-
-    if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 일괄 저장하기", type="primary", use_container_width=True):
-        with st.spinner("구글 시트(직원목록 & 직원인적사항)에 동시 반영 중..."):
-            # 위 '직원목록'에서 수정한 시급을 '파트타임 인적사항'에도 자동 동기화
-            if not edited_master.empty and not edited_part_info.empty and "시급" in edited_part_info.columns:
-                wage_lookup = {
-                    str(r["이름"]).strip(): clean_int(r["시급"])
-                    for _, r in edited_master.iterrows()
-                    if str(r.get("이름", "")).strip()
-                }
-                for idx, r in edited_part_info.iterrows():
-                    nm = str(r.get("이름", "")).strip()
-                    if nm in wage_lookup and wage_lookup[nm] > 0:
-                        edited_part_info.at[idx, "시급"] = wage_lookup[nm]
-
-            sync_save_staff_management(store_cfg["db_id"], store_cfg["info_id"], edited_master, edited_part_info)
-            st.success("✅ 직원 명부 및 시급/계좌 정보가 양쪽 시트에 모두 저장되었습니다!")
-            st.cache_data.clear()
-            st.rerun()
