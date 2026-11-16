@@ -1,5 +1,4 @@
 import os
-import re
 import datetime
 import pandas as pd
 import streamlit as st
@@ -9,9 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ==========================================================================
+# =========================================================================
 # 0. 매장 및 시스템 설정
-# ==========================================================================
+# =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -23,7 +22,7 @@ def get_secret(key: str, default: str = ""):
 
 STORES = {
     "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",  # 새로 만든 분당그릴_통합근태DB ID
+        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
         "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
     },
     # 향후 감동한점 오픈 시 주석 해제 후 ID 입력
@@ -34,9 +33,10 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
-PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 익월 4일 기준)
+PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 익월 4일)
+SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 
-st.set_page_config(page_title="분당그릴 출퇴근 입력 & 상호 확인", page_icon="⏱️", layout="wide")
+st.set_page_config(page_title="분당그릴 출퇴근 기록부", page_icon="⏱️", layout="wide")
 
 
 # =========================================================================
@@ -52,9 +52,9 @@ def apply_clean_style():
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
         .block-container {
-            padding-top: 2.4rem;
+            padding-top: 2.2rem;
             padding-bottom: 3rem;
-            max-width: 1320px;
+            max-width: 1360px;
         }
         .app-title {
             font-size: 1.6rem;
@@ -69,10 +69,10 @@ def apply_clean_style():
             margin-top: 0.2rem;
         }
         .section-title {
-            font-size: 1.1rem;
+            font-size: 1.08rem;
             font-weight: 700;
             color: #1E293B;
-            margin: 1.2rem 0 0.6rem 0;
+            margin: 1rem 0 0.6rem 0;
             padding-left: 0.6rem;
             border-left: 4px solid #334155;
         }
@@ -116,7 +116,7 @@ def get_gspread_client():
 
 
 def get_period_ranges(target_date: datetime.date, start_day: int = 5):
-    """기준일(target_date) 기준 이번 주(월~일)와 이번 달 정산기간(5일~익월 4일) 계산"""
+    """기준일 기준 이번 주(월~일)와 이번 달 정산기간(5일~익월 4일) 계산"""
     week_start = target_date - datetime.timedelta(days=target_date.weekday())
     week_end = week_start + datetime.timedelta(days=6)
 
@@ -185,8 +185,8 @@ h_col1, h_col2 = st.columns([3.2, 1], vertical_alignment="center")
 with h_col1:
     st.markdown(
         """
-        <div class="app-title">⏱️ 매장 출퇴근 기록 & 상호 확인 보드</div>
-        <div class="app-subtitle">함께 일한 동료 근무 시간 공유 · 개인별 주간/월간 누적 조회 · 매니저 승인 잠금</div>
+        <div class="app-title">⏱️ 매장 출퇴근 기록부</div>
+        <div class="app-subtitle">일별 근무 현황 · 개인별 주간/월간 누적 근무시간 조회</div>
         """,
         unsafe_allow_html=True,
     )
@@ -199,10 +199,10 @@ try:
     df_emp, df_att = load_db_sheets(store_cfg["db_id"])
 except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
-    st.info("💡 '분당그릴_통합근태DB' 시트 우측 상단 [공유]에서 서비스 계정 이메일에 '편집자' 권한이 추가되어 있는지 확인해 주세요.")
+    st.info("💡 통합근태DB 시트 우측 상단 [공유]에서 서비스 계정 이메일에 '편집자' 권한이 추가되어 있는지 확인해 주세요.")
     st.stop()
 
-# 재직 직원 목록 구성 (메모에 실근무자 이름이 있으면 표시명과 DB 저장용 이름 매핑)
+# 재직 직원 목록 구성 (메모에 실근무자 이름이 있으면 자동 매핑)
 display_to_real_name = {}
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
@@ -211,7 +211,6 @@ if not df_emp.empty:
         memo_name = str(r.get("메모", "")).strip()
         if not reg_name:
             continue
-        # 이찬영(메모: 강성원)처럼 메모에 실근무자 이름이 있는 경우 처리
         if memo_name and "퇴사" not in memo_name and len(memo_name) <= 5:
             disp_label = f"{memo_name} (계좌:{reg_name})"
             display_to_real_name[disp_label] = memo_name
@@ -223,15 +222,17 @@ if not df_att.empty:
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
 with st.container(border=True):
-    d_c1, d_c2, d_c3 = st.columns([1.2, 2.5, 0.9], vertical_alignment="bottom")
+    d_c1, d_c2, d_c3 = st.columns([1.3, 2.4, 0.9], vertical_alignment="bottom")
     with d_c1:
         sel_date = st.date_input("📅 조회 및 입력 날짜", value=datetime.date.today())
         date_str = sel_date.strftime("%Y-%m-%d")
     with d_c2:
+        weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        w_kr = weekdays_kr[sel_date.weekday()]
         st.markdown(
-            """
-            <div style="background:#F1F5F9; border-radius:8px; padding:0.55rem 0.9rem; font-size:0.88rem; color:#334155;">
-                👥 <b>동료 상호 확인:</b> 선택한 날짜에 근무한 전 직원의 출퇴근 시간이 아래에 실시간 표시됩니다.
+            f"""
+            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:0.55rem 0.9rem; font-size:0.9rem; color:#334155;">
+                선택된 날짜: <b>{date_str} ({w_kr})</b>
             </div>
             """,
             unsafe_allow_html=True,
@@ -242,31 +243,107 @@ with st.container(border=True):
             st.rerun()
 
 # =========================================================================
-# 4. [구역 1] 오늘 함께 일한 동료 현황판 (상호 검증)
+# 4. [상단 구역] 좌측: 당일 근무 현황 그리드 | 우측: 매니저 확인 패널
 # =========================================================================
-st.markdown(f'<div class="section-title">1. {date_str} 함께 일한 동료 근무 현황</div>', unsafe_allow_html=True)
+top_left, top_right = st.columns([1.75, 1])
 
-if not df_att.empty and "날짜" in df_att.columns:
-    day_df = df_att[df_att["날짜"] == date_str].copy()
-    if not day_df.empty:
-        day_df["승인상태"] = day_df["매니저확인"].apply(
-            lambda x: "✅ 승인완료" if str(x).strip().upper() == "TRUE" else "⏳ 대기중"
-        )
-        show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "승인상태", "비고"]
-        valid_cols = [c for c in show_cols if c in day_df.columns]
-        st.dataframe(day_df[valid_cols], use_container_width=True, hide_index=True)
+with top_left:
+    st.markdown(f'<div class="section-title">1. {date_str} 당일 근무 현황</div>', unsafe_allow_html=True)
+    if not df_att.empty and "날짜" in df_att.columns:
+        day_df = df_att[df_att["날짜"] == date_str].copy()
+        if not day_df.empty:
+            day_df["확인상태"] = day_df["매니저확인"].apply(
+                lambda x: "✅ 확인완료" if str(x).strip().upper() == "TRUE" else "⏳ 대기중"
+            )
+            show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
+            valid_cols = [c for c in show_cols if c in day_df.columns]
+            st.dataframe(day_df[valid_cols], use_container_width=True, hide_index=True, height=250)
+        else:
+            st.info("해당 날짜에 등록된 근무 기록이 없습니다.")
     else:
-        st.caption("해당 날짜에 아직 등록된 근무 기록이 없습니다.")
-else:
-    st.caption("등록된 근무 기록이 없습니다.")
+        st.info("등록된 근무 기록이 없습니다.")
+
+with top_right:
+    st.markdown('<div class="section-title">✅ 매니저 확인 (승인 관리)</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        pin_input = st.text_input(
+            "매니저 PIN 입력",
+            type="password",
+            placeholder="PIN 번호 입력 후 확인 처리",
+            key="mgr_pin_top",
+        )
+        if pin_input == store_cfg["manager_pin"]:
+            t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
+
+            with t_app:
+                pending_df = (
+                    df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"]
+                    if not df_att.empty
+                    else pd.DataFrame()
+                )
+                if pending_df.empty:
+                    st.success("🎉 모든 근태 기록이 확인 완료되었습니다.")
+                else:
+                    st.caption(f"미확인 건수: 총 {len(pending_df)}건")
+                    approve_targets = []
+                    for _, r in pending_df.iterrows():
+                        chk_label = f"[{r['날짜'][5:]}] {r['이름']} ({r.get('근무타임', '')}) {r['시작시간']}~{r['종료시간']} ({r['총시간(h:m)']})"
+                        if st.checkbox(chk_label, value=True, key=f"chk_app_{r['_sheet_row']}"):
+                            approve_targets.append((int(r["_sheet_row"]), str(r.get("비고", ""))))
+
+                    if st.button("✅ 선택 항목 확인 완료", type="primary", use_container_width=True):
+                        gc = get_gspread_client()
+                        ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                        now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                        now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for r_num, old_n in approve_targets:
+                            new_n = (
+                                f"{old_n}\n[{now_s}] 매니저 확인 완료".strip()
+                                if "매니저 확인 완료" not in old_n
+                                else old_n
+                            )
+                            ws.update(range_name=f"H{r_num}:J{r_num}", values=[["TRUE", new_n, now_f]])
+                        st.success(f"{len(approve_targets)}건 확인 완료!")
+                        st.cache_data.clear()
+                        st.rerun()
+
+            with t_unapp:
+                if not df_att.empty:
+                    approved_day = df_att[
+                        (df_att["날짜"] == date_str)
+                        & (df_att["매니저확인"].astype(str).str.upper() == "TRUE")
+                    ]
+                    if approved_day.empty:
+                        st.caption(f"{date_str}에 승인 완료된 기록이 없습니다.")
+                    else:
+                        for _, r in approved_day.iterrows():
+                            ca, cb = st.columns([2.5, 1], vertical_alignment="center")
+                            ca.write(f"**{r['이름']}** {r['시작시간']}~{r['종료시간']}")
+                            if cb.button("해제", key=f"btn_unapp_{r['_sheet_row']}", use_container_width=True):
+                                gc = get_gspread_client()
+                                ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                                now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                                now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                new_n = f"{r.get('비고', '')}\n[{now_s}] 매니저 확인 해제".strip()
+                                ws.update(
+                                    range_name=f"H{int(r['_sheet_row'])}:J{int(r['_sheet_row'])}",
+                                    values=[["FALSE", new_n, now_f]],
+                                )
+                                st.warning("승인이 해제되었습니다.")
+                                st.cache_data.clear()
+                                st.rerun()
+        elif pin_input:
+            st.error("매니저 PIN이 일치하지 않습니다.")
+        else:
+            st.caption("매니저 PIN을 입력하면 미확인 근무 내역 일괄 승인 및 해제가 가능합니다.")
 
 # =========================================================================
-# 5. [구역 2] 직원별 출퇴근 입력/수정 & 실시간 누적 시간 조회
+# 5. [하단 구역] 좌측: 출퇴근 입력/수정 | 우측: 개인별 누적 시간 조회
 # =========================================================================
 left_col, right_col = st.columns([1.45, 1])
 
 with left_col:
-    st.markdown('<div class="section-title">2. 내 출퇴근 시간 입력 / 수정</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">2. 출퇴근 시간 입력 / 수정</div>', unsafe_allow_html=True)
     with st.container(border=True):
         if not display_to_real_name:
             st.warning("'직원목록' 탭에 재직 중인 직원이 없습니다.")
@@ -275,7 +352,6 @@ with left_col:
         sel_disp_name = st.selectbox("본인 이름 선택", options=list(display_to_real_name.keys()))
         real_emp_name = display_to_real_name[sel_disp_name]
 
-        # 해당 날짜 + 해당 직원의 기존 기록 조회 (오전/오후 분할근무 지원)
         emp_today = pd.DataFrame()
         if not df_att.empty:
             emp_today = df_att[(df_att["날짜"] == date_str) & (df_att["이름"] == real_emp_name)]
@@ -286,12 +362,12 @@ with left_col:
 
         if not emp_today.empty:
             st.info(f"📌 **{real_emp_name}** 님의 {date_str} 기록이 **{len(emp_today)}건** 등록되어 있습니다.")
-            action_opts = ["➕ 추가 근무 타임 등록 (예: 오전 근무 후 오후 재출근)"]
+            action_opts = ["➕ 추가 근무 타임 등록 (예: 점심 근무 후 저녁 재출근)"]
             for _, r in emp_today.iterrows():
                 is_app = str(r.get("매니저확인", "")).strip().upper() == "TRUE"
-                badge = "승인완료🔒" if is_app else "대기중"
+                badge = "확인완료🔒" if is_app else "대기중"
                 action_opts.append(
-                    f"✏️ 기존 기록 수정 [{r.get('근무타임', '1차')}: {r.get('시작시간')}~{r.get('종료시간')} | {badge}] (행:{r['_sheet_row']})"
+                    f"✏️ 기존 기록 수정 [{r.get('근무타임', '')}: {r.get('시작시간')}~{r.get('종료시간')} | {badge}] (행:{r['_sheet_row']})"
                 )
 
             chosen_action = st.radio("작업 선택", options=action_opts)
@@ -302,30 +378,36 @@ with left_col:
 
         is_locked = (mode == "기존 수정") and (str(old_record.get("매니저확인", "")).strip().upper() == "TRUE")
         if is_locked:
-            st.error("🚫 이미 매니저 승인이 완료된 기록입니다. 수정이 필요하면 매니저에게 승인 해제를 요청하세요.")
+            st.error("🚫 이미 매니저 확인이 완료된 기록입니다. 수정이 필요하면 매니저에게 승인 해제를 요청하세요.")
 
-        # 기본 입력값 세팅
+        # 근무타임 기본값 (평일/주말 자동 추천 또는 기존값 유지)
         default_shift_idx = 0
-        if mode == "신규 등록" and len(emp_today) >= 1:
-            default_shift_idx = 1
-        elif mode == "기존 수정":
-            old_t = str(old_record.get("근무타임", ""))
-            if "2차" in old_t:
-                default_shift_idx = 1
-            elif "대타" in old_t:
-                default_shift_idx = 2
+        if mode == "기존 수정":
+            old_t = str(old_record.get("근무타임", "")).strip()
+            if old_t in SHIFT_OPTIONS:
+                default_shift_idx = SHIFT_OPTIONS.index(old_t)
+        else:
+            # 주말(토/일)이면 주말(점심)을 기본 선택, 평일이면 평일 기본 선택
+            if sel_date.weekday() >= 5:
+                default_shift_idx = 1 if len(emp_today) == 0 else 2
+            else:
+                default_shift_idx = 0
 
-        try:
-            def_s = datetime.datetime.strptime(str(old_record.get("시작시간", "17:00")), "%H:%M").time()
-            def_e = datetime.datetime.strptime(str(old_record.get("종료시간", "22:00")), "%H:%M").time()
-        except Exception:
-            def_s, def_e = datetime.time(17, 0), datetime.time(22, 0)
+        # 시작시간 / 종료시간: 신규는 모두 00:00, 수정은 기존 시간 로드
+        if mode == "기존 수정":
+            try:
+                def_s = datetime.datetime.strptime(str(old_record.get("시작시간", "00:00")), "%H:%M").time()
+                def_e = datetime.datetime.strptime(str(old_record.get("종료시간", "00:00")), "%H:%M").time()
+            except Exception:
+                def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
+        else:
+            def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
         c1, c2, c3 = st.columns(3)
         with c1:
             shift_type = st.selectbox(
                 "근무 타임",
-                options=["1차 근무", "2차 근무(오후/야간)", "대타 근무"],
+                options=SHIFT_OPTIONS,
                 index=default_shift_idx,
                 disabled=is_locked,
             )
@@ -346,12 +428,12 @@ with left_col:
         if diff_mins > 0:
             st.success(f"⏱️ 계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
         else:
-            st.error("❌ 종료시간과 시작시간이 같습니다. 시간을 다시 확인해 주세요.")
+            st.warning("시작시간과 종료시간을 직접 입력해 주세요.")
 
         if mode == "기존 수정":
             edit_reason = st.text_input(
                 "🚨 수정 사유 (필수 입력)",
-                placeholder="예: 마감 정산 지연으로 22:30 퇴근 정정",
+                placeholder="예: 마감 정산 지연으로 퇴근시간 정정",
                 disabled=is_locked,
             )
             memo_val = str(old_record.get("비고", ""))
@@ -364,7 +446,7 @@ with left_col:
             )
 
         can_submit = (not is_locked) and (diff_mins > 0) and (mode == "신규 등록" or len(edit_reason.strip()) > 0)
-        btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기 (이력 자동 기록)"
+        btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기"
 
         if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
             now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -388,7 +470,7 @@ with left_col:
 
                 row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", new_note, now_full]
                 ws.update(range_name=f"A{target_sheet_row}:J{target_sheet_row}", values=[row_values])
-                st.success("✅ 수정 완료! 변경 전/후 시간과 사유가 비고란에 기록되었습니다.")
+                st.success("✅ 수정 완료! 변경 전/후 시간과 사유가 기록되었습니다.")
             else:
                 row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", memo_val.strip(), now_full]
                 ws.append_row(row_values, value_input_option="USER_ENTERED")
@@ -404,14 +486,16 @@ with right_col:
     if not df_att.empty and "이름" in df_att.columns:
         emp_all = df_att[df_att["이름"] == real_emp_name]
 
-        # 이번 주 누적 (월요일 ~ 조회일)
         w_df = emp_all[(emp_all["날짜_dt"] >= w_start) & (emp_all["날짜_dt"] <= sel_date)]
         w_mins = int(round(w_df["총시간(소수)"].sum() * 60))
 
-        # 이번 달 정산기간 누적 (5일 ~ 조회일)
         m_df = emp_all[(emp_all["날짜_dt"] >= m_start) & (emp_all["날짜_dt"] <= sel_date)]
         m_mins = int(round(m_df["총시간(소수)"].sum() * 60))
-        unconfirmed_cnt = len(m_df[m_df["매니저확인"].astype(str).str.upper() != "TRUE"]) if "매니저확인" in m_df.columns else 0
+        unconfirmed_cnt = (
+            len(m_df[m_df["매니저확인"].astype(str).str.upper() != "TRUE"])
+            if "매니저확인" in m_df.columns
+            else 0
+        )
 
         st.metric(
             label=f"이번 주 누적 ({w_start.strftime('%m/%d')} ~ {sel_date.strftime('%m/%d')})",
@@ -422,72 +506,17 @@ with right_col:
         st.metric(
             label=f"이번 정산월 누적 ({m_start.strftime('%m/%d')} ~ {sel_date.strftime('%m/%d')})",
             value=mins_to_korean(m_mins),
-            delta=f"{mins_to_hm(m_mins)} · 총 {len(m_df)}건 (미승인 {unconfirmed_cnt}건)",
+            delta=f"{mins_to_hm(m_mins)} · 총 {len(m_df)}건 (미확인 {unconfirmed_cnt}건)",
             delta_color="off",
         )
 
-        with st.expander("📋 이번 정산월 내 상세 근무 내역 보기", expanded=True):
+        with st.expander("📋 이번 정산월 상세 근무 내역 보기", expanded=True):
             if not m_df.empty:
-                m_disp = m_df[["날짜", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "매니저확인"]].sort_values("날짜", ascending=False)
+                m_disp = m_df[["날짜", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "매니저확인"]].sort_values(
+                    "날짜", ascending=False
+                )
                 st.dataframe(m_disp, use_container_width=True, hide_index=True)
             else:
                 st.caption("이번 정산월 근무 기록이 없습니다.")
     else:
         st.caption("누적 근무 내역이 없습니다.")
-
-# =========================================================================
-# 6. [구역 3] 매니저 전용 일괄 승인 / 승인 해제 (PIN 잠금)
-# =========================================================================
-st.markdown('<div class="section-title">4. 매니저 전용 근태 승인 관리</div>', unsafe_allow_html=True)
-with st.expander("🔐 매니저 확인 PIN 입력 후 일괄 승인 / 승인 해제"):
-    pin_input = st.text_input("매니저 PIN", type="password", placeholder="매니저 비밀번호 입력", key="mgr_pin_input")
-    if pin_input == store_cfg["manager_pin"]:
-        st.success("매니저 인증 완료")
-        t_approve, t_unapprove = st.tabs(["⏳ 미승인 내역 일괄 승인", "🔓 승인된 내역 승인 해제"])
-
-        with t_approve:
-            pending_df = df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"] if not df_att.empty else pd.DataFrame()
-            if pending_df.empty:
-                st.info("🎉 현재 승인 대기 중인 근태 기록이 모두 처리되었습니다.")
-            else:
-                st.write(f"총 **{len(pending_df)}건**의 미승인 기록이 있습니다.")
-                approve_targets = []
-                for _, r in pending_df.iterrows():
-                    note_flat = str(r.get("비고", "")).replace("\n", " / ")
-                    chk_label = f"[{r['날짜']}] {r['이름']} ({r.get('근무타임', '')}) | {r['시작시간']}~{r['종료시간']} ({r['총시간(h:m)']}) | {note_flat}"
-                    if st.checkbox(chk_label, value=True, key=f"chk_app_{r['_sheet_row']}"):
-                        approve_targets.append((int(r["_sheet_row"]), str(r.get("비고", ""))))
-
-                if st.button("✅ 선택한 항목 일괄 매니저 승인 완료", type="primary"):
-                    gc = get_gspread_client()
-                    ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                    now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                    now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    for r_num, old_n in approve_targets:
-                        new_n = f"{old_n}\n[{now_s}] 매니저 승인 완료".strip() if "매니저 승인 완료" not in old_n else old_n
-                        ws.update(range_name=f"H{r_num}:J{r_num}", values=[["TRUE", new_n, now_f]])
-                    st.success(f"{len(approve_targets)}건 승인 완료!")
-                    st.cache_data.clear()
-                    st.rerun()
-
-        with t_unapprove:
-            if not df_att.empty:
-                approved_day = df_att[(df_att["날짜"] == date_str) & (df_att["매니저확인"].astype(str).str.upper() == "TRUE")]
-                if approved_day.empty:
-                    st.caption(f"{date_str}에 승인 완료된 기록이 없습니다.")
-                else:
-                    for _, r in approved_day.iterrows():
-                        ca, cb = st.columns([4, 1], vertical_alignment="center")
-                        ca.write(f"**{r['이름']}** ({r.get('근무타임', '')}) | {r['시작시간']}~{r['종료시간']} ({r['총시간(h:m)']})")
-                        if cb.button("승인 해제", key=f"btn_unapp_{r['_sheet_row']}"):
-                            gc = get_gspread_client()
-                            ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                            now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            new_n = f"{r.get('비고', '')}\n[{now_s}] 매니저 승인 해제".strip()
-                            ws.update(range_name=f"H{int(r['_sheet_row'])}:J{int(r['_sheet_row'])}", values=[["FALSE", new_n, now_f]])
-                            st.warning("승인이 해제되었습니다.")
-                            st.cache_data.clear()
-                            st.rerun()
-    elif pin_input:
-        st.error("매니저 PIN이 일치하지 않습니다.")
