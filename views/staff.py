@@ -349,3 +349,118 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 저장하기"
         st.success("✅ 파트타임 및 정규직 직원 명부가 모두 저장되었습니다!")
         st.cache_data.clear()
         st.rerun()
+
+# ==============================================================================
+# 📝 전자 근로계약서 발급 및 서명 현황 관리
+# ==============================================================================
+import datetime as _dt
+from contract_utils import create_new_contract, load_all_contracts
+
+st.divider()
+st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
+st.caption("신규 직원의 근로조건을 입력해 전용 서명 링크를 생성하면, 직원이 스마트폰으로 직접 자필 서명 후 PDF가 구글 드라이브와 이메일로 자동 발송됩니다.")
+
+APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
+
+with st.expander("➕ 새 근로계약서 링크 생성하기", expanded=True):
+    c_col1, c_col2, c_col3 = st.columns(3)
+    with c_col1:
+        c_type = st.selectbox(
+            "계약 유형",
+            ["기간의 정함이 없는 경우", "기간의 정함이 있는 경우"],
+            key="new_c_type",
+        )
+        c_emp_name = st.text_input("직원 성명", placeholder="예: 홍길동", key="new_c_name")
+        c_start_date = st.date_input("근로개시일", value=_dt.date.today(), key="new_c_start")
+        c_end_date = None
+        if c_type == "기간의 정함이 있는 경우":
+            c_end_date = st.date_input(
+                "근로종료일",
+                value=_dt.date.today() + _dt.timedelta(days=365),
+                key="new_c_end",
+            )
+
+    with c_col2:
+        c_pay_type = st.selectbox("임금 구분", ["시급", "월급"], key="new_c_pay_type")
+        c_pay_amt = st.number_input(
+            "임금 금액 (원)",
+            min_value=0,
+            value=12000 if c_pay_type == "시급" else 3000000,
+            step=100 if c_pay_type == "시급" else 50000,
+            key="new_c_pay_amt",
+        )
+        c_bonus = st.text_input("상여금", value="없음", key="new_c_bonus")
+        c_other_pay = st.text_input("기타급여(제수당 등)", value="없음", key="new_c_other")
+
+    with c_col3:
+        c_w_start = st.text_input("소정근로 시작시간", value="17:00", key="new_c_w_start")
+        c_w_end = st.text_input("소정근로 종료시간", value="22:00", key="new_c_w_end")
+        c_break = st.number_input("휴게시간 (분)", min_value=0, max_value=180, value=30, step=10, key="new_c_break")
+        c_days = st.number_input("주 근무일수 (일)", min_value=1, max_value=7, value=5, key="new_c_days")
+        c_rest = st.selectbox("주휴요일", ["월", "화", "수", "목", "금", "토", "일"], index=0, key="new_c_rest")
+
+    c_job = st.text_input(
+        "업무의 내용",
+        value="홀 서빙 및 주방 보조 등 매장 운영 전반",
+        key="new_c_job",
+    )
+    c_ins = st.multiselect(
+        "사회보험 적용여부",
+        ["고용보험", "산재보험", "국민연금", "건강보험"],
+        default=["고용보험", "산재보험"],
+        key="new_c_ins",
+    )
+
+    if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
+        if not c_emp_name.strip():
+            st.error("직원 성명을 입력해 주세요.")
+        else:
+            payload = {
+                "계약유형": c_type,
+                "직원명": c_emp_name.strip(),
+                "근로개시일": c_start_date.strftime("%Y-%m-%d"),
+                "근로종료일": c_end_date.strftime("%Y-%m-%d") if c_end_date else "",
+                "업무내용": c_job.strip(),
+                "근무시작": c_w_start.strip(),
+                "근무종료": c_w_end.strip(),
+                "휴게시간(분)": c_break,
+                "주근무일수": c_days,
+                "주휴요일": c_rest,
+                "임금구분": c_pay_type,
+                "금액": c_pay_amt,
+                "상여금": c_bonus.strip(),
+                "기타급여": c_other_pay.strip(),
+                "사회보험": ", ".join(c_ins) if c_ins else "해당없음",
+            }
+            new_cid = create_new_contract(st.secrets, payload)
+            sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
+            st.success(f"✅ **{c_emp_name.strip()}** 님의 전자 근로계약서 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
+            st.code(sign_url, language="text")
+
+st.markdown("#### 📋 발급 및 서명 완료 목록")
+try:
+    all_contracts = load_all_contracts(st.secrets)
+    if not all_contracts:
+        st.info("아직 발급된 전자 근로계약서가 없습니다.")
+    else:
+        for item in reversed(all_contracts[-20:]):
+            status_badge = "✅ 서명완료" if item.get("상태") == "서명완료" else "⏳ 서명대기"
+            link_url = f"{APP_BASE_URL}?contract_id={item.get('계약ID')}"
+            with st.container(border=True):
+                r1, r2, r3 = st.columns([3, 2, 2])
+                with r1:
+                    st.markdown(f"**{item.get('직원명')}** · {status_badge} ({item.get('계약유형')})")
+                    st.caption(f"입사일: {item.get('근로개시일')} | {item.get('임금구분')} {item.get('금액')}원 | 생성: {item.get('생성일시')}")
+                with r2:
+                    if item.get("상태") == "서명완료":
+                        st.caption(f"서명일시: {item.get('서명일시')}")
+                        st.caption(f"연락처: {item.get('연락처')} / 이메일: {item.get('이메일')}")
+                    else:
+                        st.caption("직원 서명 대기 중입니다.")
+                with r3:
+                    if item.get("상태") == "서명완료" and item.get("드라이브PDF링크"):
+                        st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
+                    else:
+                        st.code(link_url, language="text")
+except Exception as e:
+    st.warning(f"근로계약서 목록을 불러오는 중 오류가 발생했습니다: {e}")
