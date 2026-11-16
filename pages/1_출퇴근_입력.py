@@ -95,6 +95,18 @@ def apply_clean_style():
             border-radius: 10px;
             padding: 0.85rem 1rem;
         }
+        /* 비밀번호 입력칸 크기는 유지하면서 가려지는 점(••••) 크기만 크게 확대 */
+        input[type="password"] {
+            font-size: 1.45rem !important;
+            letter-spacing: 0.22em !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+        }
+        input[type="password"]::placeholder {
+            font-size: 0.88rem !important;
+            letter-spacing: normal !important;
+            font-weight: 400 !important;
+        }
         div[data-testid="stMetric"] {
             background-color: #F8FAFC;
             border: 1px solid #E2E8F0;
@@ -171,6 +183,16 @@ def mins_to_korean(total_mins: int) -> str:
     return f"{total_mins // 60}시간 {total_mins % 60}분"
 
 
+def format_date_with_weekday(d_str: str) -> str:
+    """'2026-10-24' -> '10-24 (토)' 형태로 변환"""
+    weekdays_short = ["월", "화", "수", "목", "금", "토", "일"]
+    try:
+        dt = datetime.datetime.strptime(str(d_str).strip(), "%Y-%m-%d").date()
+        return f"{dt.strftime('%m-%d')} ({weekdays_short[dt.weekday()]})"
+    except Exception:
+        return str(d_str)[5:] if len(str(d_str)) >= 10 else str(d_str)
+
+
 @st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
 def load_db_sheets(db_id: str):
     gc = get_gspread_client()
@@ -199,7 +221,7 @@ def load_db_sheets(db_id: str):
 
 
 # =========================================================================
-# 3. 상단 헤더 (제목 바로 옆 새로고침 밀착 정렬 | 우측 끝 매장선택)
+# 3. 상단 헤더 (출퇴근기록부 + 바로 옆 새로고침 | 우측 끝 매장선택)
 # =========================================================================
 h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
 with h_col1:
@@ -221,7 +243,6 @@ except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
 
-# 실근무자 이름만 깔끔하게 표시 (계좌 예금주 표기 제거)
 active_emp_names = []
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
@@ -241,7 +262,6 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-# 날짜 선택 + 더 커진 굵은 요일 텍스트 + 우측 입력 방법 설명 (수평 중앙 정렬)
 d_c1, d_c2, d_c3 = st.columns([0.85, 0.55, 3.7], vertical_alignment="center")
 with d_c1:
     sel_date = st.date_input("조회 및 입력 날짜", value=datetime.date.today(), label_visibility="collapsed")
@@ -265,7 +285,7 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.session_state["edited_banner"] = ""
 
 # =========================================================================
-# 4. [상단 구역] 좌측: 일 근무현황 그리드 | 우측: 매니저 전용 확인 (비밀번호 가로 배치)
+# 4. [상단 구역] 좌측: 일 근무현황 그리드 | 우측: 매니저 전용 확인
 # =========================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
@@ -323,16 +343,16 @@ with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        # '매니저 확인 비밀번호' 라벨 왼쪽 + 입력 박스 오른쪽 가로 배치
-        p_lbl, p_inp = st.columns([1.05, 1.3], vertical_alignment="center")
+        # '매니저확인 / 비밀번호' 두 줄 표기 + 우측 입력 박스
+        p_lbl, p_inp = st.columns([0.75, 1.6], vertical_alignment="center")
         with p_lbl:
             st.markdown(
-                '<div style="font-size:0.9rem; font-weight:700; color:#78350F; white-space:nowrap;">매니저 확인 비밀번호</div>',
+                '<div style="font-size:0.88rem; font-weight:700; color:#78350F; line-height:1.25;">매니저확인<br>비밀번호</div>',
                 unsafe_allow_html=True,
             )
         with p_inp:
             pin_input = st.text_input(
-                "매니저 확인 비밀번호",
+                "매니저확인 비밀번호",
                 type="password",
                 placeholder="비밀번호 입력",
                 key="mgr_pin_top",
@@ -453,7 +473,6 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        # 이름(실근무자 단독 표기), 근무타임, 시작시간, 종료시간 4개 한 줄 배치
         c_name, c1, c2, c3 = st.columns([1.05, 1.05, 0.95, 0.95])
         with c_name:
             if mode == "기존 수정":
@@ -567,7 +586,8 @@ with right_col:
         with st.expander(f"📋 세부 근무 내역({len(m_df)}건)", expanded=False):
             if not m_df.empty:
                 m_disp = m_df.sort_values("날짜", ascending=False).copy()
-                m_disp["날짜"] = m_disp["날짜"].apply(lambda d: d[5:])
+                # 날짜 옆에 요일 표기 (예: 10-24 (토))
+                m_disp["날짜"] = m_disp["날짜"].apply(format_date_with_weekday)
                 m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
                 m_disp["상태"] = m_disp["매니저확인"].apply(
                     lambda x: "✅ 확인" if str(x).strip().upper() == "TRUE" else "⏳ 대기"
