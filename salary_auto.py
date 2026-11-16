@@ -54,24 +54,117 @@ TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")  # 웹 접속 비밀번호
 
-st.set_page_config(page_title="매장 통합 급여 정산 & 추이 분석", layout="wide")
+st.set_page_config(page_title="매장 통합 급여 정산 & 추이 분석", page_icon="🥩", layout="wide")
 
 
 # =========================================================================
-# 1. 보안 로그인 잠금 (웹 공개 URL 접근 차단)
+# 커스텀 스타일 (깔끔한 폰트, 카드 그리드, 버튼 높이/여백 정돈)
+# =========================================================================
+def apply_clean_style():
+    st.markdown(
+        """
+        <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
+        html, body, [class*="css"] {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        }
+
+        /* 상단 불필요한 공백 축소 및 최대 폭 정돈 */
+        .block-container {
+            padding-top: 1.8rem;
+            padding-bottom: 3rem;
+            max-width: 1280px;
+        }
+
+        /* 상단 타이틀 헤더 */
+        .app-header {
+            padding: 0.2rem 0 0.6rem 0;
+        }
+        .app-title {
+            font-size: 1.65rem;
+            font-weight: 700;
+            color: #1E293B;
+            margin: 0;
+            letter-spacing: -0.02em;
+        }
+        .app-subtitle {
+            font-size: 0.9rem;
+            color: #64748B;
+            margin-top: 0.2rem;
+        }
+
+        /* 섹션 제목 스타일 */
+        .section-title {
+            font-size: 1.12rem;
+            font-weight: 700;
+            color: #1E293B;
+            margin: 1.2rem 0 0.6rem 0;
+            padding-left: 0.6rem;
+            border-left: 4px solid #334155;
+        }
+
+        /* KPI 메트릭 카드 정돈 */
+        div[data-testid="stMetric"] {
+            background-color: #F8FAFC;
+            border: 1px solid #E2E8F0;
+            border-radius: 10px;
+            padding: 1rem 1.2rem;
+        }
+        div[data-testid="stMetric"] label {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #475569;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 1.55rem;
+            font-weight: 700;
+            color: #0F172A;
+        }
+
+        /* 탭 버튼 가독성 개선 */
+        button[data-baseweb="tab"] {
+            font-size: 0.98rem;
+            font-weight: 600;
+            padding: 0.6rem 1.2rem;
+        }
+
+        /* 일반/다운로드 버튼 모서리 및 높이 통일 */
+        .stButton > button, .stDownloadButton > button {
+            border-radius: 8px;
+            font-weight: 600;
+            min-height: 2.75rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+apply_clean_style()
+
+
+# =========================================================================
+# 1. 보안 로그인 잠금 (중앙 정렬 카드)
 # =========================================================================
 def check_login():
     if st.session_state.get("authenticated", False):
         return True
 
-    st.markdown("### 🔒 관리자 인증")
-    pwd = st.text_input("접속 비밀번호를 입력하세요", type="password", key="login_pwd")
-    if st.button("로그인", type="primary"):
-        if pwd == ADMIN_PASSWORD:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("비밀번호가 일치하지 않습니다.")
+    st.write("")
+    st.write("")
+    _, col_center, _ = st.columns([1.2, 1.3, 1.2])
+    with col_center:
+        with st.container(border=True):
+            st.markdown("#### 🔒 관리자 인증")
+            st.caption("매장 급여 정산 시스템에 접속하려면 비밀번호를 입력하세요.")
+            pwd = st.text_input("접속 비밀번호", type="password", key="login_pwd", label_visibility="collapsed", placeholder="비밀번호 입력")
+            if st.button("로그인", type="primary", use_container_width=True):
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 일치하지 않습니다.")
     return False
 
 
@@ -399,7 +492,6 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
     """구글 시트 히스토리 파일에 'YY.MM' 탭 생성/덮어쓰기 + 다운로드용 엑셀 바이트 반환"""
     sheet_name = end_date.strftime("%y.%m")
 
-    # 1) 다운로드용 엑셀 바이트 생성
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         start_row = 0
@@ -413,7 +505,6 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
     if not hist_id:
         return "구글 히스토리 시트 ID 미설정 (엑셀 다운로드만 가능)", excel_bytes
 
-    # 2) 구글 시트 탭에 2차원 데이터 기록
     gc = get_gspread_client()
     ss = gc.open_by_key(hist_id)
 
@@ -634,40 +725,61 @@ def send_telegram_to_chat(chat_id: str, message: str):
 
 
 # =========================================================================
-# 6. Streamlit 메인 대시보드 UI
+# 6. Streamlit 메인 대시보드 UI (깔끔한 그리드 및 버튼 정렬)
 # =========================================================================
-head_c1, head_c2 = st.columns([3, 1])
+head_c1, head_c2 = st.columns([3.2, 1], vertical_alignment="center")
 with head_c1:
-    st.title("🥩 매장 통합 급여 정산 & 인건비 추이 분석")
+    st.markdown(
+        """
+        <div class="app-header">
+            <div class="app-title">🥩 매장 통합 급여 정산 & 인건비 분석</div>
+            <div class="app-subtitle">출퇴근 시트 자동 집계 · 세무사 보고 · 대량이체 · 급여명세서 일괄 발송</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 with head_c2:
-    selected_store = st.selectbox("🏪 정산 매장 선택", list(STORES.keys()), index=0)
+    selected_store = st.selectbox("정산 매장", list(STORES.keys()), index=0)
 
 store_cfg = STORES[selected_store]
 
-tab_calc, tab_trend = st.tabs([f"💰 [{selected_store}] 월별 급여 정산", f"📈 [{selected_store}] 인건비 변동 추이"])
+tab_calc, tab_trend = st.tabs([f"💰 {selected_store} 월별 급여 정산", f"📈 {selected_store} 인건비 변동 추이"])
 
 with tab_calc:
-    col_date, col_btn = st.columns([2, 1])
-    with col_date:
-        base_date = st.date_input("정산 기준일 (매월 5일 기준 전월 5일 ~ 당월 4일 자동 계산)", value=datetime.date.today())
-    start_dt, end_dt = get_settlement_period(base_date)
-    st.info(f"📅 **[{selected_store}] 집계 대상 기간:** `{start_dt.strftime('%Y-%m-%d')}` ~ `{end_dt.strftime('%Y-%m-%d')}`")
-
-    if st.button("🔄 구글 시트 최신 데이터 다시 불러오기"):
-        st.cache_data.clear()
+    # 상단 정산 컨트롤 바 (기준일 + 대상기간 + 새로고침 버튼 한 줄 정렬)
+    with st.container(border=True):
+        ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
+        with ctrl_1:
+            base_date = st.date_input("정산 기준일 (매월 5일 기준)", value=datetime.date.today())
+        start_dt, end_dt = get_settlement_period(base_date)
+        with ctrl_2:
+            st.markdown(
+                f"""
+                <div style="background:#F1F5F9; border-radius:8px; padding:0.58rem 0.9rem; font-size:0.93rem; color:#1E293B;">
+                    📅 <b>집계 기간:</b> {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with ctrl_3:
+            if st.button("🔄 시트 새로고침", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
 
     try:
         df_ins_raw, df_part_raw, warnings = fetch_and_calculate_salary(
             store_cfg["att_id"], store_cfg["info_id"], start_dt, end_dt
         )
 
+        # 근태 이상 알림 (있을 때만 깔끔한 박스로 표시)
         if warnings:
-            st.error(f"🚨 **[긴급 확인 필요] 근태 및 날짜 이상 내역이 총 {len(warnings)}건 발견되었습니다! 정산 확정 전 반드시 확인하세요.**")
-            with st.container(border=True):
+            st.error(f"🚨 근태 및 날짜 이상 내역이 **{len(warnings)}건** 발견되었습니다. 정산 확정 전 확인해 주세요.")
+            with st.expander(f"이상 내역 상세 보기 ({len(warnings)}건)", expanded=True):
                 for w in warnings:
-                    st.markdown(f"#### {w}")
+                    st.markdown(f"- {w}")
 
-        st.subheader("1️⃣ 4대보험 직원 급여 내역 (직접 수정 가능)")
+        # 1. 4대보험 직원 테이블
+        st.markdown('<div class="section-title">1. 4대보험 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
             st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭을 추가하면 자동으로 불러옵니다.")
             df_ins_edited = pd.DataFrame(
@@ -693,7 +805,8 @@ with tab_calc:
                 if orig_row is not None and clean_int(row.get("최종급여", 0)) == clean_int(orig_row.get("최종급여", 0)):
                     df_ins_edited.at[idx, "최종급여"] = clean_int(row.get("최종급여", 0)) + extra_pay
 
-        st.subheader("2️⃣ 파트타임 직원 급여 내역 (직접 수정 가능)")
+        # 2. 파트타임 직원 테이블
+        st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
         df_part_edited = st.data_editor(
             df_part_raw,
             num_rows="dynamic",
@@ -731,15 +844,16 @@ with tab_calc:
                 df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
                 df_part_edited.at[idx, "최종급여"] = net_pay
 
+        # 3. 정산 합계 KPI 3열 그리드
         sum_ins = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
         total_payout = sum_ins + sum_part
 
-        # 전월 대비 비교 (구글 히스토리 시트 기준)
         df_hist_m, _ = load_gsheet_history(store_cfg["hist_id"])
         prev_ym = (end_dt.replace(day=1) - datetime.timedelta(days=1)).strftime("%y.%m")
         prev_row = df_hist_m[df_hist_m["정산월"] == prev_ym] if not df_hist_m.empty else pd.DataFrame()
 
+        st.write("")
         m1, m2, m3 = st.columns(3)
         if not prev_row.empty:
             p_ins = int(prev_row.iloc[0]["4대보험"])
@@ -753,61 +867,66 @@ with tab_calc:
             m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원")
 
-        st.divider()
-
-        st.subheader("3️⃣ 세무사 전달용 양식 미리보기 & 일괄 발송")
+        # 4. 세무사 보고 · 다운로드 · 정산 확정 패널 (좌측 입력 / 우측 버튼 그리드)
+        st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
 
         today_str = datetime.datetime.now().strftime("%Y%m%d")
         txt_filename = f"{selected_store}_급여내역_{today_str}.txt"
         default_subject = f"[{selected_store}] {end_dt.year}년 {end_dt.month}월분 인건비 급여 내역"
-
-        email_subject = st.text_input("이메일 제목 (직접 수정 가능)", value=default_subject)
-
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            raw_emails = st.text_area(
-                "수신자 이메일 주소 (여러 곳에 보낼 경우 쉼표 , 또는 줄바꿈으로 구분)",
-                value=store_cfg["tax_email"],
-                height=75,
-                placeholder="예: tax@example.com, bdgrill0524@gmail.com",
-            )
-
-        edited_txt = st.text_area(
-            "이메일 본문 및 첨부파일(.txt) 내용 (발송 전 직접 수정 가능)",
-            value=generated_txt,
-            height=300,
-        )
-
         bulk_excel_bytes = build_bulk_transfer_excel(selected_store, df_ins_edited, df_part_edited, end_dt)
         bulk_filename = f"{selected_store}_{end_dt.strftime('%Y%m')}_은행대량이체.xlsx"
 
-        with c2:
-            st.write("")
-            st.download_button(
-                label="📥 세무사용 .txt 다운로드",
-                data=edited_txt.encode("utf-8"),
-                file_name=txt_filename,
-                mime="text/plain",
-                use_container_width=True,
-            )
-            st.download_button(
-                label="🏦 은행 대량이체 엑셀 다운로드",
-                data=bulk_excel_bytes,
-                file_name=bulk_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+        panel_left, panel_right = st.columns([2.2, 1.1])
 
-        send_to_staff = st.checkbox(
-            "📨 정산 확정 시 '이메일' 또는 '텔레그램ID'가 등록된 직원에게 개인별 급여명세서도 자동 발송",
-            value=True,
-        )
+        with panel_left:
+            with st.container(border=True):
+                email_subject = st.text_input("이메일 제목", value=default_subject)
+                raw_emails = st.text_input(
+                    "수신자 이메일 (여러 곳일 경우 쉼표 , 로 구분)",
+                    value=store_cfg["tax_email"],
+                    placeholder="예: tax@example.com, bdgrill0524@gmail.com",
+                )
+                edited_txt = st.text_area(
+                    "세무사 전달용 본문 및 첨부(.txt) 내용 (발송 전 직접 수정 가능)",
+                    value=generated_txt,
+                    height=260,
+                )
 
-        if warnings:
-            st.warning(f"⚠️ 위 상단에 표시된 **근태 이상 내역 {len(warnings)}건**이 해결되지 않았습니다. 이상이 없다면 그대로 발송하세요.")
+        with panel_right:
+            with st.container(border=True):
+                st.markdown("**📥 파일 다운로드**")
+                st.download_button(
+                    label="세무사용 .txt 다운로드",
+                    data=edited_txt.encode("utf-8"),
+                    file_name=txt_filename,
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+                st.download_button(
+                    label="은행 대량이체 엑셀 (.xlsx)",
+                    data=bulk_excel_bytes,
+                    file_name=bulk_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
 
-        if st.button("🚀 정산 확정 (구글 히스토리 저장 + 세무사 이메일 + 직원 개별 명세서 발송)", type="primary", use_container_width=True):
+                st.divider()
+                st.markdown("**🚀 일괄 정산 확정**")
+                send_to_staff = st.checkbox(
+                    "직원 개별 급여명세서 동시 발송 (이메일/텔레그램)",
+                    value=True,
+                )
+                if warnings:
+                    st.caption(f"⚠️ 미확인 근태 알림 {len(warnings)}건 있음")
+
+                confirm_clicked = st.button(
+                    "정산 확정 및 발송하기",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+        if confirm_clicked:
             recipient_list = [e.strip() for e in re.split(r"[,;\n]+", raw_emails) if e.strip()]
             if not recipient_list:
                 st.error("수신자 이메일 주소를 최소 1개 이상 입력해 주세요.")
@@ -889,13 +1008,12 @@ with tab_calc:
         st.error(f"오류가 발생했습니다: {e}")
 
 with tab_trend:
-    st.subheader(f"📈 [{selected_store}] 월별 인건비 변동 추이 & 직원별 누적 리포트")
     df_monthly, df_staff = load_gsheet_history(store_cfg["hist_id"])
 
     if df_monthly.empty:
         st.info(
             "ℹ️ 구글 히스토리 시트에 `YY.MM` 탭(`25.10`, `25.11` 등)이 있으면 자동으로 분석 그래프가 표시됩니다.\n"
-            "(기존 로컬 엑셀 파일의 탭들을 히스토리 구글 시트로 복사해 두시면 과거 1년 치 추이까지 바로 연결됩니다!)"
+            "(기존 엑셀 파일의 탭들을 히스토리 구글 시트로 복사해 두시면 과거 추이까지 바로 연결됩니다.)"
         )
     else:
         avg_total = int(df_monthly["총인건비"].mean())
@@ -909,9 +1027,10 @@ with tab_trend:
         k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
         k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%")
 
-        st.markdown("#### 1️⃣ 월별 인건비 추이 (4대보험 vs 파트타임)")
-        chart_df = df_monthly.set_index("정산월")[["4대보험", "파트타임"]]
-        st.bar_chart(chart_df, height=350)
+        st.markdown('<div class="section-title">1. 월별 인건비 추이 (4대보험 vs 파트타임)</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            chart_df = df_monthly.set_index("정산월")[["4대보험", "파트타임"]]
+            st.bar_chart(chart_df, height=320)
 
         df_monthly_disp = df_monthly.copy()
         df_monthly_disp["전월대비증감"] = df_monthly_disp["총인건비"].diff().fillna(0).astype(int)
@@ -927,11 +1046,12 @@ with tab_trend:
             },
         )
 
-        st.divider()
-        st.markdown("#### 2️⃣ 직원별 누적 근무시간 · 급여 요약")
+        st.markdown('<div class="section-title">2. 직원별 누적 근무시간 · 급여 요약</div>', unsafe_allow_html=True)
 
-        years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정산월"].unique()])))
-        sel_year = st.selectbox("조회 연도 선택", years, index=0)
+        f_col1, _ = st.columns([1, 3])
+        with f_col1:
+            years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정산월"].unique()])))
+            sel_year = st.selectbox("조회 연도", years, index=0)
 
         df_filtered = df_staff.copy()
         if sel_year != "전체":
