@@ -52,40 +52,55 @@ def apply_clean_style():
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
         .block-container {
-            padding-top: 2rem;
-            padding-bottom: 3rem;
+            padding-top: 1.8rem;
+            padding-bottom: 2.5rem;
             max-width: 1380px;
         }
         .app-title {
-            font-size: 1.55rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: #1E293B;
             margin: 0;
             letter-spacing: -0.02em;
         }
         .app-subtitle {
-            font-size: 0.88rem;
+            font-size: 0.86rem;
             color: #64748B;
-            margin-top: 0.15rem;
+            margin-top: 0.1rem;
         }
         .section-title {
-            font-size: 1.05rem;
+            font-size: 1.02rem;
             font-weight: 700;
             color: #1E293B;
-            margin: 0.8rem 0 0.5rem 0;
+            margin: 0.6rem 0 0.45rem 0;
             padding-left: 0.55rem;
             border-left: 4px solid #334155;
+        }
+        .mgr-section-title {
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: #92400E;
+            margin: 0.6rem 0 0.45rem 0;
+            padding-left: 0.55rem;
+            border-left: 4px solid #D97706;
+        }
+        /* 매니저 확인 섹션 전용 배경/테두리 강조 */
+        div[data-testid="stVerticalBlock"]:has(> div.element-container > div.stMarkdown > div.mgr-box-marker) {
+            background-color: #FFFBEB;
+            border: 1.5px solid #F59E0B;
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
         }
         div[data-testid="stMetric"] {
             background-color: #F8FAFC;
             border: 1px solid #E2E8F0;
             border-radius: 10px;
-            padding: 0.85rem 1rem;
+            padding: 0.75rem 1rem;
         }
         .stButton > button {
             border-radius: 8px;
             font-weight: 600;
-            min-height: 2.55rem;
+            min-height: 2.5rem;
         }
         </style>
         """,
@@ -180,7 +195,7 @@ def load_db_sheets(db_id: str):
 
 
 # =========================================================================
-# 3. 상단 헤더 (제목 좌측 | 매장선택 + 새로고침 우측) & 컴팩트 날짜바
+# 3. 상단 헤더 (제목 좌측 | 매장선택 + 새로고침 우측) & 날짜 선택
 # =========================================================================
 h_col1, h_col2, h_col3 = st.columns([3.0, 1.1, 0.75], vertical_alignment="bottom")
 with h_col1:
@@ -223,32 +238,20 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-# 작고 정렬된 조회/입력 날짜 바
-d_c1, d_c2, _ = st.columns([0.95, 1.5, 2.5], vertical_alignment="center")
+# 날짜 선택 (중복 표시 박스 제거, 콤팩트 배치)
+d_c1, _ = st.columns([1.05, 3.95])
 with d_c1:
     sel_date = st.date_input("📅 조회 및 입력 날짜", value=datetime.date.today())
     date_str = sel_date.strftime("%Y-%m-%d")
-with d_c2:
-    weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-    w_kr = weekdays_kr[sel_date.weekday()]
-    st.markdown(
-        f"""
-        <div style="margin-top:1.35rem; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:0.42rem 0.75rem; font-size:0.86rem; color:#334155; display:inline-block;">
-            선택: <b>{date_str} ({w_kr})</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-# 방금 수정 완료된 알림 메시지 표시 (한 번 표시 후 초기화)
 if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
 # =========================================================================
-# 4. [상단 구역] 좌측: 당일 근무 현황 그리드 (행 선택 시 색상 변경 & 수정 연동) | 우측: 매니저 확인
+# 4. [상단 구역] 좌측: 당일 근무 현황 그리드 (콤팩트 행 높이) | 우측: 매니저 확인 (색상 강조)
 # =========================================================================
-top_left, top_right = st.columns([1.65, 1.1])
+top_left, top_right = st.columns([1.68, 1.07])
 
 selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
@@ -264,7 +267,6 @@ with top_left:
             show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
             valid_cols = [c for c in show_cols if c in day_df.columns]
 
-            # 이전에 선택된 행 인덱스 파악 (스타일 하이라이트용)
             prev_sel_rows = []
             grid_state_key = f"att_grid_{date_str}"
             if grid_state_key in st.session_state:
@@ -274,20 +276,21 @@ with top_left:
                 idx = row.name
                 sheet_r = day_df.loc[idx, "_sheet_row"]
                 if idx in prev_sel_rows:
-                    # 수정하려고 선택한 행: 연한 파란색 하이라이트
                     return ["background-color: #DBEAFE; color: #1E3A8A; font-weight: 600;"] * len(row)
                 if last_edited_row is not None and sheet_r == last_edited_row:
-                    # 방금 수정 완료된 행: 연한 초록색 하이라이트
                     return ["background-color: #DCFCE7; color: #14532D; font-weight: 600;"] * len(row)
                 return [""] * len(row)
 
             styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
 
+            # 행 높이를 28px로 줄여 8~9명 이상의 기록이 스크롤 없이 한눈에 보이도록 구성
+            compact_height = min(max(len(day_df) * 29 + 36, 150), 320)
             event = st.dataframe(
                 styled_df,
                 use_container_width=True,
                 hide_index=True,
-                height=265,
+                row_height=28,
+                height=compact_height,
                 on_select="rerun",
                 selection_mode="single-row",
                 key=grid_state_key,
@@ -302,8 +305,9 @@ with top_left:
         st.info("등록된 근무 기록이 없습니다.")
 
 with top_right:
-    st.markdown('<div class="section-title">✅ 매니저 확인 (승인 관리)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
+        st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
         pin_input = st.text_input(
             "매니저 PIN 입력",
             type="password",
@@ -523,25 +527,30 @@ with right_col:
         emp_all = df_att[df_att["이름"] == real_emp_name]
         m_df = emp_all[(emp_all["날짜_dt"] >= m_start) & (emp_all["날짜_dt"] <= m_end)]
         m_mins = int(round(m_df["총시간(소수)"].sum() * 60))
-        confirmed_cnt = (
-            len(m_df[m_df["매니저확인"].astype(str).str.upper() == "TRUE"])
-            if "매니저확인" in m_df.columns
-            else 0
-        )
+        work_days = m_df["날짜"].nunique() if not m_df.empty else 0
 
+        # 중복 기간·건수 문구 제거, 출근일 및 시간/분만 깔끔하게 표시
         st.metric(
-            label=f"월간 총 근무시간 ({m_start.strftime('%m/%d')} ~ {m_end.strftime('%m/%d')})",
-            value=mins_to_korean(m_mins),
-            delta=f"{mins_to_hm(m_mins)} · 총 {len(m_df)}건 (확인 {confirmed_cnt}건)",
-            delta_color="off",
+            label="누적 출근일 · 근무시간",
+            value=f"{work_days}일 · {mins_to_korean(m_mins)}",
         )
 
-        with st.expander("📋 선택한 정산월 일별 근무 내역", expanded=True):
+        # 기본적으로 접혀있고 누르면 열리는 직관적 일별 내역
+        with st.expander(f"📋 일별 근무 내역 보기 ({len(m_df)}건)", expanded=False):
             if not m_df.empty:
-                m_disp = m_df[["날짜", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "매니저확인"]].sort_values(
-                    "날짜", ascending=False
+                m_disp = m_df.sort_values("날짜", ascending=False).copy()
+                m_disp["날짜"] = m_disp["날짜"].apply(lambda d: d[5:])  # MM-DD로 간결화
+                m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
+                m_disp["상태"] = m_disp["매니저확인"].apply(
+                    lambda x: "✅ 확인" if str(x).strip().upper() == "TRUE" else "⏳ 대기"
                 )
-                st.dataframe(m_disp, use_container_width=True, hide_index=True, height=230)
+                m_disp = m_disp.rename(columns={"근무타임": "구분", "총시간(h:m)": "총시간"})
+                st.dataframe(
+                    m_disp[["날짜", "구분", "근무시간", "총시간", "상태"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    row_height=28,
+                )
             else:
                 st.caption("선택한 정산월에 등록된 근무 기록이 없습니다.")
     else:
