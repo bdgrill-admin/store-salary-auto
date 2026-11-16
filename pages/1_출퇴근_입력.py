@@ -52,21 +52,22 @@ def apply_clean_style():
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
         .block-container {
-            padding-top: 1.8rem;
+            padding-top: 3.3rem;
             padding-bottom: 2.5rem;
             max-width: 1380px;
         }
         .app-title {
-            font-size: 1.5rem;
+            font-size: 1.55rem;
             font-weight: 700;
             color: #1E293B;
             margin: 0;
+            line-height: 1.35;
             letter-spacing: -0.02em;
         }
         .app-subtitle {
-            font-size: 0.86rem;
+            font-size: 0.88rem;
             color: #64748B;
-            margin-top: 0.1rem;
+            margin-top: 0.2rem;
         }
         .section-title {
             font-size: 1.02rem;
@@ -195,9 +196,9 @@ def load_db_sheets(db_id: str):
 
 
 # =========================================================================
-# 3. 상단 헤더 (제목 좌측 | 매장선택 + 새로고침 우측) & 날짜 선택
+# 3. 상단 헤더 (제목 좌측 | 매장선택 + 새로고침 우측) & 날짜/요일 선택
 # =========================================================================
-h_col1, h_col2, h_col3 = st.columns([3.0, 1.1, 0.75], vertical_alignment="bottom")
+h_col1, h_col2, h_col3 = st.columns([3.0, 1.1, 0.75], vertical_alignment="center")
 with h_col1:
     st.markdown(
         """
@@ -238,18 +239,33 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-# 날짜 선택 (중복 표시 박스 제거, 콤팩트 배치)
-d_c1, _ = st.columns([1.05, 3.95])
+# 날짜 선택 (라벨 제거) + 우측 요일 표시 (날짜 변경 시 즉시 연동)
+d_c1, d_c2, _ = st.columns([0.95, 0.75, 3.3], vertical_alignment="center")
 with d_c1:
-    sel_date = st.date_input("📅 조회 및 입력 날짜", value=datetime.date.today())
+    sel_date = st.date_input("조회 및 입력 날짜", value=datetime.date.today(), label_visibility="collapsed")
     date_str = sel_date.strftime("%Y-%m-%d")
+with d_c2:
+    weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+    w_kr = weekdays_kr[sel_date.weekday()]
+    is_wknd = sel_date.weekday() >= 5
+    badge_bg = "#FEF2F2" if is_wknd else "#F1F5F9"
+    badge_fg = "#DC2626" if is_wknd else "#334155"
+    badge_bd = "#FECACA" if is_wknd else "#CBD5E1"
+    st.markdown(
+        f"""
+        <div style="background:{badge_bg}; color:{badge_fg}; border:1px solid {badge_bd}; border-radius:8px; padding:0.46rem 0.75rem; font-size:0.9rem; font-weight:700; text-align:center;">
+            {w_kr}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
 # =========================================================================
-# 4. [상단 구역] 좌측: 당일 근무 현황 그리드 (콤팩트 행 높이) | 우측: 매니저 확인 (색상 강조)
+# 4. [상단 구역] 좌측: 일 근무현황 그리드 (기본 6칸 높이) | 우측: 매니저 전용 확인
 # =========================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
@@ -257,7 +273,7 @@ selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
 
 with top_left:
-    st.markdown(f'<div class="section-title">1. {date_str} 당일 근무 현황 (수정할 행 클릭)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">1. 일 근무현황</div>', unsafe_allow_html=True)
     if not df_att.empty and "날짜" in df_att.columns:
         day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
         if not day_df.empty:
@@ -283,14 +299,14 @@ with top_left:
 
             styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
 
-            # 행 높이를 28px로 줄여 8~9명 이상의 기록이 스크롤 없이 한눈에 보이도록 구성
-            compact_height = min(max(len(day_df) * 29 + 36, 150), 320)
+            # 한 행 높이는 28px로 줄이되 기본적으로 6칸(헤더 포함 212px)이 보이도록 높이 고정
+            grid_height = max(212, min(len(day_df) * 29 + 38, 340))
             event = st.dataframe(
                 styled_df,
                 use_container_width=True,
                 hide_index=True,
                 row_height=28,
-                height=compact_height,
+                height=grid_height,
                 on_select="rerun",
                 selection_mode="single-row",
                 key=grid_state_key,
@@ -377,10 +393,10 @@ with top_right:
         elif pin_input:
             st.error("매니저 PIN이 일치하지 않습니다.")
         else:
-            st.caption("매니저 확인 전까지는 그리드에서 행을 클릭해 수정할 수 있습니다.")
+            st.caption("매니저 확인 전까지는 위의 표에서 행을 클릭해 수정할 수 있습니다.")
 
 # =========================================================================
-# 5. [하단 구역] 좌측: 출퇴근 입력/수정 | 우측: 월별 누적 근무시간 조회
+# 5. [하단 구역] 좌측: 출퇴근 시간 입력/수정 | 우측: 월별 근무시간 조회
 # =========================================================================
 left_col, right_col = st.columns([1.4, 1.05])
 
@@ -390,15 +406,12 @@ with left_col:
         target_sheet_row = int(selected_grid_record["_sheet_row"])
         old_record = selected_grid_record
         real_emp_name = str(old_record.get("이름", "")).strip()
-        st.markdown(
-            f'<div class="section-title" style="border-left-color:#2563EB; color:#1E3A8A;">2. 선택된 근무 기록 수정 ({real_emp_name})</div>',
-            unsafe_allow_html=True,
-        )
     else:
         mode = "신규 등록"
         target_sheet_row = None
         old_record = {}
-        st.markdown('<div class="section-title">2. 신규 출퇴근 시간 입력</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">2. 출퇴근 시간 입력/수정</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
         if not display_to_real_name:
@@ -407,7 +420,7 @@ with left_col:
 
         if mode == "기존 수정":
             st.info(
-                f"🔵 그리드에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 등록으로 돌아가려면 위 표의 선택 체크를 해제하세요)"
+                f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 선택 체크를 해제하세요)"
             )
             sel_disp_name = next(
                 (k for k, v in display_to_real_name.items() if v == real_emp_name),
@@ -463,6 +476,9 @@ with left_col:
             st.success(f"⏱️ 계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
         else:
             st.warning("시작시간과 종료시간을 직접 입력해 주세요.")
+
+        # 비고/특이사항 위에 두꺼운 글씨로 수정 안내 문구 배치
+        st.markdown("**※ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.**")
 
         if mode == "기존 수정":
             edit_reason = st.text_input(
@@ -529,17 +545,15 @@ with right_col:
         m_mins = int(round(m_df["총시간(소수)"].sum() * 60))
         work_days = m_df["날짜"].nunique() if not m_df.empty else 0
 
-        # 중복 기간·건수 문구 제거, 출근일 및 시간/분만 깔끔하게 표시
         st.metric(
             label="누적 출근일 · 근무시간",
             value=f"{work_days}일 · {mins_to_korean(m_mins)}",
         )
 
-        # 기본적으로 접혀있고 누르면 열리는 직관적 일별 내역
-        with st.expander(f"📋 일별 근무 내역 보기 ({len(m_df)}건)", expanded=False):
+        with st.expander(f"📋 세부 근무 내역({len(m_df)}건)", expanded=False):
             if not m_df.empty:
                 m_disp = m_df.sort_values("날짜", ascending=False).copy()
-                m_disp["날짜"] = m_disp["날짜"].apply(lambda d: d[5:])  # MM-DD로 간결화
+                m_disp["날짜"] = m_disp["날짜"].apply(lambda d: d[5:])
                 m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
                 m_disp["상태"] = m_disp["매니저확인"].apply(
                     lambda x: "✅ 확인" if str(x).strip().upper() == "TRUE" else "⏳ 대기"
