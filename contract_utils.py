@@ -304,19 +304,24 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
 
 def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
-    creds = get_google_creds(secrets_dict)
-    drive_service = build("drive", "v3", credentials=creds)
-    file_metadata = {
-        "name": filename,
-        "parents": [CONTRACT_FOLDER_ID],
+    import base64
+    webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
+    if not webapp_url:
+        raise RuntimeError("Secrets에 DRIVE_UPLOAD_WEBAPP_URL이 설정되지 않았습니다.")
+
+    payload = {
+        "folderId": CONTRACT_FOLDER_ID,
+        "filename": filename,
+        "base64Data": base64.b64encode(pdf_bytes).decode("utf-8"),
     }
-    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=True)
-    uploaded = (
-        drive_service.files()
-        .create(body=file_metadata, media_body=media, fields="id, webViewLink")
-        .execute()
-    )
-    return uploaded.get("webViewLink", "")
+    res = requests.post(webapp_url, json=payload, timeout=25)
+    try:
+        res_json = res.json()
+    except Exception:
+        raise RuntimeError(f"Apps Script 응답 오류 (HTTP {res.status_code}): {res.text[:200]}")
+    if not res_json.get("ok"):
+        raise RuntimeError(f"구글 드라이브 저장 실패: {res_json.get('error')}")
+    return res_json.get("url", "")
 
 
 def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes):
