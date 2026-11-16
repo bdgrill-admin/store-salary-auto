@@ -304,7 +304,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
 
 def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
-    import base64
+    import base64, json
     webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url:
         return ""
