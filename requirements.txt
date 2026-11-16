@@ -5,3 +5,7 @@ google-auth
 openpyxl
 requests
 python-dotenv
+streamlit-drawable-canvas
+reportlab
+Pillow
+google-api-python-client
