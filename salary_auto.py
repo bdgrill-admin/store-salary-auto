@@ -401,9 +401,16 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
         if att["total_min"] == 0:
             continue
 
-        master_wage = clean_int(emp_master_map.get(report_name, {}).get("시급", 0))
+        m_rec = emp_master_map.get(report_name, {})
+        master_wage = clean_int(m_rec.get("시급", 0))
         info_wage = clean_int(rec.get("시급", 0))
         wage = master_wage if master_wage > 0 else info_wage
+
+        # 직원목록 탭의 최신 은행명·계좌번호·이메일·텔레그램ID 우선 반영 (비어있으면 직원인적사항 참조)
+        bank_name = str(m_rec.get("은행명", "")).strip() or str(rec.get("은행명", "")).strip()
+        acct_num = str(m_rec.get("계좌번호", "")).strip() or str(rec.get("계좌번호", "")).strip()
+        tg_id = str(m_rec.get("텔레그램ID", "")).strip() or str(rec.get("텔레그램ID", "")).strip()
+        email_addr = str(m_rec.get("이메일", "")).strip() or str(rec.get("이메일", "")).strip()
 
         gross_pay = int(round(wage * (att["total_min"] / 60.0)))
         rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
@@ -413,8 +420,8 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
         part_list.append({
             "이름": report_name,
             "주민번호": format_ssn(rec.get("주민번호", "")),
-            "은행명": str(rec.get("은행명", "")).strip(),
-            "계좌번호": str(rec.get("계좌번호", "")).strip(),
+            "은행명": bank_name,
+            "계좌번호": acct_num,
             "시급": wage,
             "총시간": att["total_hhmm"],
             "총급여": gross_pay,
@@ -424,8 +431,8 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             "최종급여": net_pay,
             "비고": remark,
             "근무일자": att["work_dates"],
-            "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
-            "이메일": str(rec.get("이메일", "")).strip(),
+            "텔레그램ID": tg_id,
+            "이메일": email_addr,
         })
 
     for emp_n, att in attendance_map.items():
@@ -435,12 +442,12 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             gross_pay = int(round(wage * (att["total_min"] / 60.0)))
             rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
             net_pay = int(round(gross_pay * (1.0 - rate_float)))
-            warnings.append(f"⚠️ [{emp_n}] 사이드바 '직원 관리' 페이지에서 계좌/주민번호를 등록해 주세요.")
+            warnings.append(f"⚠️ [{emp_n}] 사이드바 '직원 관리' 페이지에서 시급/주민번호를 등록해 주세요.")
             part_list.append({
                 "이름": emp_n,
                 "주민번호": "",
-                "은행명": "",
-                "계좌번호": "",
+                "은행명": str(m_info.get("은행명", "")).strip(),
+                "계좌번호": str(m_info.get("계좌번호", "")).strip(),
                 "시급": wage,
                 "총시간": att["total_hhmm"],
                 "총급여": gross_pay,
@@ -450,8 +457,8 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
                 "최종급여": net_pay,
                 "비고": "인적사항 미등록",
                 "근무일자": att["work_dates"],
-                "텔레그램ID": "",
-                "이메일": "",
+                "텔레그램ID": str(m_info.get("텔레그램ID", "")).strip(),
+                "이메일": str(m_info.get("이메일", "")).strip(),
             })
 
     ins_list = []
