@@ -1,9 +1,7 @@
-import json
-import urllib.parse
+import os
 import datetime
 import streamlit as st
-import streamlit.components.v1 as components
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from contract_utils import get_contract_by_id, complete_employee_signature
 
 st.markdown("""
@@ -47,66 +45,38 @@ if contract.get("상태") == "서명완료":
     st.stop()
 
 
-def _strokes_to_image(raw_json: str) -> Image.Image:
+def _create_text_signature_image(sign_text: str) -> Image.Image:
+    """입력한 서명 성명을 도장/서명 형태의 PNG 이미지로 생성"""
     img = Image.new("RGBA", (320, 140), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
-    strokes = json.loads(raw_json)
-    for stroke in strokes:
-        if len(stroke) == 1:
-            x, y = stroke[0]
-            draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=(17, 24, 39, 255))
-        elif len(stroke) > 1:
-            pts = [(p[0], p[1]) for p in stroke]
-            draw.line(pts, fill=(17, 24, 39, 255), width=3)
+
+    font_candidates = [
+        "/usr/share/fonts/truetype/nanum/NanumPen.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBrush.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+        "C:/Windows/Fonts/malgunbd.ttf",
+    ]
+    font = None
+    for fp in font_candidates:
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, 54)
+                break
+            except Exception:
+                pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), sign_text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = max(10, (320 - tw) // 2)
+    y = max(10, (140 - th) // 2 - 6)
+
+    draw.text((x, y), sign_text, fill=(17, 24, 39, 255), font=font)
+    # 하단 서명 밑줄
+    draw.line([(x, y + th + 8), (x + tw, y + th + 8)], fill=(17, 24, 39, 200), width=2)
     return img
 
-
-# HTML 폼 제출로 넘어온 데이터 처리
-if st.query_params.get("submit_sign") == "1":
-    try:
-        rrn = st.query_params.get("rrn", "").strip()
-        bank = st.query_params.get("bank", "").strip()
-        account = st.query_params.get("account", "").strip()
-        health_date = st.query_params.get("health_date", "").strip()
-        phone = st.query_params.get("phone", "").strip()
-        email = st.query_params.get("email", "").strip()
-        addr = st.query_params.get("addr", "").strip()
-        cctv_agree = st.query_params.get("cctv", "동의함").strip()
-        sig_raw = st.query_params.get("sig", "").strip()
-
-        if not (rrn and account and phone and email and addr and sig_raw):
-            st.error("입력값이 누락되었습니다. 다시 작성해 주세요.")
-        else:
-            with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
-                sign_img = _strokes_to_image(sig_raw)
-                emp_inputs = {
-                    "주민번호": rrn,
-                    "은행명": bank,
-                    "계좌번호": account,
-                    "주소": addr,
-                    "연락처": phone,
-                    "이메일": email,
-                    "CCTV동의": cctv_agree,
-                    "보건증제출일": health_date,
-                }
-                pdf_bytes, filename, drive_link, email_ok, email_msg = complete_employee_signature(
-                    st.secrets, contract, emp_inputs, sign_img
-                )
-                st.query_params.clear()
-                st.query_params["contract_id"] = cid
-                st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
-                if email_ok:
-                    st.info(f"입력하신 이메일({email})로 계약서 PDF 사본이 자동 발송되었습니다.")
-                st.download_button(
-                    label="📄 내 근로계약서 PDF 바로 다운로드",
-                    data=pdf_bytes,
-                    file_name=filename,
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-                st.stop()
-    except Exception as e:
-        st.error(f"계약서 처리 중 오류가 발생했습니다: {e}")
 
 ctype = contract.get("계약유형", "기간의 정함이 없는 경우")
 emp_name = contract.get("직원명", "")
@@ -149,177 +119,85 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-today_str = datetime.date.today().strftime("%Y-%m-%d")
-APP_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
+st.subheader("✍️ 근로자 인적사항 및 전자서명")
 
-html_form = f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; margin: 0; padding: 4px; color: #111827; }}
-  .card {{ background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px; }}
-  h3 {{ margin-top: 0; font-size: 18px; }}
-  .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
-  @media (max-width: 640px) {{ .grid {{ grid-template-columns: 1fr; }} }}
-  label {{ display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #374151; }}
-  input[type="text"], input[type="email"], input[type="date"], select {{
-    width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid #cbd5e1;
-    border-radius: 6px; font-size: 14px; background: #fff;
-  }}
-  .radio-row {{ display: flex; gap: 16px; align-items: center; padding-top: 6px; font-size: 14px; }}
-  .sign-box {{ margin-top: 14px; border: 2px dashed #64748b; border-radius: 8px; background: #fff; padding: 10px; max-width: 344px; }}
-  canvas {{ border: 1px solid #e2e8f0; border-radius: 4px; touch-action: none; display: block; background: #fff; }}
-  .sign-bar {{ display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }}
-  .btn-clear {{ padding: 4px 10px; font-size: 12px; border: 1px solid #cbd5e1; border-radius: 4px; background: #f1f5f9; cursor: pointer; }}
-  .agree-row {{ margin-top: 14px; font-size: 14px; font-weight: 600; display: flex; align-items: flex-start; gap: 8px; }}
-  .btn-submit {{
-    margin-top: 16px; width: 100%; padding: 13px; font-size: 16px; font-weight: 700;
-    color: #fff; background: #dc2626; border: none; border-radius: 8px; cursor: pointer;
-  }}
-  .btn-submit:hover {{ background: #b91c1c; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <h3>✍️ 근로자 인적사항 및 전자서명</h3>
-  <form id="signForm" action="{APP_URL}" method="GET" target="_top" onsubmit="return validateAndSubmit();">
-    <input type="hidden" name="contract_id" value="{cid}">
-    <input type="hidden" name="submit_sign" value="1">
-    <input type="hidden" name="sig" id="sigInput" value="">
+col1, col2 = st.columns(2)
+with col1:
+    rrn = st.text_input("주민등록번호 (급여·세무신고용)", placeholder="예: 000101-3123456")
+    bank = st.selectbox("입금 은행명", ["국민은행", "신한은행", "우리은행", "하나은행", "농협은행", "기업은행", "카카오뱅크", "토스뱅크", "케이뱅크", "새마을금고", "우체국", "수협은행", "기타"])
+    account = st.text_input("계좌번호 (숫자만 또는 하이픈 포함)", placeholder="예: 123456-01-123456")
+    health_date = st.date_input("보건증 제출(예정)일", value=datetime.date.today())
 
-    <div class="grid">
-      <div>
-        <label>주민등록번호 (급여·세무신고용)</label>
-        <input type="text" name="rrn" id="rrn" placeholder="예: 000101-3123456" required>
-      </div>
-      <div>
-        <label>연락처 (휴대폰)</label>
-        <input type="text" name="phone" id="phone" placeholder="예: 010-1234-5678" required>
-      </div>
-      <div>
-        <label>입금 은행명</label>
-        <select name="bank">
-          <option>국민은행</option><option>신한은행</option><option>우리은행</option>
-          <option>하나은행</option><option>농협은행</option><option>기업은행</option>
-          <option>카카오뱅크</option><option>토스뱅크</option><option>케이뱅크</option>
-          <option>새마을금고</option><option>우체국</option><option>수협은행</option><option>기타</option>
-        </select>
-      </div>
-      <div>
-        <label>이메일 주소 (계약서 PDF 사본 수신용)</label>
-        <input type="email" name="email" id="email" placeholder="예: hong@naver.com" required>
-      </div>
-      <div>
-        <label>계좌번호 (숫자만 또는 하이픈 포함)</label>
-        <input type="text" name="account" id="account" placeholder="예: 123456-01-123456" required>
-      </div>
-      <div>
-        <label>거주지 주소</label>
-        <input type="text" name="addr" id="addr" placeholder="예: 경기도 성남시 분당구 ..." required>
-      </div>
-      <div>
-        <label>보건증 제출(예정)일</label>
-        <input type="date" name="health_date" value="{today_str}" required>
-      </div>
-      <div>
-        <label>제16조 개인영상정보(CCTV) 수집·이용 동의</label>
-        <div class="radio-row">
-          <label style="font-weight:normal;"><input type="radio" name="cctv" value="동의함" checked> 동의함</label>
-          <label style="font-weight:normal;"><input type="radio" name="cctv" value="동의하지 않음"> 동의하지 않음</label>
-        </div>
-      </div>
-    </div>
+with col2:
+    phone = st.text_input("연락처 (휴대폰)", placeholder="예: 010-1234-5678")
+    email = st.text_input("이메일 주소 (계약서 PDF 사본 수신용)", placeholder="예: hong@naver.com")
+    addr = st.text_input("거주지 주소", placeholder="예: 경기도 성남시 분당구 ...")
+    cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
 
-    <div class="sign-box">
-      <label>자필 서명 (아래 흰 칸에 손가락 또는 마우스로 사인해 주세요)</label>
-      <canvas id="pad" width="320" height="140"></canvas>
-      <div class="sign-bar">
-        <span id="status" style="font-size:12px; color:#475569;">서명 대기 중</span>
-        <button type="button" class="btn-clear" onclick="clearPad()">다시 쓰기</button>
-      </div>
-    </div>
+st.divider()
+sign_method = st.radio(
+    "전자서명 방식 선택",
+    ["✍️ 정자 성명 입력 (자동 전자서명 이미지 생성)", "📷 자필 서명 사진/이미지 업로드"],
+    horizontal=True,
+)
 
-    <div class="agree-row">
-      <input type="checkbox" id="agreeChk" style="width:18px; height:18px; margin-top:2px;">
-      <label for="agreeChk" style="margin:0; cursor:pointer;">본인({emp_name})은 위 표준근로계약서 1조~17조의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다.</label>
-    </div>
+sign_text_input = ""
+uploaded_sign_file = None
 
-    <button type="submit" class="btn-submit">✅ 계약 내용 확인 및 전자서명 최종 제출</button>
-  </form>
-</div>
+if sign_method.startswith("✍️"):
+    sign_text_input = st.text_input(
+        f"전자서명란 — 아래 칸에 본인 성명('{emp_name}')을 정자로 직접 입력해 주세요",
+        placeholder=emp_name,
+    )
+    if sign_text_input.strip():
+        preview = _create_text_signature_image(sign_text_input.strip())
+        st.image(preview, caption="계약서에 날인될 전자서명 미리보기", width=220)
+else:
+    uploaded_sign_file = st.file_uploader(
+        "흰 종이에 서명 후 촬영한 사진 또는 서명 이미지(PNG/JPG)를 올려주세요",
+        type=["png", "jpg", "jpeg"],
+    )
+    if uploaded_sign_file:
+        st.image(uploaded_sign_file, caption="업로드된 서명 미리보기", width=220)
 
-<script>
-const canvas = document.getElementById('pad');
-const ctx = canvas.getContext('2d');
-ctx.lineWidth = 3;
-ctx.lineCap = 'round';
-ctx.strokeStyle = '#111827';
-let drawing = false;
-let strokes = [];
-let curStroke = [];
+agree_confirm = st.checkbox(f"본인({emp_name})은 위 표준근로계약서 1조~17조의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다.")
 
-function getPos(e) {{
-  const rect = canvas.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  return [Math.round(clientX - rect.left), Math.round(clientY - rect.top)];
-}}
+if st.button("✅ 계약 내용 확인 및 전자서명 최종 제출", type="primary", use_container_width=True):
+    if not rrn.strip() or not account.strip() or not phone.strip() or not addr.strip() or not email.strip():
+        st.error("주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
+    elif not agree_confirm:
+        st.error("계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.")
+    elif sign_method.startswith("✍️") and not sign_text_input.strip():
+        st.error("전자서명란에 본인 성명을 입력해 주세요.")
+    elif not sign_method.startswith("✍️") and uploaded_sign_file is None:
+        st.error("서명 이미지 파일을 업로드해 주세요.")
+    else:
+        with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
+            if sign_method.startswith("✍️"):
+                sign_img = _create_text_signature_image(sign_text_input.strip())
+            else:
+                sign_img = Image.open(uploaded_sign_file).convert("RGBA")
 
-function startDraw(e) {{
-  e.preventDefault();
-  drawing = true;
-  curStroke = [getPos(e)];
-  ctx.beginPath();
-  ctx.moveTo(curStroke[0][0], curStroke[0][1]);
-}}
-
-function moveDraw(e) {{
-  if (!drawing) return;
-  e.preventDefault();
-  const pt = getPos(e);
-  curStroke.push(pt);
-  ctx.lineTo(pt[0], pt[1]);
-  ctx.stroke();
-}}
-
-function endDraw(e) {{
-  if (!drawing) return;
-  drawing = false;
-  if (curStroke.length > 0) strokes.push(curStroke);
-  document.getElementById('status').innerText = '서명 입력됨 (' + strokes.length + '획)';
-}}
-
-function clearPad() {{
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  strokes = [];
-  document.getElementById('status').innerText = '서명 대기 중';
-}}
-
-function validateAndSubmit() {{
-  if (strokes.length === 0) {{
-    alert('서명란에 자필 서명을 그려주세요.');
-    return false;
-  }}
-  if (!document.getElementById('agreeChk').checked) {{
-    alert('계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.');
-    return false;
-  }}
-  document.getElementById('sigInput').value = JSON.stringify(strokes);
-  return true;
-}}
-
-canvas.addEventListener('mousedown', startDraw);
-canvas.addEventListener('mousemove', moveDraw);
-canvas.addEventListener('mouseup', endDraw);
-canvas.addEventListener('mouseleave', endDraw);
-canvas.addEventListener('touchstart', startDraw, {{ passive: false }});
-canvas.addEventListener('touchmove', moveDraw, {{ passive: false }});
-canvas.addEventListener('touchend', endDraw);
-</script>
-</body>
-</html>
-"""
-
-components.html(html_form, height=690, scrolling=True)
+            emp_inputs = {
+                "주민번호": rrn.strip(),
+                "은행명": bank,
+                "계좌번호": account.strip(),
+                "주소": addr.strip(),
+                "연락처": phone.strip(),
+                "이메일": email.strip(),
+                "CCTV동의": cctv_agree,
+                "보건증제출일": health_date.strftime("%Y-%m-%d"),
+            }
+            pdf_bytes, filename, drive_link, email_ok, email_msg = complete_employee_signature(
+                st.secrets, contract, emp_inputs, sign_img
+            )
+            st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
+            if email_ok:
+                st.info(f"입력하신 이메일({email.strip()})로 계약서 PDF 사본이 자동 발송되었습니다.")
+            st.download_button(
+                label="📄 내 근로계약서 PDF 바로 다운로드",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                use_container_width=True,
+            )
