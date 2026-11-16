@@ -205,9 +205,9 @@ def get_settlement_period(base_date: datetime.date):
 
 
 def normalize_ym_label(val: str) -> str:
-    """'2025-11', '2025.11', '25.11', '25-11' 등 모든 월 표기를 'YY.MM'으로 통일"""
+    """'2025-11', '25년01월', '25.11' 등 모든 월 표기를 'YY.MM'으로 통일"""
     s = str(val).strip()
-    m = re.match(r"^(?:20)?(\d{2})[-./](\d{1,2})$", s)
+    m = re.match(r"^(?:20)?(\d{2})[-./년\s]+(\d{1,2})월?$", s)
     if m:
         return f"{m.group(1)}.{int(m.group(2)):02d}"
     return s
@@ -587,35 +587,56 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
-    monthly_rows = []
+    monthly_map = {}  # 정산월을 키로 하여 과거요약 -> 상세탭 순으로 덮어쓰기
     staff_rows = []
+    sheet_titles = [ws.title.strip() for ws in ss.worksheets()]
 
+    # 1) '과거요약' 탭이 있으면 총액 히스토리 먼저 로드
+    if "과거요약" in sheet_titles:
+        ws_past = ss.worksheet("과거요약")
+        p_rows = ws_past.get_all_values()
+        for r in p_rows[1:]:
+            if len(r) < 2:
+                continue
+            ym = normalize_ym_label(r[0])
+            tot_val = clean_int(r[1])
+            if re.match(r"^\d{2}\.\d{2}$", ym) and tot_val > 0:
+                yy, mm = int(ym[:2]), int(ym[3:5])
+                sales_ym = f"{yy - 1:02d}.12" if mm == 1 else f"{yy:02d}.{mm - 1:02d}"
+                monthly_map[ym] = {
+                    "정산월": ym,
+                    "매출귀속월": sales_ym,
+                    "4대보험": 0,
+                    "파트타임": 0,
+                    "총인건비": tot_val,
+                    "파트근무분": 0,
+                }
+
+    # 2) 개별 월별 상세 탭(YY.MM)이 있으면 상세 내역으로 병합/덮어쓰기
     for ws in ss.worksheets():
         sname = normalize_ym_label(ws.title.strip())
         if not re.match(r"^\d{2}\.\d{2}$", sname):
             continue
         parsed = _parse_grid_values(ws.get_all_values())
         if parsed["total"] > 0:
-            # 지급월(예: 26.11) 기준 실제 귀속 매출월(전월: 26.10) 계산
             yy, mm = int(sname[:2]), int(sname[3:5])
             sales_ym = f"{yy - 1:02d}.12" if mm == 1 else f"{yy:02d}.{mm - 1:02d}"
-
-            monthly_rows.append({
+            monthly_map[sname] = {
                 "정산월": sname,
                 "매출귀속월": sales_ym,
                 "4대보험": parsed["ins"],
                 "파트타임": parsed["part"],
                 "총인건비": parsed["total"],
                 "파트근무분": parsed["part_mins"],
-            })
+            }
             for item in parsed["staff"]:
                 staff_rows.append({"정산월": sname, **item})
 
-    df_m = pd.DataFrame(monthly_rows)
+    df_m = pd.DataFrame(list(monthly_map.values()))
     if not df_m.empty:
-        df_m = df_m.drop_duplicates(subset=["정산월"], keep="last").sort_values("정산월").reset_index(drop=True)
+        df_m = df_m.sort_values("정산월").reset_index(drop=True)
 
-        # 매출귀속월(전월) 기준으로 매출 데이터 병합
+        # 매출 데이터 병합 (참고: 올려주신 표는 같은 월 매출과 비교 중이므로 당월/전월 중 선택 가능)
         df_sales = load_gsheet_sales(sales_id)
         if not df_sales.empty:
             df_m = pd.merge(df_m, df_sales, left_on="매출귀속월", right_on="정산월", how="left", suffixes=("", "_sales"))
@@ -629,10 +650,10 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
             lambda r: round((r["총인건비"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
         )
         df_m["고정급비율(%)"] = df_m.apply(
-            lambda r: round((r["4대보험"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
+            lambda r: round((r["4대보험"] / r["총매출"] * 100), 1) if (r["총매출"] > 0 and r["4대보험"] > 0) else 0.0, axis=1
         )
         df_m["변동급비율(%)"] = df_m.apply(
-            lambda r: round((r["파트타임"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
+            lambda r: round((r["파트타임"] / r["총매출"] * 100), 1) if (r["총매출"] > 0 and r["파트타임"] > 0) else 0.0, axis=1
         )
         df_m["시간당매출(SPLH)"] = df_m.apply(
             lambda r: int(round(r["총매출"] / (r["파트근무분"] / 60.0))) if (r["총매출"] > 0 and r["파트근무분"] > 0) else 0,
