@@ -33,7 +33,6 @@ CREDENTIALS_FILE = "credentials.json"
 PAYROLL_START_DAY = 5
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 
-st.set_page_config(page_title="분당그릴 출퇴근기록부", page_icon="⏱️", layout="wide")
 
 
 def apply_clean_style():
