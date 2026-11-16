@@ -188,19 +188,22 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     sy, sm, sd = (sign_date_parts + ["", "", ""])[:3]
 
     # --- 1페이지 ---
-    title = f"표준근로계약서({ctype})"
-    c.setFont(bold_f, 15)
-    tw = c.stringWidth(title, bold_f, 15)
-    c.rect((w - tw) / 2 - 12, h - 55, tw + 24, 24)
-    c.drawString((w - tw) / 2, h - 48, title)
+    c.setLineWidth(1.2)
+    c.rect(36, 36, w - 72, h - 72)
 
-    y = h - 82
+    title = f"표준근로계약서({ctype})"
+    c.setFont(bold_f, 17)
+    tw = c.stringWidth(title, bold_f, 17)
+    c.rect((w - tw) / 2 - 18, h - 82, tw + 36, 30)
+    c.drawString((w - tw) / 2, h - 73, title)
+
+    y = h - 114
     y = _draw_wrapped(
         c,
         f'분 당 그 릴 (이하 "사업주"라 함)과(와)  {emp_name} (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.',
-        45, y, w - 90, 14, reg_f, 9.5
+        50, y, w - 100, 17, bold_f, 10.5
     )
-    y -= 4
+    y -= 10
 
     if ctype == "기간의 정함이 있는 경우":
         c1 = f"1. 근로계약기간 :  {s_date} 부터    {e_date} 까지"
@@ -232,13 +235,18 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
     for line in lines_p1:
         is_head = line[0].isdigit() and "." in line[:4]
-        y = _draw_wrapped(c, line, 45, y, w - 90, 14, bold_f if is_head else reg_f, 9.2)
-        y -= 2
+        y = _draw_wrapped(c, line, 50, y, w - 100, 17.5, bold_f if is_head else reg_f, 10.3)
+        y -= 6 if is_head else 3
 
+    c.setFont(reg_f, 9)
+    c.drawCentredString(w / 2, 46, "- 1 / 2 -")
     c.showPage()
 
     # --- 2페이지 ---
-    y = h - 55
+    c.setLineWidth(1.2)
+    c.rect(36, 36, w - 72, h - 72)
+
+    y = h - 68
     lines_p2 = [
         "13. 수습기간",
         "   - 입사 후 3개월(최대 3개월)간은 수습기간으로 정한다.",
@@ -259,47 +267,54 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
     for line in lines_p2:
         is_head = line[:2].isdigit() and "." in line[:4]
-        y = _draw_wrapped(c, line, 45, y, w - 90, 14.5, bold_f if is_head else reg_f, 9.3)
-        y -= 3
+        y = _draw_wrapped(c, line, 50, y, w - 100, 17, bold_f if is_head else reg_f, 10.2)
+        y -= 5 if is_head else 2.5
 
-    y -= 24
-    c.setFont(bold_f, 11)
+    # 구분선 및 계약 체결일
+    y -= 14
+    c.setLineWidth(0.6)
+    c.line(48, y, w - 48, y)
+    y -= 28
+    c.setFont(bold_f, 12.5)
     date_line = f"{sy} 년    {sm} 월    {sd} 일"
     c.drawCentredString(w / 2, y, date_line)
 
     # 사업주 정보 및 대표자 서명 이미지
-    y -= 45
-    c.setFont(bold_f, 10)
-    c.drawString(45, y, "(사업주)  사업체명 :  분 당 그 릴     (전화 : 031-713-0342 )")
-    y -= 18
-    c.setFont(reg_f, 9.5)
-    c.drawString(92, y, "주    소 :  경기도 성남시 분당구 미금일로 74번길 13-3 1층")
-    y -= 20
-    c.drawString(92, y, "대 표 자 :  이   용   석    (서명)")
+    y -= 42
+    c.setFont(bold_f, 10.5)
+    c.drawString(52, y, "(사업주)  사업체명 :  분 당 그 릴        (전화 : 031-713-0342 )")
+    y -= 21
+    c.setFont(reg_f, 10)
+    c.drawString(102, y, "주    소 :  경기도 성남시 분당구 미금일로 74번길 13-3 1층")
+    y -= 23
+    c.drawString(102, y, "대 표 자 :  이   용   석      (서명)")
 
     if os.path.exists(OWNER_SIGN_PATH):
         try:
             owner_img = Image.open(OWNER_SIGN_PATH).convert("RGBA")
-            c.drawImage(ImageReader(owner_img), 235, y - 14, width=65, height=34, mask="auto")
+            c.drawImage(ImageReader(owner_img), 255, y - 14, width=68, height=35, mask="auto")
         except Exception:
             pass
 
-    # 근로자 정보 및 직원 자필 서명 이미지
-    y -= 48
-    c.setFont(bold_f, 10)
-    c.drawString(45, y, f"(근로자)  주    소 :  {addr}")
-    y -= 18
-    c.setFont(reg_f, 9.5)
-    c.drawString(92, y, f"연 락 처 :  {phone}          - 근로계약서 배부일 : {sy}.{sm}.{sd}")
-    y -= 20
-    c.drawString(92, y, f"성    명 :  {emp_name}    (서명)       - 보건증 제출일 : {health_date}")
+    # 근로자 정보 및 직원 서명 이미지 (글씨 겹침 방지 배치)
+    y -= 44
+    c.setFont(bold_f, 10.5)
+    c.drawString(52, y, f"(근로자)  주    소 :  {addr}")
+    y -= 21
+    c.setFont(reg_f, 10)
+    c.drawString(102, y, f"연 락 처 :  {phone}            - 근로계약서 배부일 : {sy}.{sm}.{sd}")
+    y -= 23
+    c.drawString(102, y, f"성    명 :  {emp_name}      (서명)")
+    c.drawString(335, y, f"- 보건증 제출일 : {health_date}")
 
     if emp_sign_img is not None:
         try:
-            c.drawImage(ImageReader(emp_sign_img), 215, y - 14, width=70, height=36, mask="auto")
+            c.drawImage(ImageReader(emp_sign_img), 232, y - 14, width=68, height=34, mask="auto")
         except Exception:
             pass
 
+    c.setFont(reg_f, 9)
+    c.drawCentredString(w / 2, 46, "- 2 / 2 -")
     c.save()
     return buf.getvalue()
 
