@@ -8,9 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# =========================================================================
-# 0. 매장 및 시스템 설정
-# =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -33,15 +30,12 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
-PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 익월 4일)
+PAYROLL_START_DAY = 5
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 
 st.set_page_config(page_title="분당그릴 출퇴근기록부", page_icon="⏱️", layout="wide")
 
 
-# =========================================================================
-# 1. 커스텀 스타일
-# =========================================================================
 def apply_clean_style():
     st.markdown(
         """
@@ -88,14 +82,12 @@ def apply_clean_style():
             padding-left: 0.55rem;
             border-left: 4px solid #D97706;
         }
-        /* 매니저 확인 섹션 전용 배경/테두리 강조 */
         div[data-testid="stVerticalBlock"]:has(> div.element-container > div.stMarkdown > div.mgr-box-marker) {
             background-color: #FFFBEB;
             border: 1.5px solid #F59E0B;
             border-radius: 10px;
             padding: 0.85rem 1rem;
         }
-        /* 비밀번호 입력칸 크기는 유지하면서 가려지는 점(••••) 크기만 크게 확대 */
         input[type="password"] {
             font-size: 1.45rem !important;
             letter-spacing: 0.22em !important;
@@ -127,9 +119,6 @@ def apply_clean_style():
 apply_clean_style()
 
 
-# =========================================================================
-# 2. 구글 시트 연결 및 날짜/시간 계산 유틸리티
-# =========================================================================
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -184,7 +173,6 @@ def mins_to_korean(total_mins: int) -> str:
 
 
 def format_date_with_weekday(d_str: str) -> str:
-    """'2026-10-24' -> '10-24 (토)' 형태로 변환"""
     weekdays_short = ["월", "화", "수", "목", "금", "토", "일"]
     try:
         dt = datetime.datetime.strptime(str(d_str).strip(), "%Y-%m-%d").date()
@@ -212,7 +200,8 @@ def load_db_sheets(db_id: str):
                     out.append(row_d)
         return pd.DataFrame(out)
 
-    df_emp = read_sheet("직원목록")
+    # '직원목록' -> '파트타임' 탭으로 변경 반영
+    df_emp = read_sheet("파트타임")
     df_att = read_sheet("통합근태DB", with_row_num=True)
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
@@ -220,9 +209,6 @@ def load_db_sheets(db_id: str):
     return df_emp, df_att
 
 
-# =========================================================================
-# 3. 상단 헤더 (출퇴근기록부 + 바로 옆 새로고침 | 우측 끝 매장선택)
-# =========================================================================
 h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
 with h_col1:
     st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
@@ -284,9 +270,6 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
-# =========================================================================
-# 4. [상단 구역] 좌측: 일 근무현황 그리드 | 우측: 매니저 전용 확인
-# =========================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
 selected_grid_record = None
@@ -343,7 +326,6 @@ with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        # '매니저확인 / 비밀번호' 두 줄 표기 + 우측 입력 박스
         p_lbl, p_inp = st.columns([0.75, 1.6], vertical_alignment="center")
         with p_lbl:
             st.markdown(
@@ -424,9 +406,6 @@ with top_right:
         else:
             st.caption("매니저 확인 전까지는 위의 표에서 행을 체크해 수정할 수 있습니다.")
 
-# =========================================================================
-# 5. [하단 구역] 좌측: 출퇴근 시간 입력/수정 | 우측: 월별 근무시간 조회
-# =========================================================================
 left_col, right_col = st.columns([1.5, 1.0])
 
 with left_col:
@@ -444,7 +423,7 @@ with left_col:
 
     with st.container(border=True):
         if not active_emp_names:
-            st.warning("'직원목록' 탭에 재직 중인 직원이 없습니다.")
+            st.warning("'파트타임' 탭에 재직 중인 직원이 없습니다.")
             st.stop()
 
         if mode == "기존 수정":
@@ -586,7 +565,6 @@ with right_col:
         with st.expander(f"📋 세부 근무 내역({len(m_df)}건)", expanded=False):
             if not m_df.empty:
                 m_disp = m_df.sort_values("날짜", ascending=False).copy()
-                # 날짜 옆에 요일 표기 (예: 10-24 (토))
                 m_disp["날짜"] = m_disp["날짜"].apply(format_date_with_weekday)
                 m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
                 m_disp["상태"] = m_disp["매니저확인"].apply(
