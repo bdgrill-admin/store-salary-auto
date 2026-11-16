@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =========================================================================
-# 0. 매장별 설정 및 환경 변수 (매장 추가 시 아래 STORES에 4줄만 복붙하세요!)
+# 0. 매장별 설정 및 환경 변수 (매장 추가 시 아래 STORES에 5줄만 복붙하세요!)
 # =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
@@ -31,18 +31,18 @@ def get_secret(key: str, default: str = ""):
 
 STORES = {
     "분당그릴": {
-        "att_id": "1-E43JK8yCMrLSW4t5zSlIeV4ptl2EltfZwDLsQlA88Y",
-        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",
-        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),
-        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),  # ◀ 신규 매출 시트 ID 추가
+        "att_id": "1-E43JK8yCMrLSW4t5zSlIeV4ptl2EltfZwDLsQlA88Y",    # 출퇴근기록지 시트 ID
+        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",   # 직원인적사항 시트 ID
+        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),             # 분당그릴_급여히스토리 시트 ID
+        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),           # 분당그릴_매출관리 시트 ID
         "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
     },
-},
     # 향후 감동한점 오픈 시 주석(#)을 풀고 시트 ID만 채우면 즉시 활성화됩니다.
     # "감동한점": {
     #     "att_id": "여기에_감동한점_출퇴근기록지_ID",
     #     "info_id": "여기에_감동한점_직원인적사항_ID",
     #     "hist_id": get_secret("HIST_SHEET_GAMDONG", ""),
+    #     "sales_id": get_secret("SALES_SHEET_GAMDONG", ""),
     #     "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
     # },
 }
@@ -56,7 +56,7 @@ TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")  # 웹 접속 비밀번호
 
-st.set_page_config(page_title="매장 통합 급여 정산 & 추이 분석", page_icon="🥩", layout="wide")
+st.set_page_config(page_title="매장 통합 급여 정산 & 경영 분석", page_icon="🥩", layout="wide")
 
 
 # =========================================================================
@@ -72,14 +72,12 @@ def apply_clean_style():
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
 
-        /* 상단 불필요한 공백 축소 및 최대 폭 정돈 */
         .block-container {
             padding-top: 1.8rem;
             padding-bottom: 3rem;
             max-width: 1280px;
         }
 
-        /* 상단 타이틀 헤더 */
         .app-header {
             padding: 0.2rem 0 0.6rem 0;
         }
@@ -96,42 +94,38 @@ def apply_clean_style():
             margin-top: 0.2rem;
         }
 
-        /* 섹션 제목 스타일 */
         .section-title {
             font-size: 1.12rem;
             font-weight: 700;
             color: #1E293B;
-            margin: 1.2rem 0 0.6rem 0;
+            margin: 1.3rem 0 0.65rem 0;
             padding-left: 0.6rem;
             border-left: 4px solid #334155;
         }
 
-        /* KPI 메트릭 카드 정돈 */
         div[data-testid="stMetric"] {
             background-color: #F8FAFC;
             border: 1px solid #E2E8F0;
             border-radius: 10px;
-            padding: 1rem 1.2rem;
+            padding: 0.95rem 1.1rem;
         }
         div[data-testid="stMetric"] label {
-            font-size: 0.88rem;
+            font-size: 0.85rem;
             font-weight: 600;
             color: #475569;
         }
         div[data-testid="stMetricValue"] {
-            font-size: 1.55rem;
+            font-size: 1.45rem;
             font-weight: 700;
             color: #0F172A;
         }
 
-        /* 탭 버튼 가독성 개선 */
         button[data-baseweb="tab"] {
             font-size: 0.98rem;
             font-weight: 600;
             padding: 0.6rem 1.2rem;
         }
 
-        /* 일반/다운로드 버튼 모서리 및 높이 통일 */
         .stButton > button, .stDownloadButton > button {
             border-radius: 8px;
             font-weight: 600;
@@ -182,7 +176,6 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    # 1순위: Streamlit Cloud Secrets의 GCP 서비스 계정 정보
     try:
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
@@ -191,7 +184,6 @@ def get_gspread_client():
     except Exception:
         pass
 
-    # 2순위: 로컬 credentials.json 파일
     creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
     return gspread.authorize(creds)
 
@@ -210,6 +202,15 @@ def get_settlement_period(base_date: datetime.date):
         prev_prev_last = prev_month_last.replace(day=1) - datetime.timedelta(days=1)
         start_date = prev_prev_last.replace(day=5)
     return start_date, end_date
+
+
+def normalize_ym_label(val: str) -> str:
+    """'2025-11', '2025.11', '25.11', '25-11' 등 모든 월 표기를 'YY.MM'으로 통일"""
+    s = str(val).strip()
+    m = re.match(r"^(?:20)?(\d{2})[-./](\d{1,2})$", s)
+    if m:
+        return f"{m.group(1)}.{int(m.group(2)):02d}"
+    return s
 
 
 def parse_sheet_date(val):
@@ -439,11 +440,12 @@ def fetch_and_calculate_salary(att_id: str, info_id: str, start_date: datetime.d
 
 
 # =========================================================================
-# 4. 구글 시트 기반 히스토리 저장 / 전월 비교 / 추이 분석
+# 4. 구글 시트 기반 급여 히스토리 + 매출 연동 분석
 # =========================================================================
 def _parse_grid_values(all_rows: list):
     """2차원 리스트(구글 시트 또는 엑셀 탭)에서 4대보험/파트타임 데이터 파싱"""
     ins_sum, part_sum = 0, 0
+    total_part_mins = 0
     staff_items = []
     mode = None
     col_map = {}
@@ -477,6 +479,7 @@ def _parse_grid_values(all_rows: list):
                 gross_val = clean_int(vals[col_map["총급여"]]) if ("총급여" in col_map and col_map["총급여"] < len(vals)) else net_val
                 wage_val = clean_int(vals[col_map["시급"]]) if ("시급" in col_map and col_map["시급"] < len(vals)) else 0
                 mins_val = parse_hhmm_to_minutes(vals[col_map["총시간"]]) if ("총시간" in col_map and col_map["총시간"] < len(vals)) else 0
+                total_part_mins += mins_val
 
             staff_items.append({
                 "구분": mode,
@@ -487,7 +490,13 @@ def _parse_grid_values(all_rows: list):
                 "최종급여": net_val,
             })
 
-    return {"ins": ins_sum, "part": part_sum, "total": ins_sum + part_sum, "staff": staff_items}
+    return {
+        "ins": ins_sum,
+        "part": part_sum,
+        "total": ins_sum + part_sum,
+        "part_mins": total_part_mins,
+        "staff": staff_items,
+    }
 
 
 def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
@@ -533,8 +542,43 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
     return f"구글 시트 탭 [{sheet_name}] 저장 완료", excel_bytes
 
 
+@st.cache_data(ttl=60, show_spinner="매출 관리 시트에서 월별 매출을 불러오는 중...")
+def load_gsheet_sales(sales_id: str) -> pd.DataFrame:
+    """분당그릴_매출관리 시트의 '월별매출' 탭(또는 첫 번째 탭)에서 정산월·총매출 로드"""
+    if not sales_id:
+        return pd.DataFrame(columns=["정산월", "총매출"])
+    try:
+        gc = get_gspread_client()
+        ss = gc.open_by_key(sales_id)
+        titles = [ws.title.strip() for ws in ss.worksheets()]
+        ws = ss.worksheet("월별매출") if "월별매출" in titles else ss.worksheets()[0]
+        rows = ws.get_all_values()
+        if len(rows) < 2:
+            return pd.DataFrame(columns=["정산월", "총매출"])
+
+        headers = [c.strip() for c in rows[0]]
+        ym_idx = headers.index("정산월") if "정산월" in headers else 0
+        sales_idx = headers.index("총매출") if "총매출" in headers else 1
+
+        records = []
+        for r in rows[1:]:
+            if len(r) <= max(ym_idx, sales_idx):
+                continue
+            ym = normalize_ym_label(r[ym_idx])
+            val = clean_int(r[sales_idx])
+            if re.match(r"^\d{2}\.\d{2}$", ym) and val > 0:
+                records.append({"정산월": ym, "총매출": val})
+
+        df_sales = pd.DataFrame(records)
+        if not df_sales.empty:
+            df_sales = df_sales.drop_duplicates(subset=["정산월"], keep="last").sort_values("정산월").reset_index(drop=True)
+        return df_sales
+    except Exception:
+        return pd.DataFrame(columns=["정산월", "총매출"])
+
+
 @st.cache_data(ttl=60, show_spinner="구글 히스토리 시트에서 누적 추이를 분석하는 중...")
-def load_gsheet_history(hist_id: str):
+def load_gsheet_history(hist_id: str, sales_id: str = ""):
     if not hist_id:
         return pd.DataFrame(), pd.DataFrame()
     try:
@@ -547,7 +591,7 @@ def load_gsheet_history(hist_id: str):
     staff_rows = []
 
     for ws in ss.worksheets():
-        sname = ws.title.strip()
+        sname = normalize_ym_label(ws.title.strip())
         if not re.match(r"^\d{2}\.\d{2}$", sname):
             continue
         parsed = _parse_grid_values(ws.get_all_values())
@@ -557,6 +601,7 @@ def load_gsheet_history(hist_id: str):
                 "4대보험": parsed["ins"],
                 "파트타임": parsed["part"],
                 "총인건비": parsed["total"],
+                "파트근무분": parsed["part_mins"],
             })
             for item in parsed["staff"]:
                 staff_rows.append({"정산월": sname, **item})
@@ -564,6 +609,28 @@ def load_gsheet_history(hist_id: str):
     df_m = pd.DataFrame(monthly_rows)
     if not df_m.empty:
         df_m = df_m.drop_duplicates(subset=["정산월"], keep="last").sort_values("정산월").reset_index(drop=True)
+
+        # 매출 데이터 병합 및 인건비율 / 시간당 생산성(SPLH) 계산
+        df_sales = load_gsheet_sales(sales_id)
+        if not df_sales.empty:
+            df_m = pd.merge(df_m, df_sales, on="정산월", how="left")
+            df_m["총매출"] = df_m["총매출"].fillna(0).astype(int)
+        else:
+            df_m["총매출"] = 0
+
+        df_m["인건비율(%)"] = df_m.apply(
+            lambda r: round((r["총인건비"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
+        )
+        df_m["고정급비율(%)"] = df_m.apply(
+            lambda r: round((r["4대보험"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
+        )
+        df_m["변동급비율(%)"] = df_m.apply(
+            lambda r: round((r["파트타임"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
+        )
+        df_m["시간당매출(SPLH)"] = df_m.apply(
+            lambda r: int(round(r["총매출"] / (r["파트근무분"] / 60.0))) if (r["총매출"] > 0 and r["파트근무분"] > 0) else 0,
+            axis=1,
+        )
 
     df_s = pd.DataFrame(staff_rows)
     if not df_s.empty:
@@ -727,15 +794,15 @@ def send_telegram_to_chat(chat_id: str, message: str):
 
 
 # =========================================================================
-# 6. Streamlit 메인 대시보드 UI (깔끔한 그리드 및 버튼 정렬)
+# 6. Streamlit 메인 대시보드 UI
 # =========================================================================
 head_c1, head_c2 = st.columns([3.2, 1], vertical_alignment="center")
 with head_c1:
     st.markdown(
         """
         <div class="app-header">
-            <div class="app-title">🥩 매장 통합 급여 정산 & 인건비 분석</div>
-            <div class="app-subtitle">출퇴근 시트 자동 집계 · 세무사 보고 · 대량이체 · 급여명세서 일괄 발송</div>
+            <div class="app-title">🥩 매장 통합 급여 정산 & 경영 분석</div>
+            <div class="app-subtitle">출퇴근 시트 자동 집계 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -745,10 +812,9 @@ with head_c2:
 
 store_cfg = STORES[selected_store]
 
-tab_calc, tab_trend = st.tabs([f"💰 {selected_store} 월별 급여 정산", f"📈 {selected_store} 인건비 변동 추이"])
+tab_calc, tab_trend = st.tabs([f"💰 {selected_store} 월별 급여 정산", f"📈 {selected_store} 매출 · 인건비 경영 분석"])
 
 with tab_calc:
-    # 상단 정산 컨트롤 바 (기준일 + 대상기간 + 새로고침 버튼 한 줄 정렬)
     with st.container(border=True):
         ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
         with ctrl_1:
@@ -773,14 +839,12 @@ with tab_calc:
             store_cfg["att_id"], store_cfg["info_id"], start_dt, end_dt
         )
 
-        # 근태 이상 알림 (있을 때만 깔끔한 박스로 표시)
         if warnings:
             st.error(f"🚨 근태 및 날짜 이상 내역이 **{len(warnings)}건** 발견되었습니다. 정산 확정 전 확인해 주세요.")
             with st.expander(f"이상 내역 상세 보기 ({len(warnings)}건)", expanded=True):
                 for w in warnings:
                     st.markdown(f"- {w}")
 
-        # 1. 4대보험 직원 테이블
         st.markdown('<div class="section-title">1. 4대보험 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
             st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭을 추가하면 자동으로 불러옵니다.")
@@ -807,7 +871,6 @@ with tab_calc:
                 if orig_row is not None and clean_int(row.get("최종급여", 0)) == clean_int(orig_row.get("최종급여", 0)):
                     df_ins_edited.at[idx, "최종급여"] = clean_int(row.get("최종급여", 0)) + extra_pay
 
-        # 2. 파트타임 직원 테이블
         st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
         df_part_edited = st.data_editor(
             df_part_raw,
@@ -846,17 +909,25 @@ with tab_calc:
                 df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
                 df_part_edited.at[idx, "최종급여"] = net_pay
 
-        # 3. 정산 합계 KPI 3열 그리드
         sum_ins = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
         total_payout = sum_ins + sum_part
 
-        df_hist_m, _ = load_gsheet_history(store_cfg["hist_id"])
+        df_hist_m, _ = load_gsheet_history(store_cfg["hist_id"], store_cfg["sales_id"])
+        curr_ym = end_dt.strftime("%y.%m")
         prev_ym = (end_dt.replace(day=1) - datetime.timedelta(days=1)).strftime("%y.%m")
+        yoy_ym = f"{int(end_dt.strftime('%y')) - 1:02d}.{end_dt.month:02d}"
+
         prev_row = df_hist_m[df_hist_m["정산월"] == prev_ym] if not df_hist_m.empty else pd.DataFrame()
+        yoy_row = df_hist_m[df_hist_m["정산월"] == yoy_ym] if not df_hist_m.empty else pd.DataFrame()
+
+        # 해당 월 매출 조회 (매출관리 시트에 입력되어 있는 경우 인건비율 즉시 표시)
+        df_sales_cur = load_gsheet_sales(store_cfg["sales_id"])
+        cur_sales_row = df_sales_cur[df_sales_cur["정산월"] == curr_ym] if not df_sales_cur.empty else pd.DataFrame()
+        cur_sales_val = int(cur_sales_row.iloc[0]["총매출"]) if not cur_sales_row.empty else 0
 
         st.write("")
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         if not prev_row.empty:
             p_ins = int(prev_row.iloc[0]["4대보험"])
             p_part = int(prev_row.iloc[0]["파트타임"])
@@ -869,7 +940,25 @@ with tab_calc:
             m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원")
 
-        # 4. 세무사 보고 · 다운로드 · 정산 확정 패널 (좌측 입력 / 우측 버튼 그리드)
+        # 4번째 카드: 매출 대비 인건비율 또는 전년 동월 대비 증감
+        if cur_sales_val > 0:
+            cur_ratio = total_payout / cur_sales_val * 100
+            if not yoy_row.empty and int(yoy_row.iloc[0]["총매출"]) > 0:
+                yoy_ratio = float(yoy_row.iloc[0]["인건비율(%)"])
+                m4.metric(
+                    f"당월 인건비율 (매출 {cur_sales_val // 10000:,}만)",
+                    f"{cur_ratio:.1f}%",
+                    delta=f"{cur_ratio - yoy_ratio:+.1f}%p (작년 동월 대비)",
+                    delta_color="inverse",
+                )
+            else:
+                m4.metric(f"당월 인건비율 (매출 {cur_sales_val // 10000:,}만)", f"{cur_ratio:.1f}%")
+        elif not yoy_row.empty:
+            y_tot = int(yoy_row.iloc[0]["총인건비"])
+            m4.metric("작년 동월 대비 인건비", f"{total_payout - y_tot:+,}원", delta=f"작년 {yoy_ym}: {y_tot:,}원", delta_color="off")
+        else:
+            m4.metric("당월 인건비율", "매출 미입력", delta="매출시트 입력 시 자동계산", delta_color="off")
+
         st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
 
@@ -1010,45 +1099,136 @@ with tab_calc:
         st.error(f"오류가 발생했습니다: {e}")
 
 with tab_trend:
-    df_monthly, df_staff = load_gsheet_history(store_cfg["hist_id"])
+    df_monthly, df_staff = load_gsheet_history(store_cfg["hist_id"], store_cfg["sales_id"])
 
     if df_monthly.empty:
         st.info(
-            "ℹ️ 구글 히스토리 시트에 `YY.MM` 탭(`25.10`, `25.11` 등)이 있으면 자동으로 분석 그래프가 표시됩니다.\n"
-            "(기존 엑셀 파일의 탭들을 히스토리 구글 시트로 복사해 두시면 과거 추이까지 바로 연결됩니다.)"
+            "ℹ️ 구글 히스토리 시트에 `YY.MM` 탭(`25.12`, `26.01` 등)이 있으면 자동으로 경영 분석 리포트가 표시됩니다."
         )
     else:
+        has_sales = (df_monthly["총매출"] > 0).any()
+        valid_sales_df = df_monthly[df_monthly["총매출"] > 0]
+
         avg_total = int(df_monthly["총인건비"].mean())
-        max_row = df_monthly.loc[df_monthly["총인건비"].idxmax()]
-        min_row = df_monthly.loc[df_monthly["총인건비"].idxmin()]
         part_ratio = (df_monthly["파트타임"].sum() / df_monthly["총인건비"].sum() * 100) if df_monthly["총인건비"].sum() > 0 else 0
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric(f"월평균 총 인건비 ({len(df_monthly)}개월)", f"{avg_total:,}원")
-        k2.metric(f"최고 지출 월 ({max_row['정산월']})", f"{int(max_row['총인건비']):,}원")
-        k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
-        k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%")
 
-        st.markdown('<div class="section-title">1. 월별 인건비 추이 (4대보험 vs 파트타임)</div>', unsafe_allow_html=True)
-        with st.container(border=True):
-            chart_df = df_monthly.set_index("정산월")[["4대보험", "파트타임"]]
-            st.bar_chart(chart_df, height=320)
+        if has_sales:
+            avg_sales = int(valid_sales_df["총매출"].mean())
+            avg_labor_ratio = valid_sales_df["총인건비"].sum() / valid_sales_df["총매출"].sum() * 100
+            valid_splh = valid_sales_df[valid_sales_df["시간당매출(SPLH)"] > 0]
+            avg_splh = int(valid_splh["시간당매출(SPLH)"].mean()) if not valid_splh.empty else 0
 
+            k2.metric(f"월평균 매출 ({len(valid_sales_df)}개월 기준)", f"{avg_sales:,}원")
+            k3.metric("평균 매출 대비 인건비율", f"{avg_labor_ratio:.1f}%", delta=f"변동급 비중 {part_ratio:.1f}%", delta_color="off")
+            k4.metric("파트타임 시간당 매출(SPLH)", f"{avg_splh:,}원/h" if avg_splh > 0 else "집계중")
+        else:
+            max_row = df_monthly.loc[df_monthly["총인건비"].idxmax()]
+            min_row = df_monthly.loc[df_monthly["총인건비"].idxmin()]
+            k2.metric(f"최고 지출 월 ({max_row['정산월']})", f"{int(max_row['총인건비']):,}원")
+            k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
+            k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%")
+
+        # 차트 영역: 매출이 연결된 경우 2열 그리드(인건비 구성 vs 인건비율 추이)
+        st.markdown('<div class="section-title">1. 월별 매출 · 인건비 및 인건비율 추이</div>', unsafe_allow_html=True)
+        if has_sales:
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                with st.container(border=True):
+                    st.caption("📊 월별 인건비 구성 (4대보험 vs 파트타임)")
+                    st.bar_chart(df_monthly.set_index("정산월")[["4대보험", "파트타임"]], height=300)
+            with ch2:
+                with st.container(border=True):
+                    st.caption("📉 매출 대비 인건비율 추이 (%, 고정급 vs 변동급)")
+                    ratio_chart_df = valid_sales_df.set_index("정산월")[["인건비율(%)", "고정급비율(%)", "변동급비율(%)"]]
+                    st.line_chart(ratio_chart_df, height=300)
+        else:
+            with st.container(border=True):
+                st.bar_chart(df_monthly.set_index("정산월")[["4대보험", "파트타임"]], height=320)
+
+        # 전년 동월 대비(YoY) 비교 섹션 (동일 월 데이터가 2개 연도 이상 존재할 때 자동 활성화)
+        df_monthly_calc = df_monthly.copy()
+        df_monthly_calc["월번호"] = df_monthly_calc["정산월"].str.split(".").str[1]
+        df_monthly_calc["연도"] = "20" + df_monthly_calc["정산월"].str.split(".").str[0]
+
+        yoy_records = []
+        for idx, r in df_monthly_calc.iterrows():
+            prev_year_ym = f"{int(r['정산월'][:2]) - 1:02d}.{r['월번호']}"
+            match_prev_yr = df_monthly_calc[df_monthly_calc["정산월"] == prev_year_ym]
+            if not match_prev_yr.empty:
+                pr = match_prev_yr.iloc[0]
+                diff_labor = int(r["총인건비"] - pr["총인건비"])
+                pct_labor = (diff_labor / pr["총인건비"] * 100) if pr["총인건비"] > 0 else 0.0
+                diff_sales = int(r["총매출"] - pr["총매출"]) if (r["총매출"] > 0 and pr["총매출"] > 0) else 0
+                pct_sales = (diff_sales / pr["총매출"] * 100) if (r["총매출"] > 0 and pr["총매출"] > 0) else 0.0
+                diff_ratio = round(r["인건비율(%)"] - pr["인건비율(%)"], 1) if (r["총매출"] > 0 and pr["총매출"] > 0) else 0.0
+                yoy_records.append({
+                    "비교월": f"{prev_year_ym} → {r['정산월']}",
+                    "작년매출": int(pr["총매출"]),
+                    "올해매출": int(r["총매출"]),
+                    "매출증감률(%)": round(pct_sales, 1),
+                    "작년인건비": int(pr["총인건비"]),
+                    "올해인건비": int(r["총인건비"]),
+                    "인건비증감액": diff_labor,
+                    "인건비증감률(%)": round(pct_labor, 1),
+                    "인건비율변화(%p)": diff_ratio,
+                })
+
+        if yoy_records:
+            st.markdown('<div class="section-title">2. 전년 동월 대비(YoY) 매출 · 인건비 증감 현황</div>', unsafe_allow_html=True)
+            df_yoy = pd.DataFrame(yoy_records)
+            st.dataframe(
+                df_yoy,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "작년매출": st.column_config.NumberColumn("작년 매출", format="%,d"),
+                    "올해매출": st.column_config.NumberColumn("올해 매출", format="%,d"),
+                    "매출증감률(%)": st.column_config.NumberColumn("매출 증감률", format="%+.1f%%"),
+                    "작년인건비": st.column_config.NumberColumn("작년 인건비", format="%,d"),
+                    "올해인건비": st.column_config.NumberColumn("올해 인건비", format="%,d"),
+                    "인건비증감액": st.column_config.NumberColumn("인건비 증감액", format="%+,d"),
+                    "인건비증감률(%)": st.column_config.NumberColumn("인건비 증감률", format="%+.1f%%"),
+                    "인건비율변화(%p)": st.column_config.NumberColumn("인건비율 변화", format="%+.1f%%p"),
+                },
+            )
+
+        # 월별 상세 종합 테이블
+        sec_num = "3" if yoy_records else "2"
+        st.markdown(f'<div class="section-title">{sec_num}. 월별 매출 · 인건비 상세 내역</div>', unsafe_allow_html=True)
         df_monthly_disp = df_monthly.copy()
-        df_monthly_disp["전월대비증감"] = df_monthly_disp["총인건비"].diff().fillna(0).astype(int)
+        df_monthly_disp["전월대비인건비증감"] = df_monthly_disp["총인건비"].diff().fillna(0).astype(int)
+
+        if has_sales:
+            disp_cols = [
+                "정산월", "총매출", "4대보험", "파트타임", "총인건비",
+                "전월대비인건비증감", "인건비율(%)", "고정급비율(%)", "변동급비율(%)", "시간당매출(SPLH)"
+            ]
+        else:
+            disp_cols = ["정산월", "4대보험", "파트타임", "총인건비", "전월대비인건비증감"]
+
         st.dataframe(
-            df_monthly_disp,
+            df_monthly_disp[disp_cols],
             use_container_width=True,
             hide_index=True,
             column_config={
+                "총매출": st.column_config.NumberColumn("총 매출", format="%,d"),
                 "4대보험": st.column_config.NumberColumn("4대보험 실지급", format="%,d"),
                 "파트타임": st.column_config.NumberColumn("파트타임 실지급", format="%,d"),
                 "총인건비": st.column_config.NumberColumn("총 인건비", format="%,d"),
-                "전월대비증감": st.column_config.NumberColumn("전월 대비 증감", format="%+,d"),
+                "전월대비인건비증감": st.column_config.NumberColumn("전월 대비 증감", format="%+,d"),
+                "인건비율(%)": st.column_config.NumberColumn("인건비율", format="%.1f%%"),
+                "고정급비율(%)": st.column_config.NumberColumn("고정급 비율", format="%.1f%%"),
+                "변동급비율(%)": st.column_config.NumberColumn("변동급 비율", format="%.1f%%"),
+                "시간당매출(SPLH)": st.column_config.NumberColumn("시간당 매출", format="%,d원"),
             },
         )
 
-        st.markdown('<div class="section-title">2. 직원별 누적 근무시간 · 급여 요약</div>', unsafe_allow_html=True)
+        # 직원별 누적 근무시간 · 급여 요약
+        sec_staff_num = "4" if yoy_records else "3"
+        st.markdown(f'<div class="section-title">{sec_staff_num}. 직원별 누적 근무시간 · 급여 요약</div>', unsafe_allow_html=True)
 
         f_col1, _ = st.columns([1, 3])
         with f_col1:
