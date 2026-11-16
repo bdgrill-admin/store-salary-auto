@@ -36,7 +36,7 @@ CREDENTIALS_FILE = "credentials.json"
 PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 익월 4일)
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 
-st.set_page_config(page_title="분당그릴 출퇴근 기록부", page_icon="⏱️", layout="wide")
+st.set_page_config(page_title="분당그릴 출퇴근기록부", page_icon="⏱️", layout="wide")
 
 
 # =========================================================================
@@ -61,13 +61,15 @@ def apply_clean_style():
             font-weight: 700;
             color: #1E293B;
             margin: 0;
-            line-height: 1.35;
+            line-height: 1.3;
             letter-spacing: -0.02em;
         }
         .app-subtitle {
-            font-size: 0.88rem;
-            color: #64748B;
-            margin-top: 0.2rem;
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: #475569;
+            margin-top: 0.35rem;
+            margin-bottom: 0.25rem;
         }
         .section-title {
             font-size: 1.02rem;
@@ -101,7 +103,7 @@ def apply_clean_style():
         .stButton > button {
             border-radius: 8px;
             font-weight: 600;
-            min-height: 2.5rem;
+            min-height: 2.45rem;
         }
         </style>
         """,
@@ -196,23 +198,19 @@ def load_db_sheets(db_id: str):
 
 
 # =========================================================================
-# 3. 상단 헤더 (제목 좌측 | 매장선택 + 새로고침 우측) & 날짜/요일 선택
+# 3. 상단 헤더 (출퇴근기록부 + 바로 옆 새로고침 | 우측 매장선택) & 날짜/요일/사용법
 # =========================================================================
-h_col1, h_col2, h_col3 = st.columns([3.0, 1.1, 0.75], vertical_alignment="center")
+h_col1, h_col2, _, h_col4 = st.columns([1.35, 0.75, 2.0, 1.0], vertical_alignment="center")
 with h_col1:
-    st.markdown(
-        """
-        <div class="app-title">⏱️ 매장 출퇴근 기록부</div>
-        <div class="app-subtitle">일별 근무 현황 · 개인별 월간 누적 근무시간 조회</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
 with h_col2:
-    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
-with h_col3:
     if st.button("🔄 새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+with h_col4:
+    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
+
+st.markdown('<div class="app-subtitle">📅 조회 및 입력 날짜</div>', unsafe_allow_html=True)
 
 store_cfg = STORES[selected_store]
 
@@ -239,24 +237,22 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-# 날짜 선택 (라벨 제거) + 우측 요일 표시 (날짜 변경 시 즉시 연동)
-d_c1, d_c2, _ = st.columns([0.95, 0.75, 3.3], vertical_alignment="center")
+# 날짜 선택 + 배경 없는 굵은 요일 텍스트 + 우측 입력 방법 설명
+d_c1, d_c2, d_c3 = st.columns([0.95, 0.55, 3.6], vertical_alignment="center")
 with d_c1:
     sel_date = st.date_input("조회 및 입력 날짜", value=datetime.date.today(), label_visibility="collapsed")
     date_str = sel_date.strftime("%Y-%m-%d")
 with d_c2:
     weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
     w_kr = weekdays_kr[sel_date.weekday()]
-    is_wknd = sel_date.weekday() >= 5
-    badge_bg = "#FEF2F2" if is_wknd else "#F1F5F9"
-    badge_fg = "#DC2626" if is_wknd else "#334155"
-    badge_bd = "#FECACA" if is_wknd else "#CBD5E1"
+    w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
     st.markdown(
-        f"""
-        <div style="background:{badge_bg}; color:{badge_fg}; border:1px solid {badge_bd}; border-radius:8px; padding:0.46rem 0.75rem; font-size:0.9rem; font-weight:700; text-align:center;">
-            {w_kr}
-        </div>
-        """,
+        f'<div style="font-size:1rem; font-weight:700; color:{w_color}; padding-left:0.25rem; line-height:2.4rem;">{w_kr}</div>',
+        unsafe_allow_html=True,
+    )
+with d_c3:
+    st.markdown(
+        '<div style="font-size:0.86rem; color:#475569; line-height:2.4rem;">💡 <b>신규 입력</b>: 아래에서 이름·시간 입력 후 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
         unsafe_allow_html=True,
     )
 
@@ -299,7 +295,6 @@ with top_left:
 
             styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
 
-            # 한 행 높이는 28px로 줄이되 기본적으로 6칸(헤더 포함 212px)이 보이도록 높이 고정
             grid_height = max(212, min(len(day_df) * 29 + 38, 340))
             event = st.dataframe(
                 styled_df,
@@ -324,12 +319,15 @@ with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        pin_input = st.text_input(
-            "매니저 PIN 입력",
-            type="password",
-            placeholder="PIN 번호 입력 후 확인 처리",
-            key="mgr_pin_top",
-        )
+        # 비밀번호 박스를 작게 축소 배치
+        pin_col, _ = st.columns([1.15, 1.35])
+        with pin_col:
+            pin_input = st.text_input(
+                "매니저 확인 비밀번호",
+                type="password",
+                placeholder="비밀번호 입력",
+                key="mgr_pin_top",
+            )
         if pin_input == store_cfg["manager_pin"]:
             t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
 
@@ -391,14 +389,14 @@ with top_right:
                                 st.cache_data.clear()
                                 st.rerun()
         elif pin_input:
-            st.error("매니저 PIN이 일치하지 않습니다.")
+            st.error("비밀번호가 일치하지 않습니다.")
         else:
-            st.caption("매니저 확인 전까지는 위의 표에서 행을 클릭해 수정할 수 있습니다.")
+            st.caption("매니저 확인 전까지는 위의 표에서 행을 체크해 수정할 수 있습니다.")
 
 # =========================================================================
 # 5. [하단 구역] 좌측: 출퇴근 시간 입력/수정 | 우측: 월별 근무시간 조회
 # =========================================================================
-left_col, right_col = st.columns([1.4, 1.05])
+left_col, right_col = st.columns([1.5, 1.0])
 
 with left_col:
     if selected_grid_record is not None:
@@ -420,15 +418,14 @@ with left_col:
 
         if mode == "기존 수정":
             st.info(
-                f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 선택 체크를 해제하세요)"
+                f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 체크를 해제하세요)"
             )
             sel_disp_name = next(
                 (k for k, v in display_to_real_name.items() if v == real_emp_name),
                 list(display_to_real_name.keys())[0],
             )
         else:
-            sel_disp_name = st.selectbox("본인 이름 선택", options=list(display_to_real_name.keys()))
-            real_emp_name = display_to_real_name[sel_disp_name]
+            sel_disp_name = list(display_to_real_name.keys())[0]
 
         is_locked = (mode == "기존 수정") and (str(old_record.get("매니저확인", "")).strip().upper() == "TRUE")
         if is_locked:
@@ -451,7 +448,14 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        c1, c2, c3 = st.columns(3)
+        # 이름, 근무타임, 시작시간, 종료시간 4개를 같은 한 라인에 배치
+        c_name, c1, c2, c3 = st.columns([1.25, 1.05, 0.9, 0.9])
+        with c_name:
+            if mode == "기존 수정":
+                st.text_input("본인 이름", value=sel_disp_name, disabled=True)
+            else:
+                sel_disp_name = st.selectbox("본인 이름 선택", options=list(display_to_real_name.keys()))
+                real_emp_name = display_to_real_name[sel_disp_name]
         with c1:
             shift_type = st.selectbox(
                 "근무 타임",
@@ -477,8 +481,15 @@ with left_col:
         else:
             st.warning("시작시간과 종료시간을 직접 입력해 주세요.")
 
-        # 비고/특이사항 위에 두꺼운 글씨로 수정 안내 문구 배치
-        st.markdown("**※ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.**")
+        # 배경색이 들어간 눈에 띄는 수정 안내 문구
+        st.markdown(
+            """
+            <div style="background-color:#FEF3C7; border:1px solid #F59E0B; border-radius:7px; padding:0.48rem 0.75rem; margin:0.35rem 0 0.55rem 0; color:#92400E; font-weight:700; font-size:0.88rem;">
+                ⚠️ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         if mode == "기존 수정":
             edit_reason = st.text_input(
