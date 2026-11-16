@@ -72,7 +72,6 @@ BANK_ALIAS_MAP = {
     "케이": "케이뱅크",
 }
 
-st.set_page_config(page_title="직원 · 시급/계좌 관리", page_icon="👥", layout="wide")
 
 st.markdown(
     """
