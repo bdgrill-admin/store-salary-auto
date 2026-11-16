@@ -942,13 +942,16 @@ with tab_calc:
         prev_row = df_hist_m[df_hist_m["정산월"] == prev_ym] if not df_hist_m.empty else pd.DataFrame()
         yoy_row = df_hist_m[df_hist_m["정산월"] == yoy_ym] if not df_hist_m.empty else pd.DataFrame()
 
-        # 매출 시트에서 당월 및 작년 동월 매출 직접 조회
-        cur_sales_row = df_sales_all[df_sales_all["정산월"] == curr_ym] if not df_sales_all.empty else pd.DataFrame()
-        yoy_sales_row = df_sales_all[df_sales_all["정산월"] == yoy_ym] if not df_sales_all.empty else pd.DataFrame()
+        # 매출 시트에서 전달(귀속월, 예: 11월 정산 시 10월 매출) 및 작년 전달 매출 조회
+        prev_dt = end_dt.replace(day=1) - datetime.timedelta(days=1)
+        prev_yoy_ym = f"{int(prev_dt.strftime('%y')) - 1:02d}.{prev_dt.month:02d}"
+
+        cur_sales_row = df_sales_all[df_sales_all["정산월"] == prev_ym] if not df_sales_all.empty else pd.DataFrame()
+        yoy_sales_row = df_sales_all[df_sales_all["정산월"] == prev_yoy_ym] if not df_sales_all.empty else pd.DataFrame()
         cur_sales_val = int(cur_sales_row.iloc[0]["총매출"]) if not cur_sales_row.empty else 0
         yoy_sales_val = int(yoy_sales_row.iloc[0]["총매출"]) if not yoy_sales_row.empty else 0
 
-        # 5열 KPI 요약 그리드: 정규직 | 파트타임 | 총 이체 합계 | 작년 동월 대비 매출 | 작년 동월 대비 인건비
+        # 5열 KPI 요약 그리드: 정규직 | 파트타임 | 총 이체 합계 | 작년 동월 대비 매출(전달기준) | 작년 동월 대비 인건비
         st.write("")
         m1, m2, m3, m4, m5 = st.columns(5)
 
@@ -970,46 +973,46 @@ with tab_calc:
             m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원")
 
-        # 4번째 카드: 작년 동월 대비 매출
+        # 4번째 카드: 작년 동월 대비 매출 (전달 귀속 매출 기준: 예 26.10 vs 25.10)
         if cur_sales_val > 0 and yoy_sales_val > 0:
             diff_sales = cur_sales_val - yoy_sales_val
             pct_sales = diff_sales / yoy_sales_val * 100
             m4.metric(
-                "작년 동월 대비 매출",
+                f"전년 대비 매출 ({prev_ym})",
                 f"{diff_sales:+,}원 ({pct_sales:+.1f}%)",
-                delta=f"작년 {yoy_ym}: {yoy_sales_val:,}원",
-                delta_color="off",
-            )
-        elif yoy_sales_val > 0:
-            m4.metric(
-                f"작년 {yoy_ym} 매출",
-                f"{yoy_sales_val:,}원",
-                delta=f"올해 {curr_ym} 매출 미입력",
+                delta=f"당월귀속 {cur_sales_val:,}원 / 작년 {yoy_sales_val:,}원",
                 delta_color="off",
             )
         elif cur_sales_val > 0:
             m4.metric(
-                f"올해 {curr_ym} 매출",
+                f"귀속월 매출 ({prev_ym})",
                 f"{cur_sales_val:,}원",
-                delta="작년 동월 매출 데이터 없음",
+                delta=f"작년 {prev_yoy_ym} 매출 데이터 없음",
+                delta_color="off",
+            )
+        elif yoy_sales_val > 0:
+            m4.metric(
+                f"작년 {prev_yoy_ym} 매출",
+                f"{yoy_sales_val:,}원",
+                delta=f"올해 {prev_ym} 매출 미입력",
                 delta_color="off",
             )
         else:
-            m4.metric("작년 동월 대비 매출", "매출 미입력", delta="매출관리 시트 확인", delta_color="off")
+            m4.metric("전년 대비 매출", "매출 미입력", delta=f"{prev_ym} 매출 시트 확인", delta_color="off")
 
-        # 5번째 카드: 작년 동월 대비 인건비
+        # 5번째 카드: 작년 동월 대비 인건비 (급여 지급월 기준: 예 26.11 vs 25.11)
         if not yoy_row.empty:
             y_tot = int(yoy_row.iloc[0]["총인건비"])
             diff_yoy = total_payout - y_tot
             pct_yoy = (diff_yoy / y_tot * 100) if y_tot > 0 else 0.0
             m5.metric(
-                "작년 동월 대비 인건비",
+                f"전년 대비 인건비 ({curr_ym})",
                 f"{diff_yoy:+,}원 ({pct_yoy:+.1f}%)",
                 delta=f"작년 {yoy_ym}: {y_tot:,}원",
                 delta_color="off",
             )
         else:
-            m5.metric("작년 동월 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
+            m5.metric("전년 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
 
         st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
