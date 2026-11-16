@@ -307,18 +307,27 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
     import base64
     webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url:
-        raise RuntimeError("Secrets에 DRIVE_UPLOAD_WEBAPP_URL이 설정되지 않았습니다.")
+        return ""
 
     payload = {
         "folderId": CONTRACT_FOLDER_ID,
         "filename": filename,
         "base64Data": base64.b64encode(pdf_bytes).decode("utf-8"),
     }
-    res = requests.post(webapp_url, json=payload, timeout=25)
+    res = requests.post(
+        webapp_url,
+        data=json.dumps(payload),
+        headers={"Content-Type": "text/plain; charset=utf-8"},
+        allow_redirects=True,
+        timeout=30,
+    )
     try:
         res_json = res.json()
     except Exception:
-        raise RuntimeError(f"Apps Script 응답 오류 (HTTP {res.status_code}): {res.text[:200]}")
+        raise RuntimeError(
+            f"Apps Script가 JSON이 아닌 페이지를 반환했습니다 (HTTP {res.status_code}). "
+            f"배포 권한을 '모든 사용자'로 설정했는지 확인해 주세요. 응답일부: {res.text[:150]}"
+        )
     if not res_json.get("ok"):
         raise RuntimeError(f"구글 드라이브 저장 실패: {res_json.get('error')}")
     return res_json.get("url", "")
