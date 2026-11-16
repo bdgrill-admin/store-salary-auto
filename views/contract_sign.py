@@ -1,7 +1,7 @@
 import datetime
 import streamlit as st
-from PIL import Image
-from streamlit_drawable_canvas import st_canvas
+import streamlit.components.v1 as components
+from PIL import Image, ImageDraw
 from contract_utils import get_contract_by_id, complete_employee_signature
 
 st.markdown("""
@@ -99,26 +99,137 @@ with col2:
     addr = st.text_input("거주지 주소", placeholder="예: 경기도 성남시 분당구 ...")
     cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
 
-st.markdown("**아래 네모 칸 안에 손가락 또는 마우스로 정자 서명(사인)을 해주세요.**")
-canvas_result = st_canvas(
-    fill_color="rgba(255, 255, 255, 0)",
-    stroke_width=3,
-    stroke_color="#000000",
-    background_color="#F9FAFB",
-    height=160,
-    width=360,
-    drawing_mode="freedraw",
-    key="emp_sign_canvas",
-)
+st.markdown("**아래 서명란에 손가락 또는 마우스로 자필 서명(사인)을 그려주세요.**")
+
+# 순수 HTML5 서명 패드 + Streamlit 상태 연동
+sign_strokes = components.declare_component(
+    "html_sign_pad",
+    path=None
+) if False else None
+
+components.html("""
+<div style="border: 2px dashed #6b7280; border-radius: 8px; background: #f9fafb; padding: 8px; width: 340px;">
+  <canvas id="pad" width="320" height="140" style="background: #ffffff; border-radius: 4px; touch-action: none; display: block;"></canvas>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+    <span id="status" style="font-size: 12px; color: #4b5563;">위 흰 칸에 서명해 주세요</span>
+    <button type="button" onclick="clearPad()" style="padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer;">다시 쓰기</button>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('pad');
+const ctx = canvas.getContext('2d');
+ctx.lineWidth = 3;
+ctx.lineCap = 'round';
+ctx.strokeStyle = '#111827';
+let drawing = false;
+let strokes = [];
+let curStroke = [];
+
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return [Math.round(clientX - rect.left), Math.round(clientY - rect.top)];
+}
+
+function startDraw(e) {
+  e.preventDefault();
+  drawing = true;
+  curStroke = [getPos(e)];
+  ctx.beginPath();
+  ctx.moveTo(curStroke[0][0], curStroke[0][1]);
+}
+
+function moveDraw(e) {
+  if (!drawing) return;
+  e.preventDefault();
+  const pt = getPos(e);
+  curStroke.push(pt);
+  ctx.lineTo(pt[0], pt[1]);
+  ctx.stroke();
+}
+
+function endDraw(e) {
+  if (!drawing) return;
+  drawing = false;
+  if (curStroke.length > 0) strokes.push(curStroke);
+  document.getElementById('status').innerText = '서명 입력됨 (' + strokes.length + '획)';
+  try {
+    const parentInputs = window.parent.document.querySelectorAll('input[aria-label="sign_data_hidden"]');
+    if (parentInputs.length > 0) {
+      const inp = parentInputs[0];
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(inp, JSON.stringify(strokes));
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (err) {}
+}
+
+function clearPad() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  strokes = [];
+  document.getElementById('status').innerText = '위 흰 칸에 서명해 주세요';
+  try {
+    const parentInputs = window.parent.document.querySelectorAll('input[aria-label="sign_data_hidden"]');
+    if (parentInputs.length > 0) {
+      const inp = parentInputs[0];
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(inp, '');
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (err) {}
+}
+
+canvas.addEventListener('mousedown', startDraw);
+canvas.addEventListener('mousemove', moveDraw);
+canvas.addEventListener('mouseup', endDraw);
+canvas.addEventListener('mouseleave', endDraw);
+canvas.addEventListener('touchstart', startDraw, { passive: false });
+canvas.addEventListener('touchmove', moveDraw, { passive: false });
+canvas.addEventListener('touchend', endDraw);
+</script>
+""", height=200)
+
+# 숨겨진 데이터 수신용 입력창 (화면에서는 CSS로 숨김)
+st.markdown("""
+<style>
+div[data-testid="stTextInput"]:has(input[aria-label="sign_data_hidden"]) {
+    position: absolute;
+    left: -9999px;
+    height: 0;
+    overflow: hidden;
+}
+</style>
+""", unsafe_allow_html=True)
+sign_json = st.text_input("sign_data_hidden", label_visibility="collapsed")
+agree_confirm = st.checkbox(f"본인({emp_name})은 위 표준근로계약서 1조~17조의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다.")
+
+
+def _strokes_to_image(raw_json: str) -> Image.Image:
+    import json
+    img = Image.new("RGBA", (320, 140), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+    strokes = json.loads(raw_json)
+    for stroke in strokes:
+        if len(stroke) == 1:
+            x, y = stroke[0]
+            draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=(17, 24, 39, 255))
+        elif len(stroke) > 1:
+            pts = [(p[0], p[1]) for p in stroke]
+            draw.line(pts, fill=(17, 24, 39, 255), width=3)
+    return img
+
 
 if st.button("✅ 계약 내용 확인 및 전자서명 제출", type="primary", use_container_width=True):
     if not rrn.strip() or not account.strip() or not phone.strip() or not addr.strip() or not email.strip():
         st.error("주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
-    elif canvas_result.image_data is None or canvas_result.image_data[:, :, 3].sum() == 0:
+    elif not agree_confirm:
+        st.error("계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.")
+    elif not sign_json.strip() or sign_json.strip() == "[]":
         st.error("서명란에 자필 서명을 그려주세요.")
     else:
         with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
-            sign_img = Image.fromarray(canvas_result.image_data.astype("uint8"), "RGBA")
+            sign_img = _strokes_to_image(sign_json)
             emp_inputs = {
                 "주민번호": rrn.strip(),
                 "은행명": bank,
