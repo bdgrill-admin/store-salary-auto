@@ -31,11 +31,13 @@ def get_secret(key: str, default: str = ""):
 
 STORES = {
     "분당그릴": {
-        "att_id": "1-E43JK8yCMrLSW4t5zSlIeV4ptl2EltfZwDLsQlA88Y",    # 출퇴근기록지 시트 ID
-        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",   # 직원인적사항 시트 ID
-        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),             # 분당그릴_급여히스토리 시트 ID
+        "att_id": "1-E43JK8yCMrLSW4t5zSlIeV4ptl2EltfZwDLsQlA88Y",
+        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",
+        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),
+        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),  # ◀ 신규 매출 시트 ID 추가
         "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
     },
+},
     # 향후 감동한점 오픈 시 주석(#)을 풀고 시트 ID만 채우면 즉시 활성화됩니다.
     # "감동한점": {
     #     "att_id": "여기에_감동한점_출퇴근기록지_ID",
