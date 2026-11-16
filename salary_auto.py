@@ -596,8 +596,13 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
             continue
         parsed = _parse_grid_values(ws.get_all_values())
         if parsed["total"] > 0:
+            # 지급월(예: 26.11) 기준 실제 귀속 매출월(전월: 26.10) 계산
+            yy, mm = int(sname[:2]), int(sname[3:5])
+            sales_ym = f"{yy - 1:02d}.12" if mm == 1 else f"{yy:02d}.{mm - 1:02d}"
+
             monthly_rows.append({
                 "정산월": sname,
+                "매출귀속월": sales_ym,
                 "4대보험": parsed["ins"],
                 "파트타임": parsed["part"],
                 "총인건비": parsed["total"],
@@ -610,10 +615,12 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
     if not df_m.empty:
         df_m = df_m.drop_duplicates(subset=["정산월"], keep="last").sort_values("정산월").reset_index(drop=True)
 
-        # 매출 데이터 병합 및 인건비율 / 시간당 생산성(SPLH) 계산
+        # 매출귀속월(전월) 기준으로 매출 데이터 병합
         df_sales = load_gsheet_sales(sales_id)
         if not df_sales.empty:
-            df_m = pd.merge(df_m, df_sales, on="정산월", how="left")
+            df_m = pd.merge(df_m, df_sales, left_on="매출귀속월", right_on="정산월", how="left", suffixes=("", "_sales"))
+            if "정산월_sales" in df_m.columns:
+                df_m = df_m.drop(columns=["정산월_sales"])
             df_m["총매출"] = df_m["총매출"].fillna(0).astype(int)
         else:
             df_m["총매출"] = 0
@@ -921,9 +928,9 @@ with tab_calc:
         prev_row = df_hist_m[df_hist_m["정산월"] == prev_ym] if not df_hist_m.empty else pd.DataFrame()
         yoy_row = df_hist_m[df_hist_m["정산월"] == yoy_ym] if not df_hist_m.empty else pd.DataFrame()
 
-        # 해당 월 매출 조회 (매출관리 시트에 입력되어 있는 경우 인건비율 즉시 표시)
+        # 해당 정산의 귀속 매출월(전월) 매출 조회
         df_sales_cur = load_gsheet_sales(store_cfg["sales_id"])
-        cur_sales_row = df_sales_cur[df_sales_cur["정산월"] == curr_ym] if not df_sales_cur.empty else pd.DataFrame()
+        cur_sales_row = df_sales_cur[df_sales_cur["정산월"] == prev_ym] if not df_sales_cur.empty else pd.DataFrame()
         cur_sales_val = int(cur_sales_row.iloc[0]["총매출"]) if not cur_sales_row.empty else 0
 
         st.write("")
