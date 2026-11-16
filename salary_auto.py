@@ -73,7 +73,7 @@ def apply_clean_style():
         }
 
         .block-container {
-            padding-top: 1.8rem;
+            padding-top: 2.8rem;
             padding-bottom: 3rem;
             max-width: 1360px;
         }
