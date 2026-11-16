@@ -52,7 +52,6 @@ TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
-st.set_page_config(page_title="매장 통합 급여 정산 & 경영 분석", page_icon="🥩", layout="wide")
 
 
 # =========================================================================
