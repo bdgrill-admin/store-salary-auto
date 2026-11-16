@@ -34,6 +34,44 @@ CREDENTIALS_FILE = "credentials.json"
 PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID"]
 REG_COLS = ["이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "텔레그램ID", "이메일"]
 
+# 은행 대량이체 표준 은행명 리스트
+BANK_OPTIONS = [
+    "KB국민",
+    "신한은행",
+    "우리은행",
+    "하나은행",
+    "NH농협",
+    "IBK기업은행",
+    "카카오뱅크",
+    "토스뱅크",
+    "케이뱅크",
+    "새마을금고",
+    "신협",
+    "우체국",
+    "SC제일은행",
+    "부산은행",
+    "대구은행(iM뱅크)",
+    "광주은행",
+    "전북은행",
+    "경남은행",
+    "수협은행",
+]
+
+BANK_ALIAS_MAP = {
+    "국민": "KB국민",
+    "국민은행": "KB국민",
+    "신한": "신한은행",
+    "우리": "우리은행",
+    "하나": "하나은행",
+    "농협": "NH농협",
+    "농협은행": "NH농협",
+    "기업": "IBK기업은행",
+    "기업은행": "IBK기업은행",
+    "카카오": "카카오뱅크",
+    "토스": "토스뱅크",
+    "케이": "케이뱅크",
+}
+
 st.set_page_config(page_title="직원 · 시급/계좌 관리", page_icon="👥", layout="wide")
 
 st.markdown(
@@ -99,6 +137,13 @@ def clean_int(val):
         return 0
 
 
+def normalize_bank_name(bank_str: str) -> str:
+    b = str(bank_str).strip()
+    if not b:
+        return ""
+    return BANK_ALIAS_MAP.get(b, b)
+
+
 def format_ssn(ssn_str):
     digits = re.sub(r"\D", "", str(ssn_str).strip())
     if len(digits) == 13:
@@ -128,6 +173,8 @@ def load_staff_tabs(db_id: str):
         for col in expected_cols:
             if col not in df.columns:
                 df[col] = "재직" if col == "상태" else ""
+        if "은행명" in df.columns:
+            df["은행명"] = df["은행명"].apply(normalize_bank_name)
         return df[expected_cols].copy()
 
     df_part = read_tab("파트타임", PART_COLS)
@@ -145,6 +192,7 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
         if c not in df_part_edited.columns:
             df_part_edited[c] = ""
     clean_p = df_part_edited[PART_COLS].copy()
+    clean_p["은행명"] = clean_p["은행명"].apply(normalize_bank_name)
     clean_p["시급"] = clean_p["시급"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_p["주민번호"] = clean_p["주민번호"].apply(format_ssn)
     clean_p = clean_p.fillna("").astype(str)
@@ -158,6 +206,7 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
         if c not in df_reg_edited.columns:
             df_reg_edited[c] = ""
     clean_r = df_reg_edited[REG_COLS].copy()
+    clean_r["은행명"] = clean_r["은행명"].apply(normalize_bank_name)
     clean_r["계약급여"] = clean_r["계약급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_r["최종급여"] = clean_r["최종급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_r["주민번호"] = clean_r["주민번호"].apply(format_ssn)
@@ -202,7 +251,7 @@ st.caption("💡 여기서 신규 직원을 등록하거나 시급·계좌·상�
 df_part, df_reg = load_staff_tabs(store_cfg["db_id"])
 
 # =========================================================================
-# 신규 파트타임 직원 간편 등록
+# 신규 파트타임 직원 간편 등록 (은행명 드롭다운 적용)
 # =========================================================================
 with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
     with st.form("new_part_staff_form", clear_on_submit=True):
@@ -213,7 +262,7 @@ with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
         new_ssn = fc4.text_input("주민등록번호", placeholder="예: 000101-3123456")
 
         fc5, fc6, fc7, fc8 = st.columns([1.0, 1.3, 1.2, 1.0])
-        new_bank = fc5.text_input("은행명", placeholder="예: 카카오뱅크")
+        new_bank = fc5.selectbox("은행명", options=BANK_OPTIONS, index=0)
         new_acct = fc6.text_input("계좌번호", placeholder="예: 3333-01-1234567")
         new_email = fc7.text_input("이메일 (명세서 발송용)", placeholder="example@gmail.com")
         new_tg = fc8.text_input("텔레그램 ID (선택)", placeholder="숫자 ID")
@@ -232,7 +281,7 @@ with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
                     "입사일자": new_join_date.strftime("%Y-%m-%d"),
                     "이름": clean_nm,
                     "주민번호": format_ssn(new_ssn),
-                    "은행명": new_bank.strip(),
+                    "은행명": new_bank,
                     "계좌번호": new_acct.strip(),
                     "시급": str(int(new_wage)),
                     "상태": "재직",
@@ -263,7 +312,7 @@ edited_part = st.data_editor(
         "입사일자": st.column_config.TextColumn("입사일자"),
         "이름": st.column_config.TextColumn("이름", required=True),
         "주민번호": st.column_config.TextColumn("주민번호"),
-        "은행명": st.column_config.TextColumn("은행명"),
+        "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
         "계좌번호": st.column_config.TextColumn("계좌번호"),
         "시급": st.column_config.NumberColumn("시급 (원)", format="%,d"),
         "상태": st.column_config.SelectboxColumn("상태 (퇴사 시 출퇴근 제외)", options=["재직", "퇴사"], default="재직"),
@@ -289,6 +338,7 @@ edited_reg = st.data_editor(
     key=f"reg_ed_{selected_store}",
     column_config={
         "이름": st.column_config.TextColumn("이름", required=True),
+        "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
         "계약급여": st.column_config.NumberColumn("계약급여 (원)", format="%,d"),
         "최종급여": st.column_config.NumberColumn("최종급여 (원)", format="%,d"),
     },
