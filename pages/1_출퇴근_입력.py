@@ -52,7 +52,7 @@ def apply_clean_style():
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
         .block-container {
-            padding-top: 3.3rem;
+            padding-top: 3.2rem;
             padding-bottom: 2.5rem;
             max-width: 1380px;
         }
@@ -61,15 +61,16 @@ def apply_clean_style():
             font-weight: 700;
             color: #1E293B;
             margin: 0;
-            line-height: 1.3;
+            line-height: 1.2;
             letter-spacing: -0.02em;
+            white-space: nowrap;
         }
         .app-subtitle {
             font-size: 0.92rem;
             font-weight: 600;
             color: #475569;
-            margin-top: 0.35rem;
-            margin-bottom: 0.25rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.3rem;
         }
         .section-title {
             font-size: 1.02rem;
@@ -198,9 +199,9 @@ def load_db_sheets(db_id: str):
 
 
 # =========================================================================
-# 3. 상단 헤더 (출퇴근기록부 + 바로 옆 새로고침 | 우측 매장선택) & 날짜/요일/사용법
+# 3. 상단 헤더 (제목 바로 옆 새로고침 밀착 정렬 | 우측 끝 매장선택)
 # =========================================================================
-h_col1, h_col2, _, h_col4 = st.columns([1.35, 0.75, 2.0, 1.0], vertical_alignment="center")
+h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
 with h_col1:
     st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
 with h_col2:
@@ -220,7 +221,8 @@ except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
 
-display_to_real_name = {}
+# 실근무자 이름만 깔끔하게 표시 (계좌 예금주 표기 제거)
+active_emp_names = []
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
     for _, r in active_df.iterrows():
@@ -229,16 +231,18 @@ if not df_emp.empty:
         if not reg_name:
             continue
         if memo_name and "퇴사" not in memo_name and len(memo_name) <= 5:
-            display_to_real_name[f"{memo_name} (계좌:{reg_name})"] = memo_name
+            real_n = memo_name
         else:
-            display_to_real_name[reg_name] = reg_name
+            real_n = reg_name
+        if real_n not in active_emp_names:
+            active_emp_names.append(real_n)
 
 if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-# 날짜 선택 + 배경 없는 굵은 요일 텍스트 + 우측 입력 방법 설명
-d_c1, d_c2, d_c3 = st.columns([0.95, 0.55, 3.6], vertical_alignment="center")
+# 날짜 선택 + 더 커진 굵은 요일 텍스트 + 우측 입력 방법 설명 (수평 중앙 정렬)
+d_c1, d_c2, d_c3 = st.columns([0.85, 0.55, 3.7], vertical_alignment="center")
 with d_c1:
     sel_date = st.date_input("조회 및 입력 날짜", value=datetime.date.today(), label_visibility="collapsed")
     date_str = sel_date.strftime("%Y-%m-%d")
@@ -247,12 +251,12 @@ with d_c2:
     w_kr = weekdays_kr[sel_date.weekday()]
     w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
     st.markdown(
-        f'<div style="font-size:1rem; font-weight:700; color:{w_color}; padding-left:0.25rem; line-height:2.4rem;">{w_kr}</div>',
+        f'<div style="font-size:1.25rem; font-weight:800; color:{w_color}; padding-left:0.15rem; white-space:nowrap;">{w_kr}</div>',
         unsafe_allow_html=True,
     )
 with d_c3:
     st.markdown(
-        '<div style="font-size:0.86rem; color:#475569; line-height:2.4rem;">💡 <b>신규 입력</b>: 아래에서 이름·시간 입력 후 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
+        '<div style="font-size:0.88rem; color:#475569;">💡 <b>신규 입력</b>: 아래에서 이름·시간 입력 후 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
         unsafe_allow_html=True,
     )
 
@@ -261,7 +265,7 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.session_state["edited_banner"] = ""
 
 # =========================================================================
-# 4. [상단 구역] 좌측: 일 근무현황 그리드 (기본 6칸 높이) | 우측: 매니저 전용 확인
+# 4. [상단 구역] 좌측: 일 근무현황 그리드 | 우측: 매니저 전용 확인 (비밀번호 가로 배치)
 # =========================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
@@ -319,15 +323,22 @@ with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        # 비밀번호 박스를 작게 축소 배치
-        pin_col, _ = st.columns([1.15, 1.35])
-        with pin_col:
+        # '매니저 확인 비밀번호' 라벨 왼쪽 + 입력 박스 오른쪽 가로 배치
+        p_lbl, p_inp = st.columns([1.05, 1.3], vertical_alignment="center")
+        with p_lbl:
+            st.markdown(
+                '<div style="font-size:0.9rem; font-weight:700; color:#78350F; white-space:nowrap;">매니저 확인 비밀번호</div>',
+                unsafe_allow_html=True,
+            )
+        with p_inp:
             pin_input = st.text_input(
                 "매니저 확인 비밀번호",
                 type="password",
                 placeholder="비밀번호 입력",
                 key="mgr_pin_top",
+                label_visibility="collapsed",
             )
+
         if pin_input == store_cfg["manager_pin"]:
             t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
 
@@ -412,7 +423,7 @@ with left_col:
     st.markdown('<div class="section-title">2. 출퇴근 시간 입력/수정</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
-        if not display_to_real_name:
+        if not active_emp_names:
             st.warning("'직원목록' 탭에 재직 중인 직원이 없습니다.")
             st.stop()
 
@@ -420,12 +431,6 @@ with left_col:
             st.info(
                 f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 체크를 해제하세요)"
             )
-            sel_disp_name = next(
-                (k for k, v in display_to_real_name.items() if v == real_emp_name),
-                list(display_to_real_name.keys())[0],
-            )
-        else:
-            sel_disp_name = list(display_to_real_name.keys())[0]
 
         is_locked = (mode == "기존 수정") and (str(old_record.get("매니저확인", "")).strip().upper() == "TRUE")
         if is_locked:
@@ -448,14 +453,13 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        # 이름, 근무타임, 시작시간, 종료시간 4개를 같은 한 라인에 배치
-        c_name, c1, c2, c3 = st.columns([1.25, 1.05, 0.9, 0.9])
+        # 이름(실근무자 단독 표기), 근무타임, 시작시간, 종료시간 4개 한 줄 배치
+        c_name, c1, c2, c3 = st.columns([1.05, 1.05, 0.95, 0.95])
         with c_name:
             if mode == "기존 수정":
-                st.text_input("본인 이름", value=sel_disp_name, disabled=True)
+                st.text_input("본인 이름", value=real_emp_name, disabled=True)
             else:
-                sel_disp_name = st.selectbox("본인 이름 선택", options=list(display_to_real_name.keys()))
-                real_emp_name = display_to_real_name[sel_disp_name]
+                real_emp_name = st.selectbox("본인 이름 선택", options=active_emp_names)
         with c1:
             shift_type = st.selectbox(
                 "근무 타임",
@@ -481,7 +485,6 @@ with left_col:
         else:
             st.warning("시작시간과 종료시간을 직접 입력해 주세요.")
 
-        # 배경색이 들어간 눈에 띄는 수정 안내 문구
         st.markdown(
             """
             <div style="background-color:#FEF3C7; border:1px solid #F59E0B; border-radius:7px; padding:0.48rem 0.75rem; margin:0.35rem 0 0.55rem 0; color:#92400E; font-weight:700; font-size:0.88rem;">
