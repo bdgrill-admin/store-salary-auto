@@ -1,7 +1,6 @@
 import os
 import io
 import re
-import json
 import datetime
 import smtplib
 import requests
@@ -18,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =========================================================================
-# 0. 매장별 설정 및 환경 변수
+# 0. 매장별 설정 (이제 매장당 db_id 1개만 관리하면 됩니다!)
 # =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
@@ -31,8 +30,7 @@ def get_secret(key: str, default: str = ""):
 
 STORES = {
     "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",      # 통합근태DB & 직원목록 시트 ID
-        "info_id": "1oLO0aH2UQhiwOfaSPGnxFLmQ8wDqEal3wm7NGSkyUpU",    # 직원인적사항 시트 ID
+        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",      # 통합근태DB · 파트타임 · 정규직 통합 시트
         "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),              # 분당그릴_급여히스토리 시트 ID
         "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),            # 분당그릴_매출관리 시트 ID
         "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
@@ -40,7 +38,6 @@ STORES = {
     # 향후 감동한점 오픈 시 주석(#)을 풀고 시트 ID만 채우면 즉시 활성화됩니다.
     # "감동한점": {
     #     "db_id": "여기에_감동한점_통합근태DB_ID",
-    #     "info_id": "여기에_감동한점_직원인적사항_ID",
     #     "hist_id": get_secret("HIST_SHEET_GAMDONG", ""),
     #     "sales_id": get_secret("SALES_SHEET_GAMDONG", ""),
     #     "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
@@ -70,13 +67,11 @@ def apply_clean_style():
         html, body, [class*="css"] {
             font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         }
-
         .block-container {
             padding-top: 2.8rem;
             padding-bottom: 3rem;
             max-width: 1360px;
         }
-
         .app-header {
             padding: 0.2rem 0 0.6rem 0;
         }
@@ -92,7 +87,6 @@ def apply_clean_style():
             color: #64748B;
             margin-top: 0.2rem;
         }
-
         .section-title {
             font-size: 1.12rem;
             font-weight: 700;
@@ -101,7 +95,6 @@ def apply_clean_style():
             padding-left: 0.6rem;
             border-left: 4px solid #334155;
         }
-
         div[data-testid="stMetric"] {
             background-color: #F8FAFC;
             border: 1px solid #E2E8F0;
@@ -118,13 +111,11 @@ def apply_clean_style():
             font-weight: 700;
             color: #0F172A;
         }
-
         button[data-baseweb="tab"] {
             font-size: 0.98rem;
             font-weight: 600;
             padding: 0.6rem 1.2rem;
         }
-
         .stButton > button, .stDownloadButton > button {
             border-radius: 8px;
             font-weight: 600;
@@ -278,17 +269,17 @@ def format_ssn(ssn_str):
 
 
 # =========================================================================
-# 3. 새 통합근태DB + 직원인적사항 연동 데이터 로드 및 근태 집계
+# 3. 단일 시트(통합근태DB · 파트타임 · 정규직) 데이터 로드 및 급여 계산
 # =========================================================================
-@st.cache_data(ttl=30, show_spinner="통합근태DB 및 직원 데이터를 불러오는 중...")
-def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.date, end_date: datetime.date):
+@st.cache_data(ttl=30, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
+def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: datetime.date):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
-    info_ss = gc.open_by_key(info_id)
 
     warnings = []
     attendance_map = {}
 
+    # 1) 통합근태DB 탭 집계 (매니저확인 == TRUE 만 합산)
     att_ws = db_ss.worksheet("통합근태DB")
     att_rows = att_ws.get_all_values()
 
@@ -346,38 +337,24 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
                 "work_dates": ", ".join(unique_dates),
             }
 
-    def get_records_auto_header(ws):
-        all_rows = ws.get_all_values()
-        header_idx = 0
-        for i, r in enumerate(all_rows[:5]):
-            if "이름" in [c.strip() for c in r]:
-                header_idx = i
-                break
-        if len(all_rows) <= header_idx + 1:
+    def read_tab_records(tab_name: str):
+        titles = [s.title.strip() for s in db_ss.worksheets()]
+        if tab_name not in titles:
             return []
-        headers = [c.strip() for c in all_rows[header_idx]]
+        ws = db_ss.worksheet(tab_name)
+        all_rows = ws.get_all_values()
+        if len(all_rows) < 2:
+            return []
+        headers = [c.strip() for c in all_rows[0]]
         records = []
-        for r in all_rows[header_idx + 1:]:
-            row_dict = {headers[j]: (r[j] if j < len(r) else "") for j in range(len(headers)) if headers[j]}
-            records.append(row_dict)
+        for r in all_rows[1:]:
+            row_dict = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
+            if row_dict.get("이름"):
+                records.append(row_dict)
         return records
 
-    emp_master_map = {}
-    try:
-        emp_ws = db_ss.worksheet("직원목록")
-        for r in get_records_auto_header(emp_ws):
-            nm = str(r.get("이름", "")).strip()
-            if nm:
-                emp_master_map[nm] = r
-    except Exception:
-        pass
-
-    part_records = []
-    sheet_titles = [s.title.strip() for s in info_ss.worksheets()]
-    if "파트타임" in sheet_titles:
-        part_ws = info_ss.worksheet("파트타임")
-        part_records = get_records_auto_header(part_ws)
-
+    # 2) '파트타임' 탭 로드
+    part_records = read_tab_records("파트타임")
     part_list = []
     processed_lookup_names = set()
 
@@ -386,32 +363,18 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
         if not report_name:
             continue
 
-        remark = str(rec.get("비고", "")).strip()
+        memo_val = str(rec.get("메모", "")).strip()
         lookup_name = report_name
-        match = re.search(r"\(실근무\)\s*([가-힣a-zA-Z0-9_]+)", remark)
-        if match:
-            lookup_name = match.group(1).strip()
-        elif report_name in emp_master_map:
-            m_memo = str(emp_master_map[report_name].get("메모", "")).strip()
-            if m_memo and "퇴사" not in m_memo and len(m_memo) <= 5:
-                lookup_name = m_memo
+        # 메모에 실근무자 이름이 적힌 경우 (예: 이찬영 -> 메모: 강성원)
+        if memo_val and "퇴사" not in memo_val and len(memo_val) <= 5:
+            lookup_name = memo_val
 
         processed_lookup_names.add(lookup_name)
         att = attendance_map.get(lookup_name, {"total_min": 0, "total_hhmm": "00:00", "work_dates": ""})
         if att["total_min"] == 0:
             continue
 
-        m_rec = emp_master_map.get(report_name, {})
-        master_wage = clean_int(m_rec.get("시급", 0))
-        info_wage = clean_int(rec.get("시급", 0))
-        wage = master_wage if master_wage > 0 else info_wage
-
-        # 직원목록 탭의 최신 은행명·계좌번호·이메일·텔레그램ID 우선 반영 (비어있으면 직원인적사항 참조)
-        bank_name = str(m_rec.get("은행명", "")).strip() or str(rec.get("은행명", "")).strip()
-        acct_num = str(m_rec.get("계좌번호", "")).strip() or str(rec.get("계좌번호", "")).strip()
-        tg_id = str(m_rec.get("텔레그램ID", "")).strip() or str(rec.get("텔레그램ID", "")).strip()
-        email_addr = str(m_rec.get("이메일", "")).strip() or str(rec.get("이메일", "")).strip()
-
+        wage = clean_int(rec.get("시급", 0))
         gross_pay = int(round(wage * (att["total_min"] / 60.0)))
         rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
         rate_str = f"{rate_float * 100:g}%"
@@ -420,8 +383,8 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
         part_list.append({
             "이름": report_name,
             "주민번호": format_ssn(rec.get("주민번호", "")),
-            "은행명": bank_name,
-            "계좌번호": acct_num,
+            "은행명": str(rec.get("은행명", "")).strip(),
+            "계좌번호": str(rec.get("계좌번호", "")).strip(),
             "시급": wage,
             "총시간": att["total_hhmm"],
             "총급여": gross_pay,
@@ -429,59 +392,54 @@ def fetch_and_calculate_salary(db_id: str, info_id: str, start_date: datetime.da
             "그외비용": 0,
             "그외비용사유": "",
             "최종급여": net_pay,
-            "비고": remark,
+            "비고": memo_val,
             "근무일자": att["work_dates"],
-            "텔레그램ID": tg_id,
-            "이메일": email_addr,
+            "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
+            "이메일": str(rec.get("이메일", "")).strip(),
         })
 
+    # 통합근태DB에는 승인된 근무기록이 있는데 '파트타임' 탭에 미등록된 직원 경고
     for emp_n, att in attendance_map.items():
         if emp_n not in processed_lookup_names and att["total_min"] > 0:
-            m_info = emp_master_map.get(emp_n, {})
-            wage = clean_int(m_info.get("시급", 0))
-            gross_pay = int(round(wage * (att["total_min"] / 60.0)))
-            rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
-            net_pay = int(round(gross_pay * (1.0 - rate_float)))
-            warnings.append(f"⚠️ [{emp_n}] 사이드바 '직원 관리' 페이지에서 시급/주민번호를 등록해 주세요.")
+            warnings.append(f"⚠️ [{emp_n}] '파트타임' 탭에 등록되지 않은 근무자입니다. 사이드바 '직원 관리'에서 등록해 주세요.")
             part_list.append({
                 "이름": emp_n,
                 "주민번호": "",
-                "은행명": str(m_info.get("은행명", "")).strip(),
-                "계좌번호": str(m_info.get("계좌번호", "")).strip(),
-                "시급": wage,
+                "은행명": "",
+                "계좌번호": "",
+                "시급": 0,
                 "총시간": att["total_hhmm"],
-                "총급여": gross_pay,
-                "공제율": f"{rate_float * 100:g}%",
+                "총급여": 0,
+                "공제율": "0.9%",
                 "그외비용": 0,
                 "그외비용사유": "",
-                "최종급여": net_pay,
-                "비고": "인적사항 미등록",
+                "최종급여": 0,
+                "비고": "명부 미등록",
                 "근무일자": att["work_dates"],
-                "텔레그램ID": str(m_info.get("텔레그램ID", "")).strip(),
-                "이메일": str(m_info.get("이메일", "")).strip(),
+                "텔레그램ID": "",
+                "이메일": "",
             })
 
+    # 3) '정규직' 탭 로드
+    ins_records = read_tab_records("정규직")
     ins_list = []
-    if "4대보험" in sheet_titles:
-        ins_ws = info_ss.worksheet("4대보험")
-        ins_records = get_records_auto_header(ins_ws)
-        for rec in ins_records:
-            name = str(rec.get("이름", "")).strip()
-            if not name:
-                continue
-            ins_list.append({
-                "이름": name,
-                "주민번호": format_ssn(rec.get("주민번호", "")),
-                "은행명": str(rec.get("은행명", "")).strip(),
-                "계좌번호": str(rec.get("계좌번호", "")).strip(),
-                "계약급여": clean_int(rec.get("계약급여", 0)),
-                "그외비용": 0,
-                "그외비용사유": "",
-                "최종급여": clean_int(rec.get("최종급여", 0)),
-                "비고": str(rec.get("비고", "")).strip(),
-                "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
-                "이메일": str(rec.get("이메일", "")).strip(),
-            })
+    for rec in ins_records:
+        name = str(rec.get("이름", "")).strip()
+        if not name:
+            continue
+        ins_list.append({
+            "이름": name,
+            "주민번호": format_ssn(rec.get("주민번호", "")),
+            "은행명": str(rec.get("은행명", "")).strip(),
+            "계좌번호": str(rec.get("계좌번호", "")).strip(),
+            "계약급여": clean_int(rec.get("계약급여", 0)),
+            "그외비용": 0,
+            "그외비용사유": "",
+            "최종급여": clean_int(rec.get("최종급여", 0)),
+            "비고": str(rec.get("비고", "")).strip(),
+            "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
+            "이메일": str(rec.get("이메일", "")).strip(),
+        })
 
     return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings
 
@@ -863,7 +821,7 @@ with head_c1:
         """
         <div class="app-header">
             <div class="app-title">🥩 매장 통합 급여 정산 & 경영 분석</div>
-            <div class="app-subtitle">통합근태DB 실시간 연동 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
+            <div class="app-subtitle">통합근태DB 단일 연동 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -878,9 +836,6 @@ tab_calc, tab_trend = st.tabs([
     f"📈 {selected_store} 매출 · 인건비 경영 분석",
 ])
 
-# =========================================================================
-# [TAB 1] 월별 급여 정산 (새 통합근태DB 직결)
-# =========================================================================
 with tab_calc:
     with st.container(border=True):
         ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
@@ -903,18 +858,18 @@ with tab_calc:
 
     try:
         df_ins_raw, df_part_raw, warnings = fetch_and_calculate_salary(
-            store_cfg["db_id"], store_cfg["info_id"], start_dt, end_dt
+            store_cfg["db_id"], start_dt, end_dt
         )
 
         if warnings:
-            st.error(f"🚨 확인이 필요한 근태/인적사항 알림이 **{len(warnings)}건** 있습니다. 정산 확정 전 확인해 주세요.")
+            st.error(f"🚨 확인이 필요한 근태/명부 알림이 **{len(warnings)}건** 있습니다. 정산 확정 전 확인해 주세요.")
             with st.expander(f"상세 내역 보기 ({len(warnings)}건)", expanded=True):
                 for w in warnings:
                     st.markdown(f"- {w}")
 
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
-            st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭을 추가하면 자동으로 불러옵니다.")
+            st.caption("ℹ️ '정규직' 탭에 등록된 직원이 없습니다.")
             df_ins_edited = pd.DataFrame(
                 columns=["이름", "주민번호", "은행명", "계좌번호", "계약급여", "그외비용", "그외비용사유", "최종급여", "비고", "텔레그램ID", "이메일"]
             )
@@ -1197,9 +1152,6 @@ with tab_calc:
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
 
-# =========================================================================
-# [TAB 2] 매출 · 인건비 경영 분석
-# =========================================================================
 with tab_trend:
     df_monthly, df_staff = load_gsheet_history(store_cfg["hist_id"], store_cfg["sales_id"])
 
