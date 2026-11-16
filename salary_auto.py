@@ -60,7 +60,7 @@ st.set_page_config(page_title="매장 통합 급여 정산 & 경영 분석", pag
 
 
 # =========================================================================
-# 커스텀 스타일 (깔끔한 폰트, 카드 그리드, 버튼 높이/여백 정돈)
+# 커스텀 스타일 (깔끔한 폰트, 5열 카드 그리드 가독성, 버튼 높이/여백 정돈)
 # =========================================================================
 def apply_clean_style():
     st.markdown(
@@ -75,7 +75,7 @@ def apply_clean_style():
         .block-container {
             padding-top: 1.8rem;
             padding-bottom: 3rem;
-            max-width: 1280px;
+            max-width: 1360px;
         }
 
         .app-header {
@@ -107,15 +107,15 @@ def apply_clean_style():
             background-color: #F8FAFC;
             border: 1px solid #E2E8F0;
             border-radius: 10px;
-            padding: 0.95rem 1.1rem;
+            padding: 0.85rem 1rem;
         }
         div[data-testid="stMetric"] label {
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             font-weight: 600;
             color: #475569;
         }
         div[data-testid="stMetricValue"] {
-            font-size: 1.45rem;
+            font-size: 1.32rem;
             font-weight: 700;
             color: #0F172A;
         }
@@ -443,7 +443,7 @@ def fetch_and_calculate_salary(att_id: str, info_id: str, start_date: datetime.d
 # 4. 구글 시트 기반 급여 히스토리('과거요약' + 월별 상세 탭) + 매출 연동 분석
 # =========================================================================
 def _parse_grid_values(all_rows: list):
-    """2차원 리스트(구글 시트 또는 엑셀 탭)에서 4대보험/파트타임 데이터 파싱"""
+    """2차원 리스트(구글 시트 또는 엑셀 탭)에서 정규직(구 4대보험)/파트타임 데이터 파싱"""
     ins_sum, part_sum = 0, 0
     total_part_mins = 0
     staff_items = []
@@ -453,7 +453,7 @@ def _parse_grid_values(all_rows: list):
     for r in all_rows:
         vals = [str(v).strip() if v is not None else "" for v in r]
         if "이름" in vals and "계약급여" in vals:
-            mode = "4대보험"
+            mode = "정규직"
             col_map = {v: i for i, v in enumerate(vals) if v}
             continue
         elif "이름" in vals and "시급" in vals:
@@ -470,7 +470,7 @@ def _parse_grid_values(all_rows: list):
             if net_val == 0:
                 continue
 
-            if mode == "4대보험":
+            if mode == "정규직":
                 ins_sum += net_val
                 gross_val = clean_int(vals[col_map["계약급여"]]) if ("계약급여" in col_map and col_map["계약급여"] < len(vals)) else net_val
                 wage_val, mins_val = 0, 0
@@ -491,7 +491,7 @@ def _parse_grid_values(all_rows: list):
             })
 
     return {
-        "ins": ins_sum,
+        "regular": ins_sum,
         "part": part_sum,
         "total": ins_sum + part_sum,
         "part_mins": total_part_mins,
@@ -603,7 +603,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
             if re.match(r"^\d{2}\.\d{2}$", ym) and tot_val > 0:
                 monthly_map[ym] = {
                     "정산월": ym,
-                    "4대보험": 0,
+                    "정규직": 0,
                     "파트타임": 0,
                     "총인건비": tot_val,
                     "파트근무분": 0,
@@ -618,7 +618,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
         if parsed["total"] > 0:
             monthly_map[sname] = {
                 "정산월": sname,
-                "4대보험": parsed["ins"],
+                "정규직": parsed["regular"],
                 "파트타임": parsed["part"],
                 "총인건비": parsed["total"],
                 "파트근무분": parsed["part_mins"],
@@ -630,7 +630,6 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
     if not df_m.empty:
         df_m = df_m.sort_values("정산월").reset_index(drop=True)
 
-        # 같은 정산월 라벨 기준으로 매출 데이터 병합
         df_sales = load_gsheet_sales(sales_id)
         if not df_sales.empty:
             df_m = pd.merge(df_m, df_sales, on="정산월", how="left")
@@ -642,7 +641,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
             lambda r: round((r["총인건비"] / r["총매출"] * 100), 1) if r["총매출"] > 0 else 0.0, axis=1
         )
         df_m["고정급비율(%)"] = df_m.apply(
-            lambda r: round((r["4대보험"] / r["총매출"] * 100), 1) if (r["총매출"] > 0 and r["4대보험"] > 0) else 0.0, axis=1
+            lambda r: round((r["정규직"] / r["총매출"] * 100), 1) if (r["총매출"] > 0 and r["정규직"] > 0) else 0.0, axis=1
         )
         df_m["변동급비율(%)"] = df_m.apply(
             lambda r: round((r["파트타임"] / r["총매출"] * 100), 1) if (r["총매출"] > 0 and r["파트타임"] > 0) else 0.0, axis=1
@@ -865,7 +864,7 @@ with tab_calc:
                 for w in warnings:
                     st.markdown(f"- {w}")
 
-        st.markdown('<div class="section-title">1. 4대보험 직원 급여 내역</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
             st.caption("ℹ️ '직원인적사항' 스프레드시트에 '4대보험' 탭을 추가하면 자동으로 불러옵니다.")
             df_ins_edited = pd.DataFrame(
@@ -929,11 +928,13 @@ with tab_calc:
                 df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
                 df_part_edited.at[idx, "최종급여"] = net_pay
 
-        sum_ins = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
+        sum_reg = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
-        total_payout = sum_ins + sum_part
+        total_payout = sum_reg + sum_part
 
         df_hist_m, _ = load_gsheet_history(store_cfg["hist_id"], store_cfg["sales_id"])
+        df_sales_all = load_gsheet_sales(store_cfg["sales_id"])
+
         curr_ym = end_dt.strftime("%y.%m")
         prev_ym = (end_dt.replace(day=1) - datetime.timedelta(days=1)).strftime("%y.%m")
         yoy_ym = f"{int(end_dt.strftime('%y')) - 1:02d}.{end_dt.month:02d}"
@@ -941,48 +942,74 @@ with tab_calc:
         prev_row = df_hist_m[df_hist_m["정산월"] == prev_ym] if not df_hist_m.empty else pd.DataFrame()
         yoy_row = df_hist_m[df_hist_m["정산월"] == yoy_ym] if not df_hist_m.empty else pd.DataFrame()
 
-        # 같은 월 번호(예: 26.11 -> 26.11) 기준 매출 조회
-        df_sales_cur = load_gsheet_sales(store_cfg["sales_id"])
-        cur_sales_row = df_sales_cur[df_sales_cur["정산월"] == curr_ym] if not df_sales_cur.empty else pd.DataFrame()
+        # 매출 시트에서 당월 및 작년 동월 매출 직접 조회
+        cur_sales_row = df_sales_all[df_sales_all["정산월"] == curr_ym] if not df_sales_all.empty else pd.DataFrame()
+        yoy_sales_row = df_sales_all[df_sales_all["정산월"] == yoy_ym] if not df_sales_all.empty else pd.DataFrame()
         cur_sales_val = int(cur_sales_row.iloc[0]["총매출"]) if not cur_sales_row.empty else 0
+        yoy_sales_val = int(yoy_sales_row.iloc[0]["총매출"]) if not yoy_sales_row.empty else 0
 
+        # 5열 KPI 요약 그리드: 정규직 | 파트타임 | 총 이체 합계 | 작년 동월 대비 매출 | 작년 동월 대비 인건비
         st.write("")
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
+
         if not prev_row.empty:
-            p_ins = int(prev_row.iloc[0]["4대보험"])
+            p_reg = int(prev_row.iloc[0]["정규직"])
             p_part = int(prev_row.iloc[0]["파트타임"])
             p_tot = int(prev_row.iloc[0]["총인건비"])
-            if p_ins > 0:
-                m1.metric("4대보험 실지급 소계(A)", f"{sum_ins:,}원", delta=f"{sum_ins - p_ins:+,}원 (전월 대비)", delta_color="inverse")
+            if p_reg > 0:
+                m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원", delta=f"{sum_reg - p_reg:+,}원 (전월 대비)", delta_color="inverse")
             else:
-                m1.metric("4대보험 실지급 소계(A)", f"{sum_ins:,}원")
+                m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원")
             if p_part > 0:
                 m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원", delta=f"{sum_part - p_part:+,}원 (전월 대비)", delta_color="inverse")
             else:
                 m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원", delta=f"{total_payout - p_tot:+,}원 (전월 대비)", delta_color="inverse")
         else:
-            m1.metric("4대보험 실지급 소계(A)", f"{sum_ins:,}원")
+            m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원")
             m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원")
 
-        if cur_sales_val > 0:
-            cur_ratio = total_payout / cur_sales_val * 100
-            if not yoy_row.empty and int(yoy_row.iloc[0]["총매출"]) > 0:
-                yoy_ratio = float(yoy_row.iloc[0]["인건비율(%)"])
-                m4.metric(
-                    f"당월 인건비율 (매출 {cur_sales_val // 10000:,}만)",
-                    f"{cur_ratio:.1f}%",
-                    delta=f"{cur_ratio - yoy_ratio:+.1f}%p (작년 동월 대비)",
-                    delta_color="inverse",
-                )
-            else:
-                m4.metric(f"당월 인건비율 (매출 {cur_sales_val // 10000:,}만)", f"{cur_ratio:.1f}%")
-        elif not yoy_row.empty:
-            y_tot = int(yoy_row.iloc[0]["총인건비"])
-            m4.metric("작년 동월 대비 인건비", f"{total_payout - y_tot:+,}원", delta=f"작년 {yoy_ym}: {y_tot:,}원", delta_color="off")
+        # 4번째 카드: 작년 동월 대비 매출
+        if cur_sales_val > 0 and yoy_sales_val > 0:
+            diff_sales = cur_sales_val - yoy_sales_val
+            pct_sales = diff_sales / yoy_sales_val * 100
+            m4.metric(
+                "작년 동월 대비 매출",
+                f"{diff_sales:+,}원 ({pct_sales:+.1f}%)",
+                delta=f"작년 {yoy_ym}: {yoy_sales_val:,}원",
+                delta_color="off",
+            )
+        elif yoy_sales_val > 0:
+            m4.metric(
+                f"작년 {yoy_ym} 매출",
+                f"{yoy_sales_val:,}원",
+                delta=f"올해 {curr_ym} 매출 미입력",
+                delta_color="off",
+            )
+        elif cur_sales_val > 0:
+            m4.metric(
+                f"올해 {curr_ym} 매출",
+                f"{cur_sales_val:,}원",
+                delta="작년 동월 매출 데이터 없음",
+                delta_color="off",
+            )
         else:
-            m4.metric("당월 인건비율", "매출 미입력", delta="매출시트 입력 시 자동계산", delta_color="off")
+            m4.metric("작년 동월 대비 매출", "매출 미입력", delta="매출관리 시트 확인", delta_color="off")
+
+        # 5번째 카드: 작년 동월 대비 인건비
+        if not yoy_row.empty:
+            y_tot = int(yoy_row.iloc[0]["총인건비"])
+            diff_yoy = total_payout - y_tot
+            pct_yoy = (diff_yoy / y_tot * 100) if y_tot > 0 else 0.0
+            m5.metric(
+                "작년 동월 대비 인건비",
+                f"{diff_yoy:+,}원 ({pct_yoy:+.1f}%)",
+                delta=f"작년 {yoy_ym}: {y_tot:,}원",
+                delta_color="off",
+            )
+        else:
+            m5.metric("작년 동월 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
 
         st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
@@ -1135,7 +1162,7 @@ with tab_trend:
         valid_sales_df = df_monthly[df_monthly["총매출"] > 0]
 
         avg_total = int(df_monthly["총인건비"].mean())
-        detailed_df = df_monthly[(df_monthly["4대보험"] > 0) | (df_monthly["파트타임"] > 0)]
+        detailed_df = df_monthly[(df_monthly["정규직"] > 0) | (df_monthly["파트타임"] > 0)]
         part_ratio = (
             (detailed_df["파트타임"].sum() / detailed_df["총인건비"].sum() * 100)
             if (not detailed_df.empty and detailed_df["총인건비"].sum() > 0)
@@ -1166,7 +1193,6 @@ with tab_trend:
             k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
             k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%" if part_ratio > 0 else "-")
 
-        # 차트 영역
         st.markdown('<div class="section-title">1. 월별 매출 · 인건비 및 인건비율 추이</div>', unsafe_allow_html=True)
         if has_sales:
             ch1, ch2 = st.columns(2)
@@ -1182,7 +1208,6 @@ with tab_trend:
             with st.container(border=True):
                 st.bar_chart(df_monthly.set_index("정산월")[["총인건비"]], height=320)
 
-        # 전년 동월 대비(YoY) 비교 섹션
         df_monthly_calc = df_monthly.copy()
         df_monthly_calc["월번호"] = df_monthly_calc["정산월"].str.split(".").str[1]
 
@@ -1228,7 +1253,6 @@ with tab_trend:
                 },
             )
 
-        # 월별 상세 종합 테이블
         sec_num = "3" if yoy_records else "2"
         st.markdown(f'<div class="section-title">{sec_num}. 월별 매출 · 인건비 상세 내역</div>', unsafe_allow_html=True)
         df_monthly_disp = df_monthly.copy()
@@ -1236,11 +1260,11 @@ with tab_trend:
 
         if has_sales:
             disp_cols = [
-                "정산월", "총매출", "4대보험", "파트타임", "총인건비",
+                "정산월", "총매출", "정규직", "파트타임", "총인건비",
                 "전월대비인건비증감", "인건비율(%)", "시간당매출(SPLH)"
             ]
         else:
-            disp_cols = ["정산월", "4대보험", "파트타임", "총인건비", "전월대비인건비증감"]
+            disp_cols = ["정산월", "정규직", "파트타임", "총인건비", "전월대비인건비증감"]
 
         st.dataframe(
             df_monthly_disp[disp_cols],
@@ -1248,7 +1272,7 @@ with tab_trend:
             hide_index=True,
             column_config={
                 "총매출": st.column_config.NumberColumn("총 매출", format="%,d"),
-                "4대보험": st.column_config.NumberColumn("4대보험(상세)", format="%,d"),
+                "정규직": st.column_config.NumberColumn("정규직(상세)", format="%,d"),
                 "파트타임": st.column_config.NumberColumn("파트타임(상세)", format="%,d"),
                 "총인건비": st.column_config.NumberColumn("총 인건비", format="%,d"),
                 "전월대비인건비증감": st.column_config.NumberColumn("전월 대비 증감", format="%+,d"),
@@ -1257,7 +1281,6 @@ with tab_trend:
             },
         )
 
-        # 직원별 누적 근무시간 · 급여 요약 (상세 탭이 있는 달 기준)
         if not df_staff.empty:
             sec_staff_num = "4" if yoy_records else "3"
             st.markdown(f'<div class="section-title">{sec_staff_num}. 직원별 누적 근무시간 · 급여 요약 (상세 내역 기준)</div>', unsafe_allow_html=True)
