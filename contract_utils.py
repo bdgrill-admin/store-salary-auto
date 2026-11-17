@@ -350,34 +350,41 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
 
 
 def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes):
+    import base64
     if not to_email or "@" not in to_email:
         return False, "이메일 주소 없음"
-    sender = secrets_dict.get("GMAIL_SENDER", "")
-    app_pw = secrets_dict.get("GMAIL_APP_PASSWORD", "")
-    if not sender or not app_pw:
-        return False, "GMAIL 시크릿 미설정"
+    
+    webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
+    if not webapp_url:
+        return False, "웹앱 URL 미설정"
 
-    msg = MIMEMultipart()
-    msg["Subject"] = f"[분당그릴] {emp_name}님 전자 근로계약서 사본 교부"
-    msg["From"] = sender
-    msg["To"] = to_email
-
-    body = (
-        f"안녕하세요, {emp_name}님.\n\n"
-        f"분당그릴과 체결하신 표준근로계약서(전자서명 완료본) 사본을 보내드립니다.\n"
-        f"첨부된 PDF 파일을 보관해 주시기 바랍니다.\n\n"
-        f"감사합니다.\n분당그릴 드림"
-    )
-    msg.attach(MIMEText(body, "plain", "utf-8"))
-
-    part = MIMEApplication(pdf_bytes, Name=filename)
-    part["Content-Disposition"] = f'attachment; filename="{filename}"'
-    msg.attach(part)
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender, app_pw)
-        server.send_message(msg)
-    return True, "발송 완료"
+    payload = {
+        "action": "send_email",
+        "toEmail": to_email,
+        "subject": f"[분당그릴] {emp_name}님 전자 근로계약서 사본 교부",
+        "body": (
+            f"안녕하세요, {emp_name}님.\n\n"
+            f"분당그릴과 체결하신 표준근로계약서(전자서명 완료본) 사본을 보내드립니다.\n"
+            f"첨부된 PDF 파일을 보관해 주시기 바랍니다.\n\n"
+            f"감사합니다.\n분당그릴 드림"
+        ),
+        "filename": filename,
+        "base64Data": base64.b64encode(pdf_bytes).decode("utf-8"),
+    }
+    try:
+        res = requests.post(
+            webapp_url,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            timeout=30,
+        )
+        res_json = res.json()
+        if res_json.get("ok"):
+            return True, "발송 완료"
+        else:
+            return False, res_json.get("error", "알 수 없는 오류")
+    except Exception as e:
+        return False, str(e)
 
 
 def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, emp_sign_img: Image.Image):
