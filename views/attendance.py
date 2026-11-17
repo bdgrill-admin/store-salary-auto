@@ -1,3 +1,18 @@
+"""
+================================================================================
+[파일명] views/attendance.py
+[역할] 매장 직원 및 매니저 공용 '일일 출퇴근기록부 및 월별 근무시간 조회' 페이지
+[주요 기능]
+  1. 날짜별 일 근무현황 실시간 표 조회 (선택된 행 파란색 / 방금 수정된 행 초록색 하이라이트)
+  2. 매니저 전용 확인(PIN 번호 입력): 미확인 근태 일괄 승인 및 승인 완료 건 잠금 해제
+  3. 직원 출퇴근 시간 신규 입력 및 기존 내역 선택 수정
+     - 자정 넘어가는 익일 퇴근 시간 자동 계산
+     - 매니저 확인 완료('TRUE')된 기록은 직원이 임의로 수정하지 못하도록 자동 잠금
+     - 기존 기록 수정 시 '수정 사유' 필수 입력 및 변경 전/후 이력(비고란) 자동 기록
+  4. 선택한 직원의 정산월 기준(매월 5일 ~ 익월 4일) 누적 출근일수 및 총 근무시간 실시간 집계
+================================================================================
+"""
+
 import os
 import datetime
 import pandas as pd
@@ -8,6 +23,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+# ------------------------------------------------------------------------------
+# 환경변수 및 Streamlit Secrets 조회 함수
+# ------------------------------------------------------------------------------
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -17,6 +36,9 @@ def get_secret(key: str, default: str = ""):
     return os.getenv(key, default)
 
 
+# ------------------------------------------------------------------------------
+# 매장별 통합근태DB 시트 ID, 매니저 PIN, 급여 정산 기준일(매월 5일) 설정
+# ------------------------------------------------------------------------------
 STORES = {
     "분당그릴": {
         "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
@@ -30,11 +52,13 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
-PAYROLL_START_DAY = 5
+PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 다음 달 4일)
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 
 
-
+# ------------------------------------------------------------------------------
+# 화면 UI 스타일(Pretendard 폰트, 매니저 박스 강조 색상, 여백 등) 설정
+# ------------------------------------------------------------------------------
 def apply_clean_style():
     st.markdown(
         """
@@ -118,6 +142,9 @@ def apply_clean_style():
 apply_clean_style()
 
 
+# ------------------------------------------------------------------------------
+# 구글 시트 API 클라이언트 인증 및 정산 기간/시간 포맷 변환 보조 함수들
+# ------------------------------------------------------------------------------
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -135,6 +162,7 @@ def get_gspread_client():
 
 
 def get_payroll_period(ref_date: datetime.date, start_day: int = 5):
+    """기준 날짜가 속한 정산월의 시작일(5일)과 종료일(익월 4일)을 계산"""
     if ref_date.day >= start_day:
         m_start = ref_date.replace(day=start_day)
         if ref_date.month == 12:
@@ -152,6 +180,7 @@ def get_payroll_period(ref_date: datetime.date, start_day: int = 5):
 
 
 def get_recent_payroll_months(base_date: datetime.date, count: int = 6):
+    """최근 6개월치 정산월 드롭다운 선택지 생성"""
     options = {}
     cur_start, cur_end = get_payroll_period(base_date, PAYROLL_START_DAY)
     for i in range(count):
@@ -164,14 +193,17 @@ def get_recent_payroll_months(base_date: datetime.date, count: int = 6):
 
 
 def mins_to_hm(total_mins: int) -> str:
+    """총 분(minutes)을 'HH:MM' 문자열로 변환"""
     return f"{total_mins // 60:02d}:{total_mins % 60:02d}"
 
 
 def mins_to_korean(total_mins: int) -> str:
+    """총 분(minutes)을 'X시간 Y분' 한글 문자열로 변환"""
     return f"{total_mins // 60}시간 {total_mins % 60}분"
 
 
 def format_date_with_weekday(d_str: str) -> str:
+    """'YYYY-MM-DD' 날짜를 'MM-DD (요일)' 형식으로 변환"""
     weekdays_short = ["월", "화", "수", "목", "금", "토", "일"]
     try:
         dt = datetime.datetime.strptime(str(d_str).strip(), "%Y-%m-%d").date()
@@ -180,6 +212,9 @@ def format_date_with_weekday(d_str: str) -> str:
         return str(d_str)[5:] if len(str(d_str)) >= 10 else str(d_str)
 
 
+# ------------------------------------------------------------------------------
+# 구글 시트에서 '파트타임'(직원명부) 및 '통합근태DB'(출퇴근기록) 로드
+# ------------------------------------------------------------------------------
 @st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
 def load_db_sheets(db_id: str):
     gc = get_gspread_client()
@@ -195,11 +230,10 @@ def load_db_sheets(db_id: str):
                 row_d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
                 if any(row_d.values()):
                     if with_row_num:
-                        row_d["_sheet_row"] = idx
+                        row_d["_sheet_row"] = idx  # 시트 실제 행 번호 저장 (수정/승인 시 정확한 행 업데이트용)
                     out.append(row_d)
         return pd.DataFrame(out)
 
-    # '직원목록' -> '파트타임' 탭으로 변경 반영
     df_emp = read_sheet("파트타임")
     df_att = read_sheet("통합근태DB", with_row_num=True)
     if not df_att.empty:
@@ -208,6 +242,9 @@ def load_db_sheets(db_id: str):
     return df_emp, df_att
 
 
+# ==============================================================================
+# 상단 타이틀, 새로고침 버튼, 매장 선택 및 조회 날짜 선택기
+# ==============================================================================
 h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
 with h_col1:
     st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
@@ -228,6 +265,7 @@ except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
 
+# 재직 중인 파트타임 직원 이름 목록 추출 (예금주와 실근무자가 달라 '메모'에 실근무자명이 적힌 경우 실근무자명 우선 사용)
 active_emp_names = []
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
@@ -269,6 +307,9 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
+# ==============================================================================
+# 상단 좌/우 영역: [좌] 1. 일 근무현황 표  |  [우] 매니저 전용 확인(승인/해제)
+# ==============================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
 selected_grid_record = None
@@ -290,6 +331,7 @@ with top_left:
             if grid_state_key in st.session_state:
                 prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
 
+            # 선택된 행은 파란색, 방금 저장/수정한 행은 연초록색으로 배경 하이라이트
             def highlight_row(row):
                 idx = row.name
                 sheet_r = day_df.loc[idx, "_sheet_row"]
@@ -313,6 +355,7 @@ with top_left:
                 key=grid_state_key,
             )
 
+            # 표에서 특정 행을 체크하면 하단 입력창이 자동으로 '기존 수정' 모드로 전환됨
             sel_rows = event.selection.rows if event and event.selection else []
             if sel_rows:
                 selected_grid_record = day_df.iloc[sel_rows[0]].to_dict()
@@ -340,6 +383,7 @@ with top_right:
                 label_visibility="collapsed",
             )
 
+        # 매니저 비밀번호 일치 시: 미확인 건 일괄 승인 탭 & 승인 해제 탭 표시
         if pin_input == store_cfg["manager_pin"]:
             t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
 
@@ -405,9 +449,13 @@ with top_right:
         else:
             st.caption("매니저 확인 전까지는 위의 표에서 행을 체크해 수정할 수 있습니다.")
 
+# ==============================================================================
+# 하단 좌/우 영역: [좌] 2. 출퇴근 시간 입력/수정  |  [우] 3. 개인별 월 누적 근무시간 조회
+# ==============================================================================
 left_col, right_col = st.columns([1.5, 1.0])
 
 with left_col:
+    # 위 표에서 행을 선택했으면 '기존 수정' 모드, 아니면 '신규 등록' 모드로 자동 전환
     if selected_grid_record is not None:
         mode = "기존 수정"
         target_sheet_row = int(selected_grid_record["_sheet_row"])
@@ -430,6 +478,7 @@ with left_col:
                 f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 체크를 해제하세요)"
             )
 
+        # 매니저 확인이 완료된 건('TRUE')은 직원이 수정할 수 없도록 입력창 비활성화(Lock)
         is_locked = (mode == "기존 수정") and (str(old_record.get("매니저확인", "")).strip().upper() == "TRUE")
         if is_locked:
             st.error("🚫 매니저 확인이 완료된 기록은 수정할 수 없습니다. 수정이 필요하면 매니저에게 확인 해제를 요청하세요.")
@@ -469,6 +518,7 @@ with left_col:
         with c3:
             end_t = st.time_input("종료시간", value=def_e, step=600, disabled=is_locked)
 
+        # 근무시간 자동 계산 (종료시간이 시작시간보다 빠르면 자정을 넘긴 익일 퇴근으로 자동 계산)
         dt_s = datetime.datetime.combine(sel_date, start_t)
         dt_e = datetime.datetime.combine(sel_date, end_t)
         if dt_e < dt_s:
@@ -509,6 +559,7 @@ with left_col:
         can_submit = (not is_locked) and (diff_mins > 0) and (mode == "신규 등록" or len(edit_reason.strip()) > 0)
         btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기"
 
+        # 저장 버튼 클릭 시 '통합근태DB' 시트에 추가(append) 또는 해당 행 업데이트(update)
         if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
             now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             now_short = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
@@ -544,6 +595,7 @@ with left_col:
             st.rerun()
 
 with right_col:
+    # 현재 선택된 직원의 정산월 기준 누적 출근일수 및 총 근무시간 집계 표시
     st.markdown(f'<div class="section-title">3. {real_emp_name} 님 월별 근무시간 조회</div>', unsafe_allow_html=True)
 
     month_options = get_recent_payroll_months(datetime.date.today(), count=6)
