@@ -1,3 +1,16 @@
+"""
+================================================================================
+[파일명] contract_utils.py
+[역할] 전자 근로계약서 시스템의 백엔드 핵심 유틸리티 모듈
+[주요 기능]
+  1. 구글 시트('근로계약서', '파트타임', '정규직') 데이터 조회 및 동기화
+  2. ReportLab을 이용한 A4 2페이지 표준근로계약서 PDF 생성 (대표자/근로자 서명 합성)
+  3. Google Apps Script 웹앱과 통신하여 구글 드라이브 PDF 자동 저장
+  4. Google Apps Script 웹앱과 통신하여 근로자 이메일로 계약서 PDF 자동 발송
+  5. 서명 완료 시 대표님 텔레그램으로 실시간 알림 전송
+================================================================================
+"""
+
 import os
 import json
 import io
@@ -14,10 +27,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
+# ------------------------------------------------------------------------------
+# 기본 설정 상수 (통합근태DB 시트 ID, 구글 드라이브 폴더 ID, 대표자 서명 이미지 경로)
+# ------------------------------------------------------------------------------
 DB_SPREADSHEET_ID = "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8"
 CONTRACT_FOLDER_ID = "1I91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
 OWNER_SIGN_PATH = "owner_sign.png"
 
+# '근로계약서' 탭의 열(Column) 헤더 순서 정의 (A열 ~ AB열, 총 28개 컬럼)
 CONTRACT_HEADERS = [
     "계약ID", "계약유형", "직원명", "근로개시일", "근로종료일", "업무내용",
     "근무시작", "근무종료", "휴게시간(분)", "주근무일수", "주휴요일",
@@ -28,6 +45,10 @@ CONTRACT_HEADERS = [
 ]
 
 
+# ------------------------------------------------------------------------------
+# [함수 1] PDF 한글 폰트 등록
+# - Streamlit Cloud(리눅스 나눔고딕) 및 로컬 PC(윈도우 맑은고딕) 환경 자동 감지
+# ------------------------------------------------------------------------------
 def _register_korean_font():
     candidates = [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
@@ -56,6 +77,10 @@ def _register_korean_font():
     return reg_font, bold_font
 
 
+# ------------------------------------------------------------------------------
+# [함수 2] 구글 서비스 계정 인증 객체 생성
+# - Streamlit Secrets 또는 로컬 credentials.json 파일에서 인증 정보 로드
+# ------------------------------------------------------------------------------
 def get_google_creds(secrets_dict):
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -68,6 +93,9 @@ def get_google_creds(secrets_dict):
     return Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
 
+# ------------------------------------------------------------------------------
+# [함수 3] '근로계약서' 워크시트 열기 (없으면 헤더와 함께 자동 생성)
+# ------------------------------------------------------------------------------
 def get_contract_worksheet(secrets_dict):
     creds = get_google_creds(secrets_dict)
     gc = gspread.authorize(creds)
@@ -80,12 +108,15 @@ def get_contract_worksheet(secrets_dict):
     return ws, ss
 
 
+# ------------------------------------------------------------------------------
+# [함수 4] 등록된 재직 직원 명부 불러오기 ('파트타임' 및 '정규직' 시트)
+# - 각 시트의 서로 다른 컬럼 구조에 맞춰 기본정보를 읽어와 리스트로 반환
+# ------------------------------------------------------------------------------
 def load_registered_employees(secrets_dict):
-    """파트타임 및 정규직 시트에서 등록된 직원 목록과 기본정보를 불러옵니다."""
     _, ss = get_contract_worksheet(secrets_dict)
     employees = []
 
-    # 1. 파트타임 시트 조회 (A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID)
+    # 1) 파트타임 시트 조회 (A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID)
     try:
         pt_ws = ss.worksheet("파트타임")
         pt_rows = pt_ws.get_all_values()
@@ -115,7 +146,7 @@ def load_registered_employees(secrets_dict):
     except Exception:
         pass
 
-    # 2. 정규직 시트 조회 (A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일)
+    # 2) 정규직 시트 조회 (A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일)
     try:
         ft_ws = ss.worksheet("정규직")
         ft_rows = ft_ws.get_all_values()
@@ -147,6 +178,9 @@ def load_registered_employees(secrets_dict):
     return employees
 
 
+# ------------------------------------------------------------------------------
+# [함수 5] 전체 근로계약서 발급 내역 불러오기
+# ------------------------------------------------------------------------------
 def load_all_contracts(secrets_dict):
     ws, _ = get_contract_worksheet(secrets_dict)
     rows = ws.get_all_values()
@@ -157,11 +191,14 @@ def load_all_contracts(secrets_dict):
     for idx, r in enumerate(rows[1:], start=2):
         padded = r + [""] * (len(headers) - len(r))
         item = dict(zip(headers, padded))
-        item["_row_idx"] = idx
+        item["_row_idx"] = idx  # 추후 서명 완료 시 해당 행만 정확히 업데이트하기 위한 행 번호 저장
         result.append(item)
     return result
 
 
+# ------------------------------------------------------------------------------
+# [함수 6] 특정 계약ID(URL 파라미터)로 단일 계약서 데이터 조회
+# ------------------------------------------------------------------------------
 def get_contract_by_id(secrets_dict, contract_id: str):
     contracts = load_all_contracts(secrets_dict)
     for c in contracts:
@@ -170,6 +207,11 @@ def get_contract_by_id(secrets_dict, contract_id: str):
     return None
 
 
+# ------------------------------------------------------------------------------
+# [함수 7] 신규 근로계약서 생성 ('서명대기' 상태로 시트에 저장 후 계약ID 반환)
+# - 선택한 직원의 기존 기본정보(주민번호, 은행명, 계좌번호, 이메일)도 함께 기록하여
+#   직원이 링크를 열었을 때 자동으로 입력란이 채워지도록 처리
+# ------------------------------------------------------------------------------
 def create_new_contract(secrets_dict, data: dict) -> str:
     ws, _ = get_contract_worksheet(secrets_dict)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -193,19 +235,22 @@ def create_new_contract(secrets_dict, data: dict) -> str:
         data.get("사회보험", "고용보험, 산재보험"),
         "서명대기",
         now_str,
-        "",  # 서명일시
+        "",  # 서명일시 (서명 전이므로 빈칸)
         data.get("주민번호", ""),
         data.get("은행명", ""),
         data.get("계좌번호", ""),
         data.get("주소", ""),
         data.get("연락처", ""),
         data.get("이메일", ""),
-        "", "", ""
+        "", "", ""  # CCTV동의, 보건증제출일, 드라이브PDF링크
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
     return cid
 
 
+# ------------------------------------------------------------------------------
+# [함수 8] PDF 긴 문장 자동 줄바꿈(Word-Wrap) 출력 보조 함수
+# ------------------------------------------------------------------------------
 def _draw_wrapped(c, text, x, y, max_width, line_height, font_name, font_size):
     c.setFont(font_name, font_size)
     words = text.split(" ")
@@ -224,6 +269,11 @@ def _draw_wrapped(c, text, x, y, max_width, line_height, font_name, font_size):
     return y
 
 
+# ------------------------------------------------------------------------------
+# [함수 9] 표준근로계약서 A4 2페이지 PDF 생성
+# - 1페이지: 외곽 테두리, 제목 박스, 제1조 ~ 제12조
+# - 2페이지: 외곽 테두리, 제13조 ~ 제17조, 계약일자, 사업주/근로자 인적사항 및 서명 이미지 합성
+# ------------------------------------------------------------------------------
 def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -256,7 +306,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     sign_date_parts = sign_dt.split(" ")[0].split("-")
     sy, sm, sd = (sign_date_parts + ["", "", ""])[:3]
 
-    # --- 1페이지 ---
+    # === [1페이지 그리기] ===
     c.setLineWidth(1.2)
     c.rect(36, 36, w - 72, h - 72)
 
@@ -311,7 +361,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     c.drawCentredString(w / 2, 46, "- 1 / 2 -")
     c.showPage()
 
-    # --- 2페이지 ---
+    # === [2페이지 그리기] ===
     c.setLineWidth(1.2)
     c.rect(36, 36, w - 72, h - 72)
 
@@ -339,6 +389,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
         y = _draw_wrapped(c, line, 50, y, w - 100, 17, bold_f if is_head else reg_f, 10.2)
         y -= 5 if is_head else 2.5
 
+    # 구분선 및 계약 체결일
     y -= 14
     c.setLineWidth(0.6)
     c.line(48, y, w - 48, y)
@@ -347,6 +398,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     date_line = f"{sy} 년    {sm} 월    {sd} 일"
     c.drawCentredString(w / 2, y, date_line)
 
+    # 사업주 정보 및 대표자 서명 이미지(owner_sign.png) 날인
     y -= 42
     c.setFont(bold_f, 10.5)
     c.drawString(52, y, "(사업주)  사업체명 :  분 당 그 릴        (전화 : 031-713-0342 )")
@@ -363,6 +415,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
         except Exception:
             pass
 
+    # 근로자 정보 및 직원 서명 이미지 날인
     y -= 44
     c.setFont(bold_f, 10.5)
     c.drawString(52, y, f"(근로자)  주    소 :  {addr}")
@@ -385,6 +438,10 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+# ------------------------------------------------------------------------------
+# [함수 10] 구글 드라이브에 PDF 파일 업로드 (Apps Script 웹앱 연동)
+# - 서비스 계정의 용량 제한(Quota) 문제를 우회하기 위해 대표님 드라이브 권한의 웹앱 사용
+# ------------------------------------------------------------------------------
 def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
     webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url:
@@ -414,6 +471,10 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
     return res_json.get("url", "")
 
 
+# ------------------------------------------------------------------------------
+# [함수 11] 직원 이메일로 계약서 PDF 사본 자동 발송 (Apps Script 웹앱 연동)
+# - Streamlit 서버의 SMTP 포트 차단 문제를 우회하여 GmailApp으로 안정적 발송
+# ------------------------------------------------------------------------------
 def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes):
     if not to_email or "@" not in to_email:
         return False, "이메일 주소 없음"
@@ -451,8 +512,11 @@ def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: st
         return False, str(e)
 
 
+# ------------------------------------------------------------------------------
+# [함수 12] 서명 완료 시 직원 명부('파트타임' 또는 '정규직') 시트 동기화
+# - 파트타임(10개 컬럼)과 정규직(8개 컬럼)의 서로 다른 열 순서에 맞춰 데이터 밀림 없이 반영
+# ------------------------------------------------------------------------------
 def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
-    """파트타임 시트와 정규직 시트의 서로 다른 열 구조에 맞춰 정확하게 업데이트합니다."""
     emp_name = merged.get("직원명", "").strip()
     if not emp_name:
         return
@@ -464,7 +528,7 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     s_date = merged.get("근로개시일", "")
 
     if merged.get("임금구분") == "월급":
-        # 정규직 시트 구조: A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일
+        # 정규직 시트 열 구조: A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일
         ws = ss.worksheet("정규직")
         rows = ws.get_all_values()
         found_idx = None
@@ -482,7 +546,7 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
         else:
             ws.append_row(new_row, value_input_option="USER_ENTERED")
     else:
-        # 파트타임 시트 구조: A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID
+        # 파트타임 시트 열 구조: A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID
         ws = ss.worksheet("파트타임")
         rows = ws.get_all_values()
         found_idx = None
@@ -503,6 +567,11 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
             ws.append_row(new_row, value_input_option="USER_ENTERED")
 
 
+# ------------------------------------------------------------------------------
+# [함수 13] 근로자 최종 서명 제출 통합 처리 함수
+# - PDF 생성 -> 드라이브 업로드 -> 근로계약서 시트 업데이트 -> 직원 명부 동기화
+#   -> 직원 이메일 발송 -> 대표님 텔레그램 알림 발송을 순차 실행
+# ------------------------------------------------------------------------------
 def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, emp_sign_img: Image.Image):
     ws, ss = get_contract_worksheet(secrets_dict)
     row_idx = contract["_row_idx"]
@@ -514,25 +583,31 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
     merged["상태"] = "서명완료"
     merged["서명일시"] = sign_dt
 
+    # 1) 계약서 PDF 생성
     pdf_bytes = generate_contract_pdf(merged, emp_sign_img)
     emp_name = merged.get("직원명", "직원").strip()
     filename = f"{date_tag}_{emp_name}_근로계약서.pdf"
 
+    # 2) 구글 드라이브에 PDF 업로드
     drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes)
     merged["드라이브PDF링크"] = drive_link
 
+    # 3) '근로계약서' 탭 해당 행 상태 및 상세정보 업데이트
     updated_row = [merged.get(h, "") for h in CONTRACT_HEADERS]
     ws.update(f"A{row_idx}:AB{row_idx}", [updated_row], value_input_option="USER_ENTERED")
 
+    # 4) '파트타임' 또는 '정규직' 직원 명부 시트 최신 정보 동기화
     try:
         _sync_employee_sheet(ss, merged, emp_inputs)
     except Exception:
         pass
 
+    # 5) 근로자 이메일로 계약서 PDF 발송
     email_ok, email_msg = send_contract_email(
         secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes
     )
 
+    # 6) 대표님 텔레그램으로 체결 완료 알림 전송
     bot_token = secrets_dict.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = secrets_dict.get("TELEGRAM_CHAT_ID", "")
     if bot_token and chat_id:
