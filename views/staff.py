@@ -1,3 +1,17 @@
+"""
+================================================================================
+[파일명] views/staff.py
+[역할] 관리자/매니저 전용 '직원 · 시급/계좌 관리 및 전자 근로계약서 발급' 페이지
+[주요 기능]
+  1. 매니저 PIN 번호 잠금 해제
+  2. 신규 파트타임 직원 간편 등록 폼
+  3. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
+  4. [핵심 개편] 등록된 직원을 드롭다운에서 선택하면 기본정보(입사일, 시급/월급, 계좌, 이메일)를
+     자동으로 불러와 전자 근로계약서 서명 링크를 생성하는 기능
+  5. 발급된 계약서 진행 상태(서명대기/서명완료) 및 구글 드라이브 PDF 열기 버튼 목록
+================================================================================
+"""
+
 import os
 import re
 import datetime
@@ -9,6 +23,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+# ------------------------------------------------------------------------------
+# 환경변수 및 Streamlit Secrets 조회 함수
+# ------------------------------------------------------------------------------
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -18,6 +36,9 @@ def get_secret(key: str, default: str = ""):
     return os.getenv(key, default)
 
 
+# ------------------------------------------------------------------------------
+# 매장별 통합근태DB 시트 ID 및 매니저 PIN 설정
+# ------------------------------------------------------------------------------
 STORES = {
     "분당그릴": {
         "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
@@ -31,47 +52,25 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
+
+# 파트타임 탭(10열)과 정규직 탭(8열)의 컬럼 순서 정의
 PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID"]
 REG_COLS = ["이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "텔레그램ID", "이메일"]
 
+# 은행 대량이체 표준 은행명 리스트 및 약칭 변환 매핑
 BANK_OPTIONS = [
-    "KB국민",
-    "신한은행",
-    "우리은행",
-    "하나은행",
-    "NH농협",
-    "IBK기업은행",
-    "카카오뱅크",
-    "토스뱅크",
-    "케이뱅크",
-    "새마을금고",
-    "신협",
-    "우체국",
-    "SC제일은행",
-    "부산은행",
-    "대구은행(iM뱅크)",
-    "광주은행",
-    "전북은행",
-    "경남은행",
-    "수협은행",
+    "KB국민", "신한은행", "우리은행", "하나은행", "NH농협", "IBK기업은행",
+    "카카오뱅크", "토스뱅크", "케이뱅크", "새마을금고", "신협", "우체국",
+    "SC제일은행", "부산은행", "대구은행(iM뱅크)", "광주은행", "전북은행", "경남은행", "수협은행",
 ]
 
 BANK_ALIAS_MAP = {
-    "국민": "KB국민",
-    "국민은행": "KB국민",
-    "신한": "신한은행",
-    "우리": "우리은행",
-    "하나": "하나은행",
-    "농협": "NH농협",
-    "농협은행": "NH농협",
-    "기업": "IBK기업은행",
-    "기업은행": "IBK기업은행",
-    "카카오": "카카오뱅크",
-    "토스": "토스뱅크",
-    "케이": "케이뱅크",
+    "국민": "KB국민", "국민은행": "KB국민", "신한": "신한은행", "우리": "우리은행",
+    "하나": "하나은행", "농협": "NH농협", "농협은행": "NH농협", "기업": "IBK기업은행",
+    "기업은행": "IBK기업은행", "카카오": "카카오뱅크", "토스": "토스뱅크", "케이": "케이뱅크",
 }
 
-
+# 화면 스타일(Pretendard 폰트 및 여백) 설정
 st.markdown(
     """
     <style>
@@ -109,6 +108,9 @@ st.markdown(
 )
 
 
+# ------------------------------------------------------------------------------
+# 구글 시트 연결 및 데이터 정제 보조 함수들
+# ------------------------------------------------------------------------------
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -126,6 +128,7 @@ def get_gspread_client():
 
 
 def clean_int(val):
+    """콤마 등이 섞인 금액 문자열을 정수(int)로 안전하게 변환"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0
     digits = re.sub(r"[^\d.-]", "", str(val))
@@ -136,6 +139,7 @@ def clean_int(val):
 
 
 def normalize_bank_name(bank_str: str) -> str:
+    """'국민', '국민은행' 등을 대량이체 표준 명칭('KB국민')으로 통일"""
     b = str(bank_str).strip()
     if not b:
         return ""
@@ -143,12 +147,16 @@ def normalize_bank_name(bank_str: str) -> str:
 
 
 def format_ssn(ssn_str):
+    """주민번호 13자리 숫자를 앞6자리-뒤7자리 하이픈 형식으로 자동 포맷팅"""
     digits = re.sub(r"\D", "", str(ssn_str).strip())
     if len(digits) == 13:
         return f"{digits[:6]}-{digits[6:]}"
     return str(ssn_str).strip()
 
 
+# ------------------------------------------------------------------------------
+# '파트타임' 및 '정규직' 탭 데이터 로드 및 저장 함수
+# ------------------------------------------------------------------------------
 @st.cache_data(ttl=25, show_spinner="직원 명부(파트타임 · 정규직)를 불러오는 중...")
 def load_staff_tabs(db_id: str):
     gc = get_gspread_client()
@@ -214,6 +222,9 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     r_ws.update(range_name="A1", values=[REG_COLS] + clean_r.values.tolist())
 
 
+# =========================================================================
+# 상단 헤더 및 비밀번호 잠금 확인
+# =========================================================================
 h1, h2, h3 = st.columns([2.6, 0.9, 0.7], vertical_alignment="center")
 with h1:
     st.markdown('<div class="app-title">👥 직원 · 시급/계좌 관리</div>', unsafe_allow_html=True)
@@ -249,7 +260,7 @@ st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 
 df_part, df_reg = load_staff_tabs(store_cfg["db_id"])
 
 # =========================================================================
-# 신규 파트타임 직원 간편 등록
+# 신규 파트타임 직원 간편 등록 폼
 # =========================================================================
 with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
     with st.form("new_part_staff_form", clear_on_submit=True):
@@ -294,7 +305,7 @@ with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
                 st.rerun()
 
 # =========================================================================
-# 1. 파트타임 직원 명부 (시급 · 계좌 · 재직/퇴사 · 연락처)
+# 1. 파트타임 직원 명부 편집 표
 # =========================================================================
 st.markdown('<div class="section-title">1. 파트타임 직원 명부 (시급 · 계좌 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_part_disp = df_part.copy()
@@ -321,7 +332,7 @@ edited_part = st.data_editor(
 )
 
 # =========================================================================
-# 2. 정규직 직원 명부 (계약급여 · 실지급액 · 계좌 · 연락처)
+# 2. 정규직 직원 명부 편집 표
 # =========================================================================
 st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 연락처)</div>', unsafe_allow_html=True)
 df_reg_disp = df_reg.copy()
@@ -361,7 +372,7 @@ st.caption("위 직원 명부에 등록된 직원을 선택하면 기본정보(�
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
 
-# 위에서 불러온 df_part, df_reg 데이터를 기반으로 선택 가능한 재직 직원 목록 구성
+# 파트타임 및 정규직 명부에서 재직 중인 직원들을 드롭다운 선택지(staff_options)로 생성
 staff_lookup = {}
 staff_options = ["➕ 직접 입력 (미등록 신규 직원)"]
 
@@ -401,6 +412,7 @@ for _, r in df_reg.iterrows():
         }
 
 with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 → 자동 불러오기)", expanded=True):
+    # 1단계: 드롭다운에서 직원 선택
     selected_staff_label = st.selectbox(
         "👤 1단계: 계약서를 작성할 직원 선택 (위 직원 명부 연동)",
         options=staff_options,
@@ -408,6 +420,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
         key="c_staff_selector",
     )
 
+    # 선택한 직원의 기본정보 추출
     prefill = staff_lookup.get(selected_staff_label, {})
     default_name = prefill.get("직원명", "")
     default_pay_type = prefill.get("임금구분", "시급")
@@ -428,9 +441,10 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
             f"**이메일**: {prefill.get('이메일') or '미등록'} *(직원 서명 화면에 자동으로 미리 채워집니다)*"
         )
 
-    # 선택한 직원이 바뀔 때마다 입력 위젯 초기값이 즉시 갱신되도록 동적 key 접미사 사용
+    # 직원을 바꿀 때마다 아래 입력칸들이 해당 직원의 값으로 즉시 바뀌도록 동적 key 부여
     k_sfx = selected_staff_label
 
+    # 2단계: 근로조건 확인 및 추가 입력
     c_col1, c_col2, c_col3 = st.columns(3)
     with c_col1:
         c_type = st.selectbox(
@@ -481,6 +495,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
         key=f"new_c_ins_{k_sfx}",
     )
 
+    # 3단계: 전용 서명 링크 발급 버튼
     if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
         if not c_emp_name.strip():
             st.error("직원 성명을 입력해 주세요.")
@@ -512,6 +527,9 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
             st.success(f"✅ **{c_emp_name.strip()}** 님의 전자 근로계약서 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
             st.code(sign_url, language="text")
 
+# ------------------------------------------------------------------------------
+# 최근 발급된 계약서 현황 리스트 및 구글 드라이브 PDF 바로가기
+# ------------------------------------------------------------------------------
 st.markdown("#### 📋 발급 및 서명 완료 목록")
 try:
     all_contracts = load_all_contracts(st.secrets)
