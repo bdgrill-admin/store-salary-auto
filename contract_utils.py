@@ -1,16 +1,11 @@
 import os
 import json
 import io
+import base64
 import datetime
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from PIL import Image
 
 from reportlab.lib.pagesizes import A4
@@ -20,7 +15,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
 DB_SPREADSHEET_ID = "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8"
-CONTRACT_FOLDER_ID = "1l91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
+CONTRACT_FOLDER_ID = "1I91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
 OWNER_SIGN_PATH = "owner_sign.png"
 
 CONTRACT_HEADERS = [
@@ -85,6 +80,73 @@ def get_contract_worksheet(secrets_dict):
     return ws, ss
 
 
+def load_registered_employees(secrets_dict):
+    """파트타임 및 정규직 시트에서 등록된 직원 목록과 기본정보를 불러옵니다."""
+    _, ss = get_contract_worksheet(secrets_dict)
+    employees = []
+
+    # 1. 파트타임 시트 조회 (A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID)
+    try:
+        pt_ws = ss.worksheet("파트타임")
+        pt_rows = pt_ws.get_all_values()
+        for idx, r in enumerate(pt_rows[1:], start=2):
+            padded = r + [""] * (10 - len(r))
+            name = padded[1].strip()
+            status = padded[6].strip()
+            if not name or status == "퇴사":
+                continue
+            raw_pay = padded[5].replace(",", "").strip()
+            pay_int = int(float(raw_pay)) if raw_pay.replace(".", "").isdigit() else 12000
+            employees.append({
+                "구분": "파트타임",
+                "임금구분": "시급",
+                "직원명": name,
+                "근로개시일": padded[0].strip(),
+                "주민번호": padded[2].strip(),
+                "은행명": padded[3].strip(),
+                "계좌번호": padded[4].strip(),
+                "금액": pay_int,
+                "상태": status or "재직",
+                "메모": padded[7].strip(),
+                "이메일": padded[8].strip(),
+                "텔레그램ID": padded[9].strip(),
+                "_row_idx": idx,
+            })
+    except Exception:
+        pass
+
+    # 2. 정규직 시트 조회 (A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일)
+    try:
+        ft_ws = ss.worksheet("정규직")
+        ft_rows = ft_ws.get_all_values()
+        for idx, r in enumerate(ft_rows[1:], start=2):
+            padded = r + [""] * (10 - len(r))
+            name = padded[0].strip()
+            if not name:
+                continue
+            raw_pay = padded[4].replace(",", "").strip()
+            pay_int = int(float(raw_pay)) if raw_pay.replace(".", "").isdigit() else 3000000
+            employees.append({
+                "구분": "정규직",
+                "임금구분": "월급",
+                "직원명": name,
+                "근로개시일": "",
+                "주민번호": padded[1].strip(),
+                "은행명": padded[2].strip(),
+                "계좌번호": padded[3].strip(),
+                "금액": pay_int,
+                "상태": "재직",
+                "메모": "",
+                "텔레그램ID": padded[6].strip(),
+                "이메일": padded[7].strip(),
+                "_row_idx": idx,
+            })
+    except Exception:
+        pass
+
+    return employees
+
+
 def load_all_contracts(secrets_dict):
     ws, _ = get_contract_worksheet(secrets_dict)
     rows = ws.get_all_values()
@@ -131,7 +193,14 @@ def create_new_contract(secrets_dict, data: dict) -> str:
         data.get("사회보험", "고용보험, 산재보험"),
         "서명대기",
         now_str,
-        "", "", "", "", "", "", "", "", "", ""
+        "",  # 서명일시
+        data.get("주민번호", ""),
+        data.get("은행명", ""),
+        data.get("계좌번호", ""),
+        data.get("주소", ""),
+        data.get("연락처", ""),
+        data.get("이메일", ""),
+        "", "", ""
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
     return cid
@@ -270,7 +339,6 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
         y = _draw_wrapped(c, line, 50, y, w - 100, 17, bold_f if is_head else reg_f, 10.2)
         y -= 5 if is_head else 2.5
 
-    # 구분선 및 계약 체결일
     y -= 14
     c.setLineWidth(0.6)
     c.line(48, y, w - 48, y)
@@ -279,7 +347,6 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     date_line = f"{sy} 년    {sm} 월    {sd} 일"
     c.drawCentredString(w / 2, y, date_line)
 
-    # 사업주 정보 및 대표자 서명 이미지
     y -= 42
     c.setFont(bold_f, 10.5)
     c.drawString(52, y, "(사업주)  사업체명 :  분 당 그 릴        (전화 : 031-713-0342 )")
@@ -296,7 +363,6 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
         except Exception:
             pass
 
-    # 근로자 정보 및 직원 서명 이미지 (글씨 겹침 방지 배치)
     y -= 44
     c.setFont(bold_f, 10.5)
     c.drawString(52, y, f"(근로자)  주    소 :  {addr}")
@@ -320,12 +386,12 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
 
 def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
-    import base64, json
     webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url:
         return ""
 
     payload = {
+        "action": "upload_pdf",
         "folderId": CONTRACT_FOLDER_ID,
         "filename": filename,
         "base64Data": base64.b64encode(pdf_bytes).decode("utf-8"),
@@ -341,8 +407,7 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
         res_json = res.json()
     except Exception:
         raise RuntimeError(
-            f"Apps Script가 JSON이 아닌 페이지를 반환했습니다 (HTTP {res.status_code}). "
-            f"배포 권한을 '모든 사용자'로 설정했는지 확인해 주세요. 응답일부: {res.text[:150]}"
+            f"Apps Script가 JSON이 아닌 페이지를 반환했습니다 (HTTP {res.status_code})."
         )
     if not res_json.get("ok"):
         raise RuntimeError(f"구글 드라이브 저장 실패: {res_json.get('error')}")
@@ -350,17 +415,16 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
 
 
 def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes):
-    import base64
     if not to_email or "@" not in to_email:
         return False, "이메일 주소 없음"
-    
+
     webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url:
         return False, "웹앱 URL 미설정"
 
     payload = {
         "action": "send_email",
-        "toEmail": to_email,
+        "toEmail": to_email.strip(),
         "subject": f"[분당그릴] {emp_name}님 전자 근로계약서 사본 교부",
         "body": (
             f"안녕하세요, {emp_name}님.\n\n"
@@ -376,15 +440,67 @@ def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: st
             webapp_url,
             data=json.dumps(payload),
             headers={"Content-Type": "text/plain; charset=utf-8"},
+            allow_redirects=True,
             timeout=30,
         )
         res_json = res.json()
         if res_json.get("ok"):
             return True, "발송 완료"
-        else:
-            return False, res_json.get("error", "알 수 없는 오류")
+        return False, res_json.get("error", "알 수 없는 오류")
     except Exception as e:
         return False, str(e)
+
+
+def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
+    """파트타임 시트와 정규직 시트의 서로 다른 열 구조에 맞춰 정확하게 업데이트합니다."""
+    emp_name = merged.get("직원명", "").strip()
+    if not emp_name:
+        return
+    pay_val = int(float(str(merged.get("금액", "0")).replace(",", "") or 0))
+    rrn = emp_inputs.get("주민번호", "") or merged.get("주민번호", "")
+    bank = emp_inputs.get("은행명", "") or merged.get("은행명", "")
+    acct = emp_inputs.get("계좌번호", "") or merged.get("계좌번호", "")
+    email = emp_inputs.get("이메일", "") or merged.get("이메일", "")
+    s_date = merged.get("근로개시일", "")
+
+    if merged.get("임금구분") == "월급":
+        # 정규직 시트 구조: A:이름, B:주민번호, C:은행명, D:계좌번호, E:계약급여, F:최종급여, G:텔레그램ID, H:이메일
+        ws = ss.worksheet("정규직")
+        rows = ws.get_all_values()
+        found_idx = None
+        existing = ["", "", "", "", "", "", "", ""]
+        for idx, r in enumerate(rows[1:], start=2):
+            if r and r[0].strip() == emp_name:
+                found_idx = idx
+                existing = (r + [""] * 8)[:8]
+                break
+        final_pay = existing[5] if existing[5] else pay_val
+        tele_id = existing[6]
+        new_row = [emp_name, rrn, bank, acct, pay_val, final_pay, tele_id, email]
+        if found_idx:
+            ws.update(f"A{found_idx}:H{found_idx}", [new_row], value_input_option="USER_ENTERED")
+        else:
+            ws.append_row(new_row, value_input_option="USER_ENTERED")
+    else:
+        # 파트타임 시트 구조: A:입사일자, B:이름, C:주민번호, D:은행명, E:계좌번호, F:시급, G:상태, H:메모, I:이메일, J:텔레그램ID
+        ws = ss.worksheet("파트타임")
+        rows = ws.get_all_values()
+        found_idx = None
+        existing = ["", "", "", "", "", "", "재직", "", "", ""]
+        for idx, r in enumerate(rows[1:], start=2):
+            if len(r) > 1 and r[1].strip() == emp_name:
+                found_idx = idx
+                existing = (r + [""] * 10)[:10]
+                break
+        entry_date = existing[0] if existing[0] else s_date
+        status = existing[6] if existing[6] else "재직"
+        memo = existing[7]
+        tele_id = existing[9]
+        new_row = [entry_date, emp_name, rrn, bank, acct, pay_val, status, memo, email, tele_id]
+        if found_idx:
+            ws.update(f"A{found_idx}:J{found_idx}", [new_row], value_input_option="USER_ENTERED")
+        else:
+            ws.append_row(new_row, value_input_option="USER_ENTERED")
 
 
 def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, emp_sign_img: Image.Image):
@@ -405,46 +521,18 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
     drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes)
     merged["드라이브PDF링크"] = drive_link
 
-    # 시트 업데이트
     updated_row = [merged.get(h, "") for h in CONTRACT_HEADERS]
     ws.update(f"A{row_idx}:AB{row_idx}", [updated_row], value_input_option="USER_ENTERED")
 
-    # 직원 명부(파트타임 / 정규직) 자동 등록 또는 업데이트
-    target_tab = "정규직" if merged.get("임금구분") == "월급" else "파트타임"
     try:
-        staff_ws = ss.worksheet(target_tab)
-        s_rows = staff_ws.get_all_values()
-        found_row = None
-        for idx, r in enumerate(s_rows[1:], start=2):
-            if r and r[0].strip() == emp_name:
-                found_row = idx
-                break
-        pay_val = int(float(str(merged.get("금액", "0")).replace(",", "") or 0))
-        new_staff_row = [
-            emp_name,
-            emp_inputs.get("주민번호", ""),
-            emp_inputs.get("은행명", ""),
-            emp_inputs.get("계좌번호", ""),
-            emp_inputs.get("이메일", ""),
-            pay_val,
-            "재직",
-            merged.get("근로개시일", ""),
-            f"전자계약서 완료({date_tag})",
-            ""
-        ]
-        if found_row:
-            staff_ws.update(f"A{found_row}:J{found_row}", [new_staff_row], value_input_option="USER_ENTERED")
-        else:
-            staff_ws.append_row(new_staff_row, value_input_option="USER_ENTERED")
+        _sync_employee_sheet(ss, merged, emp_inputs)
     except Exception:
         pass
 
-    # 이메일 발송
     email_ok, email_msg = send_contract_email(
         secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes
     )
 
-    # 대표님 텔레그램 알림
     bot_token = secrets_dict.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = secrets_dict.get("TELEGRAM_CHAT_ID", "")
     if bot_token and chat_id:
