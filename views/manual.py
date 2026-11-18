@@ -3,15 +3,31 @@
 [파일명] views/manual.py
 [역할] 아이폰(모바일) 및 매장 PC/태블릿 겸용 '매니저 실무 교육 매뉴얼' 전용 탭
 [주요 기능]
-  1. 아이폰 세로 화면에 최적화된 큰 글씨·카드형 레이아웃 및 핵심 요약 배너 제공
-  2. 상단 탭(일일 출퇴근/승인 | 신규채용/계약서 | 퇴사/보건증 | 월말 급여정산)으로 빠른 이동
-  3. 폴더 내 스크린샷 이미지(manual_att.png, manual_staff.png, manual_contract.png)가
+  1. 매니저 전용 비밀번호(PIN) 잠금 해제 (일반 직원 열람 차단, 직원 관리/급여 정산 로그인 연동)
+  2. 아이폰 세로 화면에 최적화된 큰 글씨·카드형 레이아웃 및 핵심 요약 배너 제공
+  3. 상단 탭(일일 출퇴근/승인 | 신규채용/계약서 | 퇴사/보건증 | 월말 급여정산)으로 빠른 이동
+  4. 폴더 내 스크린샷 이미지(manual_att.png, manual_staff.png, manual_contract.png)가
      있으면 자동으로 화면에 삽입하고, 없어도 시각적 UI 가이드 박스로 완벽히 대체 표시
 ================================================================================
 """
 
 import os
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def get_secret(key: str, default: str = ""):
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
+MANAGER_PIN = get_secret("MANAGER_PIN_BUNDANG", "0524")
 
 st.markdown(
     """
@@ -24,6 +40,12 @@ st.markdown(
         padding-top: 2.5rem;
         padding-bottom: 3rem;
         max-width: 920px;
+    }
+    .app-title {
+        font-size: 1.55rem;
+        font-weight: 700;
+        color: #1E293B;
+        margin: 0;
     }
     .manual-header {
         background: linear-gradient(135deg, #1E293B 0%, #334155 100%);
@@ -96,6 +118,11 @@ st.markdown(
         font-size: 0.88rem;
         color: #1E293B;
     }
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+        min-height: 2.55rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -111,9 +138,52 @@ def show_guide_image(file_candidates: list, caption: str):
     return False
 
 
+# ==============================================================================
+# 매니저 전용 비밀번호(PIN) 잠금 확인
+# (급여 정산 'authenticated' 또는 직원 관리 'staff_mgr_unlocked'와 세션 공유)
+# ==============================================================================
+is_unlocked = (
+    st.session_state.get("authenticated", False)
+    or st.session_state.get("staff_mgr_unlocked", False)
+    or st.session_state.get("manual_mgr_unlocked", False)
+)
+
+if not is_unlocked:
+    st.markdown('<div class="app-title">📖 매니저 업무 매뉴얼</div>', unsafe_allow_html=True)
+    st.write("")
+    _, c_mid, _ = st.columns([1.0, 1.4, 1.0])
+    with c_mid:
+        with st.container(border=True):
+            st.markdown("#### 🔐 매니저 / 관리자 전용")
+            st.caption("업무 매뉴얼 열람을 위해 매니저 비밀번호를 입력하세요.")
+            pin = st.text_input(
+                "비밀번호",
+                type="password",
+                placeholder="비밀번호 입력",
+                label_visibility="collapsed",
+                key="manual_pin_input",
+            )
+            if st.button("확인", type="primary", use_container_width=True):
+                if pin == MANAGER_PIN:
+                    st.session_state["manual_mgr_unlocked"] = True
+                    st.session_state["staff_mgr_unlocked"] = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 일치하지 않습니다.")
+    st.stop()
+
+
 # ------------------------------------------------------------------------------
-# 상단 헤더 및 매니저 3대 핵심 원칙 요약 카드
+# 상단 헤더 (잠금 버튼을 우측에 배치해 매니저가 본 뒤 다시 잠글 수 있도록 지원)
 # ------------------------------------------------------------------------------
+top_c1, top_c2 = st.columns([4.2, 1.0], vertical_alignment="center")
+with top_c2:
+    if st.button("🔒 매뉴얼 잠금", use_container_width=True):
+        st.session_state["manual_mgr_unlocked"] = False
+        st.session_state["staff_mgr_unlocked"] = False
+        st.session_state["authenticated"] = False
+        st.rerun()
+
 st.markdown(
     """
     <div class="manual-header">
