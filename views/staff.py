@@ -4,10 +4,11 @@
 [역할] 관리자/매니저 전용 '직원 · 시급/계좌 관리 및 전자 근로계약서 발급' 페이지
 [주요 기능]
   1. 매니저 PIN 번호 잠금 해제
-  2. 신규 파트타임 직원 간편 등록 폼
+  2. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼
   3. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
-  4. [핵심 개편] 등록된 직원을 드롭다운에서 선택하면 기본정보(입사일, 시급/월급, 계좌, 이메일)를
-     자동으로 불러와 전자 근로계약서 서명 링크를 생성하는 기능
+     - 두 명부 모두 [입사일자, 상태(재직/퇴사), 메모] 컬럼 완벽 통일
+  4. 등록된 재직 직원을 드롭다운에서 선택하면 기본정보를 자동으로 불러와
+     전자 근로계약서 서명 링크를 생성하는 기능 (퇴사자는 목록에서 자동 제외)
   5. 발급된 계약서 진행 상태(서명대기/서명완료) 및 구글 드라이브 PDF 열기 버튼 목록
 ================================================================================
 """
@@ -53,9 +54,9 @@ STORES = {
 
 CREDENTIALS_FILE = "credentials.json"
 
-# 파트타임 탭(10열)과 정규직 탭(8열)의 컬럼 순서 정의
+# 파트타임 탭(10열)과 정규직 탭(11열)의 통일된 컬럼 순서 정의
 PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID"]
-REG_COLS = ["이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "텔레그램ID", "이메일"]
+REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "상태", "메모", "이메일", "텔레그램ID"]
 
 # 은행 대량이체 표준 은행명 리스트 및 약칭 변환 매핑
 BANK_OPTIONS = [
@@ -179,6 +180,8 @@ def load_staff_tabs(db_id: str):
         for col in expected_cols:
             if col not in df.columns:
                 df[col] = "재직" if col == "상태" else ""
+        if "상태" in df.columns:
+            df["상태"] = df["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")
         if "은행명" in df.columns:
             df["은행명"] = df["은행명"].apply(normalize_bank_name)
         return df[expected_cols].copy()
@@ -196,26 +199,28 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     p_ws = db_ss.worksheet("파트타임")
     for c in PART_COLS:
         if c not in df_part_edited.columns:
-            df_part_edited[c] = ""
+            df_part_edited[c] = "재직" if c == "상태" else ""
     clean_p = df_part_edited[PART_COLS].copy()
     clean_p["은행명"] = clean_p["은행명"].apply(normalize_bank_name)
     clean_p["시급"] = clean_p["시급"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_p["주민번호"] = clean_p["주민번호"].apply(format_ssn)
+    clean_p["상태"] = clean_p["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")
     clean_p = clean_p.fillna("").astype(str)
     clean_p = clean_p[clean_p["이름"].str.strip() != ""]
     p_ws.clear()
     p_ws.update(range_name="A1", values=[PART_COLS] + clean_p.values.tolist())
 
-    # 2) '정규직' 탭 저장
+    # 2) '정규직' 탭 저장 (입사일자, 상태, 메모 포함 통일 구조)
     r_ws = db_ss.worksheet("정규직")
     for c in REG_COLS:
         if c not in df_reg_edited.columns:
-            df_reg_edited[c] = ""
+            df_reg_edited[c] = "재직" if c == "상태" else ""
     clean_r = df_reg_edited[REG_COLS].copy()
     clean_r["은행명"] = clean_r["은행명"].apply(normalize_bank_name)
     clean_r["계약급여"] = clean_r["계약급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_r["최종급여"] = clean_r["최종급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
     clean_r["주민번호"] = clean_r["주민번호"].apply(format_ssn)
+    clean_r["상태"] = clean_r["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")
     clean_r = clean_r.fillna("").astype(str)
     clean_r = clean_r[clean_r["이름"].str.strip() != ""]
     r_ws.clear()
@@ -260,14 +265,20 @@ st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 
 df_part, df_reg = load_staff_tabs(store_cfg["db_id"])
 
 # =========================================================================
-# 신규 파트타임 직원 간편 등록 폼
+# 신규 직원(파트타임 / 정규직) 통합 간편 등록 폼
 # =========================================================================
-with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
-    with st.form("new_part_staff_form", clear_on_submit=True):
+with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", expanded=False):
+    emp_type_choice = st.radio("등록할 직원 구분", ["파트타임 (시급제)", "정규직 (월급제)"], horizontal=True)
+    is_reg_new = emp_type_choice.startswith("정규직")
+
+    with st.form("new_staff_unified_form", clear_on_submit=True):
         fc1, fc2, fc3, fc4 = st.columns([1.0, 1.1, 1.0, 1.2])
         new_join_date = fc1.date_input("입사일자", value=datetime.date.today())
         new_name = fc2.text_input("이름 (계좌 예금주명)*", placeholder="예: 홍길동")
-        new_wage = fc3.number_input("시급 (원)", min_value=0, value=12000, step=100)
+        if is_reg_new:
+            new_wage = fc3.number_input("계약 월급여 (세전, 원)", min_value=0, value=3000000, step=50000)
+        else:
+            new_wage = fc3.number_input("시급 (원)", min_value=0, value=12000, step=100)
         new_ssn = fc4.text_input("주민등록번호", placeholder="숫자 13자리 입력")
 
         fc5, fc6, fc7, fc8 = st.columns([1.0, 1.3, 1.2, 1.0])
@@ -276,30 +287,54 @@ with st.expander("➕ 신규 파트타임 직원 등록하기", expanded=False):
         new_email = fc7.text_input("이메일 (계약서·명세서 발송용)", placeholder="example@gmail.com")
         new_tg = fc8.text_input("텔레그램 ID (선택)", placeholder="숫자 ID")
 
-        new_memo = st.text_input(
-            "메모 / 실근무자 이름 (예금주와 실제 출근자가 다를 때만 실근무자 이름 입력)",
-            placeholder="예: 강성원",
-        )
+        if is_reg_new:
+            mc1, mc2 = st.columns([1.0, 2.5])
+            new_net_wage = mc1.number_input("실지급 최종급여 (공제 후, 원)", min_value=0, value=int(new_wage), step=10000)
+            new_memo = mc2.text_input("메모 / 직책 · 특이사항", placeholder="예: 주방 실장")
+        else:
+            new_net_wage = 0
+            new_memo = st.text_input(
+                "메모 / 실근무자 이름 (예금주와 실제 출근자가 다를 때만 실근무자 이름 입력)",
+                placeholder="예: 강성원",
+            )
 
-        if st.form_submit_button("✅ 신규 파트타임 직원 등록", type="primary", use_container_width=True):
+        if st.form_submit_button("✅ 신규 직원 등록", type="primary", use_container_width=True):
             clean_nm = new_name.strip()
             if not clean_nm:
                 st.error("직원 이름을 입력해 주세요.")
             else:
-                new_row = pd.DataFrame([{
-                    "입사일자": new_join_date.strftime("%Y-%m-%d"),
-                    "이름": clean_nm,
-                    "주민번호": format_ssn(new_ssn),
-                    "은행명": new_bank,
-                    "계좌번호": new_acct.strip(),
-                    "시급": str(int(new_wage)),
-                    "상태": "재직",
-                    "메모": new_memo.strip(),
-                    "이메일": new_email.strip(),
-                    "텔레그램ID": new_tg.strip(),
-                }])
-                updated_part = pd.concat([df_part, new_row], ignore_index=True)
-                save_staff_tabs(store_cfg["db_id"], updated_part, df_reg)
+                if is_reg_new:
+                    new_row = pd.DataFrame([{
+                        "입사일자": new_join_date.strftime("%Y-%m-%d"),
+                        "이름": clean_nm,
+                        "주민번호": format_ssn(new_ssn),
+                        "은행명": new_bank,
+                        "계좌번호": new_acct.strip(),
+                        "계약급여": str(int(new_wage)),
+                        "최종급여": str(int(new_net_wage if new_net_wage > 0 else new_wage)),
+                        "상태": "재직",
+                        "메모": new_memo.strip(),
+                        "이메일": new_email.strip(),
+                        "텔레그램ID": new_tg.strip(),
+                    }])
+                    updated_reg = pd.concat([df_reg, new_row], ignore_index=True)
+                    save_staff_tabs(store_cfg["db_id"], df_part, updated_reg)
+                else:
+                    new_row = pd.DataFrame([{
+                        "입사일자": new_join_date.strftime("%Y-%m-%d"),
+                        "이름": clean_nm,
+                        "주민번호": format_ssn(new_ssn),
+                        "은행명": new_bank,
+                        "계좌번호": new_acct.strip(),
+                        "시급": str(int(new_wage)),
+                        "상태": "재직",
+                        "메모": new_memo.strip(),
+                        "이메일": new_email.strip(),
+                        "텔레그램ID": new_tg.strip(),
+                    }])
+                    updated_part = pd.concat([df_part, new_row], ignore_index=True)
+                    save_staff_tabs(store_cfg["db_id"], updated_part, df_reg)
+
                 st.success(f"🎉 [{clean_nm}] 님이 신규 등록되었습니다! 아래 전자 근로계약서에서 직원을 선택해 계약서를 발급하세요.")
                 st.cache_data.clear()
                 st.rerun()
@@ -332,9 +367,9 @@ edited_part = st.data_editor(
 )
 
 # =========================================================================
-# 2. 정규직 직원 명부 편집 표
+# 2. 정규직 직원 명부 편집 표 (파트타임과 동일하게 입사일자, 상태, 메모 추가 통일)
 # =========================================================================
-st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 연락처)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_reg_disp = df_reg.copy()
 df_reg_disp["계약급여"] = df_reg_disp["계약급여"].apply(clean_int)
 df_reg_disp["최종급여"] = df_reg_disp["최종급여"].apply(clean_int)
@@ -346,10 +381,17 @@ edited_reg = st.data_editor(
     hide_index=True,
     key=f"reg_ed_{selected_store}",
     column_config={
+        "입사일자": st.column_config.TextColumn("입사일자"),
         "이름": st.column_config.TextColumn("이름", required=True),
+        "주민번호": st.column_config.TextColumn("주민번호"),
         "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
+        "계좌번호": st.column_config.TextColumn("계좌번호"),
         "계약급여": st.column_config.NumberColumn("계약급여 (원)", format="%,d"),
         "최종급여": st.column_config.NumberColumn("최종급여 (원)", format="%,d"),
+        "상태": st.column_config.SelectboxColumn("상태 (퇴사 시 정산 제외)", options=["재직", "퇴사"], default="재직"),
+        "메모": st.column_config.TextColumn("메모 (직책/퇴사일)"),
+        "이메일": st.column_config.TextColumn("이메일"),
+        "텔레그램ID": st.column_config.TextColumn("텔레그램ID"),
     },
 )
 
@@ -361,18 +403,18 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 저장하기"
         st.rerun()
 
 # ==============================================================================
-# 📝 전자 근로계약서 발급 및 서명 현황 관리 (직원 선택 -> 기본정보 자동 연동)
+# 📝 전자 근로계약서 발급 및 서명 현황 관리 (재직 직원 선택 -> 기본정보 자동 연동)
 # ==============================================================================
 import datetime as _dt
 from contract_utils import create_new_contract, load_all_contracts
 
 st.divider()
 st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
-st.caption("위 직원 명부에 등록된 직원을 선택하면 기본정보(시급/월급, 입사일, 계좌, 이메일 등)가 자동으로 불러와집니다. 추가 근로조건만 확인 후 링크를 발급하세요.")
+st.caption("위 직원 명부에 등록된 재직 직원을 선택하면 기본정보(시급/월급, 입사일, 계좌, 이메일 등)가 자동으로 불러와집니다. 추가 근로조건만 확인 후 링크를 발급하세요.")
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
 
-# 파트타임 및 정규직 명부에서 재직 중인 직원들을 드롭다운 선택지(staff_options)로 생성
+# 파트타임 및 정규직 명부에서 '재직' 중인 직원만 드롭다운 선택지(staff_options)로 생성
 staff_lookup = {}
 staff_options = ["➕ 직접 입력 (미등록 신규 직원)"]
 
@@ -396,13 +438,14 @@ for _, r in df_part.iterrows():
 
 for _, r in df_reg.iterrows():
     nm = str(r.get("이름", "")).strip()
-    if nm:
+    st_val = str(r.get("상태", "재직")).strip()
+    if nm and st_val != "퇴사":
         label = f"[정규직] {nm} (월급 {clean_int(r.get('계약급여', 3000000)):,}원)"
         staff_options.append(label)
         staff_lookup[label] = {
             "구분": "정규직",
             "직원명": nm,
-            "근로개시일": "",
+            "근로개시일": str(r.get("입사일자", "")).strip(),
             "임금구분": "월급",
             "금액": clean_int(r.get("계약급여", 3000000)) or 3000000,
             "주민번호": str(r.get("주민번호", "")).strip(),
@@ -412,15 +455,13 @@ for _, r in df_reg.iterrows():
         }
 
 with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 → 자동 불러오기)", expanded=True):
-    # 1단계: 드롭다운에서 직원 선택
     selected_staff_label = st.selectbox(
-        "👤 1단계: 계약서를 작성할 직원 선택 (위 직원 명부 연동)",
+        "👤 1단계: 계약서를 작성할 직원 선택 (위 직원 명부 재직자 연동)",
         options=staff_options,
         index=0,
         key="c_staff_selector",
     )
 
-    # 선택한 직원의 기본정보 추출
     prefill = staff_lookup.get(selected_staff_label, {})
     default_name = prefill.get("직원명", "")
     default_pay_type = prefill.get("임금구분", "시급")
@@ -441,10 +482,8 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
             f"**이메일**: {prefill.get('이메일') or '미등록'} *(직원 서명 화면에 자동으로 미리 채워집니다)*"
         )
 
-    # 직원을 바꿀 때마다 아래 입력칸들이 해당 직원의 값으로 즉시 바뀌도록 동적 key 부여
     k_sfx = selected_staff_label
 
-    # 2단계: 근로조건 확인 및 추가 입력
     c_col1, c_col2, c_col3 = st.columns(3)
     with c_col1:
         c_type = st.selectbox(
@@ -495,7 +534,6 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
         key=f"new_c_ins_{k_sfx}",
     )
 
-    # 3단계: 전용 서명 링크 발급 버튼
     if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
         if not c_emp_name.strip():
             st.error("직원 성명을 입력해 주세요.")
@@ -516,7 +554,6 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 →
                 "상여금": c_bonus.strip(),
                 "기타급여": c_other_pay.strip(),
                 "사회보험": ", ".join(c_ins) if c_ins else "해당없음",
-                # 선택한 직원의 기존 기본정보도 함께 저장하여 서명 화면에서 자동 프리필
                 "주민번호": prefill.get("주민번호", ""),
                 "은행명": prefill.get("은행명", ""),
                 "계좌번호": prefill.get("계좌번호", ""),
