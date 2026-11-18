@@ -7,8 +7,8 @@
   2. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼
   3. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
      - 두 명부 모두 [입사일자, 상태(재직/퇴사), 메모] 컬럼 완벽 통일
-  4. 등록된 재직 직원을 드롭다운에서 선택하면 기본정보를 자동으로 불러와
-     전자 근로계약서 서명 링크를 생성하는 기능 (퇴사자는 목록에서 자동 제외)
+  4. [필수 선택 프로세스] 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창과
+     계약서 링크 발급 버튼이 열리도록 UI 강제 (실수로 미선택 발급하는 문제 원천 차단)
   5. 발급된 계약서 진행 상태(서명대기/서명완료) 및 구글 드라이브 PDF 열기 버튼 목록
 ================================================================================
 """
@@ -71,7 +71,7 @@ BANK_ALIAS_MAP = {
     "기업은행": "IBK기업은행", "카카오": "카카오뱅크", "토스": "토스뱅크", "케이": "케이뱅크",
 }
 
-# 화면 스타일(Pretendard 폰트 및 여백) 설정
+# 화면 스타일(Pretendard 폰트 및 1단계 직원 선택 강조 박스 스타일) 설정
 st.markdown(
     """
     <style>
@@ -97,6 +97,19 @@ st.markdown(
         margin: 1.1rem 0 0.5rem 0;
         padding-left: 0.6rem;
         border-left: 4px solid #334155;
+    }
+    .step1-highlight {
+        background-color: #FFFBEB;
+        border: 2px solid #F59E0B;
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 12px;
+    }
+    .step1-title {
+        font-size: 1.08rem;
+        font-weight: 800;
+        color: #B45309;
+        margin-bottom: 4px;
     }
     .stButton > button {
         border-radius: 8px;
@@ -367,7 +380,7 @@ edited_part = st.data_editor(
 )
 
 # =========================================================================
-# 2. 정규직 직원 명부 편집 표 (파트타임과 동일하게 입사일자, 상태, 메모 추가 통일)
+# 2. 정규직 직원 명부 편집 표
 # =========================================================================
 st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_reg_disp = df_reg.copy()
@@ -403,20 +416,23 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 저장하기"
         st.rerun()
 
 # ==============================================================================
-# 📝 전자 근로계약서 발급 및 서명 현황 관리 (재직 직원 선택 -> 기본정보 자동 연동)
+# 📝 전자 근로계약서 발급 및 서명 현황 관리 (1단계 직원 선택 시에만 2단계 입력폼 표시)
 # ==============================================================================
 import datetime as _dt
 from contract_utils import create_new_contract, load_all_contracts
 
 st.divider()
 st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
-st.caption("위 직원 명부에 등록된 재직 직원을 선택하면 기본정보(시급/월급, 입사일, 계좌, 이메일 등)가 자동으로 불러와집니다. 추가 근로조건만 확인 후 링크를 발급하세요.")
+st.caption("먼저 계약서를 작성할 직원을 선택하면, 해당 직원의 기본정보(시급/월급, 입사일, 계좌, 이메일)가 자동으로 연동되어 아래 입력창이 열립니다.")
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
 
-# 파트타임 및 정규직 명부에서 '재직' 중인 직원만 드롭다운 선택지(staff_options)로 생성
+# 기본 안내 문구(미선택 상태) + 재직 직원 목록 + 미등록 직접 입력 옵션 구성
+PLACEHOLDER_OPT = "🔽 여기를 눌러 계약서를 작성할 직원을 먼저 선택하세요..."
+DIRECT_INPUT_OPT = "➕ 직접 입력 (명부에 없는 신규 입사자)"
+
 staff_lookup = {}
-staff_options = ["➕ 직접 입력 (미등록 신규 직원)"]
+staff_options = [PLACEHOLDER_OPT]
 
 for _, r in df_part.iterrows():
     nm = str(r.get("이름", "")).strip()
@@ -454,115 +470,146 @@ for _, r in df_reg.iterrows():
             "이메일": str(r.get("이메일", "")).strip(),
         }
 
-with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 → 자동 불러오기)", expanded=True):
+staff_options.append(DIRECT_INPUT_OPT)
+
+with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필수)", expanded=True):
+    # [1단계] 눈에 잘 띄는 강조 박스 안에 직원 선택 드롭다운 배치
+    st.markdown(
+        """
+        <div class="step1-highlight">
+            <div class="step1-title">👤 1단계: 계약서를 작성할 직원을 먼저 선택해 주세요 (필수)</div>
+            <div style="font-size:0.88rem; color:#78350F;">위 직원 명부에 등록된 재직자를 선택하면 아래에 근로조건 입력창과 기본정보가 자동으로 펼쳐집니다.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     selected_staff_label = st.selectbox(
-        "👤 1단계: 계약서를 작성할 직원 선택 (위 직원 명부 재직자 연동)",
+        "계약 대상 직원 선택",
         options=staff_options,
         index=0,
         key="c_staff_selector",
+        label_visibility="collapsed",
     )
 
-    prefill = staff_lookup.get(selected_staff_label, {})
-    default_name = prefill.get("직원명", "")
-    default_pay_type = prefill.get("임금구분", "시급")
-    default_pay_amt = prefill.get("금액", 12000 if default_pay_type == "시급" else 3000000)
+    # 직원을 아직 선택하지 않은 상태라면 아래 입력 폼을 아예 숨김 처리
+    if selected_staff_label == PLACEHOLDER_OPT:
+        st.warning("☝️ 위 드롭다운 박스를 클릭해 **계약서를 발급할 직원**을 선택하면 아래에 상세 입력란이 나타납니다.")
+    else:
+        # 직원을 선택한 경우에만 2단계 상세 근로조건 입력 폼을 화면에 렌더링
+        prefill = staff_lookup.get(selected_staff_label, {})
+        default_name = prefill.get("직원명", "")
+        default_pay_type = prefill.get("임금구분", "시급")
+        default_pay_amt = prefill.get("금액", 12000 if default_pay_type == "시급" else 3000000)
 
-    default_start_date = _dt.date.today()
-    raw_sdate = prefill.get("근로개시일", "")
-    if raw_sdate:
-        try:
-            default_start_date = _dt.date.fromisoformat(raw_sdate[:10])
-        except Exception:
-            pass
+        default_start_date = _dt.date.today()
+        raw_sdate = prefill.get("근로개시일", "")
+        if raw_sdate:
+            try:
+                default_start_date = _dt.date.fromisoformat(raw_sdate[:10])
+            except Exception:
+                pass
 
-    if prefill:
-        st.info(
-            f"✅ **{default_name}** 님의 명부 정보 자동 연동됨 — "
-            f"**은행/계좌**: {prefill.get('은행명') or '미등록'} {prefill.get('계좌번호') or ''} | "
-            f"**이메일**: {prefill.get('이메일') or '미등록'} *(직원 서명 화면에 자동으로 미리 채워집니다)*"
-        )
+        st.divider()
+        st.markdown("##### 📝 2단계: 연동된 정보 확인 및 근로조건 입력")
 
-    k_sfx = selected_staff_label
-
-    c_col1, c_col2, c_col3 = st.columns(3)
-    with c_col1:
-        c_type = st.selectbox(
-            "계약 유형",
-            ["기간의 정함이 없는 경우", "기간의 정함이 있는 경우"],
-            key=f"new_c_type_{k_sfx}",
-        )
-        c_emp_name = st.text_input("직원 성명", value=default_name, placeholder="예: 홍길동", key=f"new_c_name_{k_sfx}")
-        c_start_date = st.date_input("근로개시일", value=default_start_date, key=f"new_c_start_{k_sfx}")
-        c_end_date = None
-        if c_type == "기간의 정함이 있는 경우":
-            c_end_date = st.date_input(
-                "근로종료일",
-                value=default_start_date + _dt.timedelta(days=365),
-                key=f"new_c_end_{k_sfx}",
+        if prefill:
+            st.success(
+                f"✅ **[{prefill.get('구분')}] {default_name}** 님의 명부 정보 자동 연동 완료!\n\n"
+                f"• **입금계좌**: `{prefill.get('은행명') or '미등록'} {prefill.get('계좌번호') or ''}`  |  "
+                f"• **이메일**: `{prefill.get('이메일') or '미등록'}` *(직원 서명 화면에 자동으로 미리 채워집니다)*"
             )
-
-    with c_col2:
-        pay_type_idx = 0 if default_pay_type == "시급" else 1
-        c_pay_type = st.selectbox("임금 구분", ["시급", "월급"], index=pay_type_idx, key=f"new_c_pay_type_{k_sfx}")
-        c_pay_amt = st.number_input(
-            "임금 금액 (원)",
-            min_value=0,
-            value=int(default_pay_amt) if c_pay_type == default_pay_type else (12000 if c_pay_type == "시급" else 3000000),
-            step=100 if c_pay_type == "시급" else 50000,
-            key=f"new_c_pay_amt_{k_sfx}",
-        )
-        c_bonus = st.text_input("상여금", value="없음", key=f"new_c_bonus_{k_sfx}")
-        c_other_pay = st.text_input("기타급여(제수당 등)", value="없음", key=f"new_c_other_{k_sfx}")
-
-    with c_col3:
-        c_w_start = st.text_input("소정근로 시작시간", value="17:00", key=f"new_c_w_start_{k_sfx}")
-        c_w_end = st.text_input("소정근로 종료시간", value="22:00", key=f"new_c_w_end_{k_sfx}")
-        c_break = st.number_input("휴게시간 (분)", min_value=0, max_value=180, value=30, step=10, key=f"new_c_break_{k_sfx}")
-        c_days = st.number_input("주 근무일수 (일)", min_value=1, max_value=7, value=5, key=f"new_c_days_{k_sfx}")
-        c_rest = st.selectbox("주휴요일", ["월", "화", "수", "목", "금", "토", "일"], index=0, key=f"new_c_rest_{k_sfx}")
-
-    c_job = st.text_input(
-        "업무의 내용",
-        value="홀 서빙 및 주방 보조 등 매장 운영 전반",
-        key=f"new_c_job_{k_sfx}",
-    )
-    default_ins = ["고용보험", "산재보험"] if c_pay_type == "시급" else ["고용보험", "산재보험", "국민연금", "건강보험"]
-    c_ins = st.multiselect(
-        "사회보험 적용여부",
-        ["고용보험", "산재보험", "국민연금", "건강보험"],
-        default=default_ins,
-        key=f"new_c_ins_{k_sfx}",
-    )
-
-    if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
-        if not c_emp_name.strip():
-            st.error("직원 성명을 입력해 주세요.")
         else:
-            payload = {
-                "계약유형": c_type,
-                "직원명": c_emp_name.strip(),
-                "근로개시일": c_start_date.strftime("%Y-%m-%d"),
-                "근로종료일": c_end_date.strftime("%Y-%m-%d") if c_end_date else "",
-                "업무내용": c_job.strip(),
-                "근무시작": c_w_start.strip(),
-                "근무종료": c_w_end.strip(),
-                "휴게시간(분)": c_break,
-                "주근무일수": c_days,
-                "주휴요일": c_rest,
-                "임금구분": c_pay_type,
-                "금액": c_pay_amt,
-                "상여금": c_bonus.strip(),
-                "기타급여": c_other_pay.strip(),
-                "사회보험": ", ".join(c_ins) if c_ins else "해당없음",
-                "주민번호": prefill.get("주민번호", ""),
-                "은행명": prefill.get("은행명", ""),
-                "계좌번호": prefill.get("계좌번호", ""),
-                "이메일": prefill.get("이메일", ""),
-            }
-            new_cid = create_new_contract(st.secrets, payload)
-            sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
-            st.success(f"✅ **{c_emp_name.strip()}** 님의 전자 근로계약서 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
-            st.code(sign_url, language="text")
+            st.info("ℹ️ 미등록 신규 입사자 직접 입력 모드입니다. 가급적 상단 명부에 먼저 등록하신 뒤 선택하시는 것을 권장합니다.")
+
+        k_sfx = selected_staff_label
+
+        c_col1, c_col2, c_col3 = st.columns(3)
+        with c_col1:
+            c_type = st.selectbox(
+                "계약 유형",
+                ["기간의 정함이 없는 경우", "기간의 정함이 있는 경우"],
+                key=f"new_c_type_{k_sfx}",
+            )
+            c_emp_name = st.text_input(
+                "직원 성명",
+                value=default_name,
+                disabled=bool(default_name),  # 명부에서 선택한 경우 이름 오타 방지를 위해 고정
+                placeholder="예: 홍길동",
+                key=f"new_c_name_{k_sfx}",
+            )
+            c_start_date = st.date_input("근로개시일", value=default_start_date, key=f"new_c_start_{k_sfx}")
+            c_end_date = None
+            if c_type == "기간의 정함이 있는 경우":
+                c_end_date = st.date_input(
+                    "근로종료일",
+                    value=default_start_date + _dt.timedelta(days=365),
+                    key=f"new_c_end_{k_sfx}",
+                )
+
+        with c_col2:
+            pay_type_idx = 0 if default_pay_type == "시급" else 1
+            c_pay_type = st.selectbox("임금 구분", ["시급", "월급"], index=pay_type_idx, key=f"new_c_pay_type_{k_sfx}")
+            c_pay_amt = st.number_input(
+                "임금 금액 (원)",
+                min_value=0,
+                value=int(default_pay_amt) if c_pay_type == default_pay_type else (12000 if c_pay_type == "시급" else 3000000),
+                step=100 if c_pay_type == "시급" else 50000,
+                key=f"new_c_pay_amt_{k_sfx}",
+            )
+            c_bonus = st.text_input("상여금", value="없음", key=f"new_c_bonus_{k_sfx}")
+            c_other_pay = st.text_input("기타급여(제수당 등)", value="없음", key=f"new_c_other_{k_sfx}")
+
+        with c_col3:
+            c_w_start = st.text_input("소정근로 시작시간", value="17:00", key=f"new_c_w_start_{k_sfx}")
+            c_w_end = st.text_input("소정근로 종료시간", value="22:00", key=f"new_c_w_end_{k_sfx}")
+            c_break = st.number_input("휴게시간 (분)", min_value=0, max_value=180, value=30, step=10, key=f"new_c_break_{k_sfx}")
+            c_days = st.number_input("주 근무일수 (일)", min_value=1, max_value=7, value=5, key=f"new_c_days_{k_sfx}")
+            c_rest = st.selectbox("주휴요일", ["월", "화", "수", "목", "금", "토", "일"], index=0, key=f"new_c_rest_{k_sfx}")
+
+        c_job = st.text_input(
+            "업무의 내용",
+            value="홀 서빙 및 주방 보조 등 매장 운영 전반",
+            key=f"new_c_job_{k_sfx}",
+        )
+        default_ins = ["고용보험", "산재보험"] if c_pay_type == "시급" else ["고용보험", "산재보험", "국민연금", "건강보험"]
+        c_ins = st.multiselect(
+            "사회보험 적용여부",
+            ["고용보험", "산재보험", "국민연금", "건강보험"],
+            default=default_ins,
+            key=f"new_c_ins_{k_sfx}",
+        )
+
+        if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
+            final_emp_name = default_name if default_name else c_emp_name.strip()
+            if not final_emp_name:
+                st.error("직원 성명을 입력해 주세요.")
+            else:
+                payload = {
+                    "계약유형": c_type,
+                    "직원명": final_emp_name,
+                    "근로개시일": c_start_date.strftime("%Y-%m-%d"),
+                    "근로종료일": c_end_date.strftime("%Y-%m-%d") if c_end_date else "",
+                    "업무내용": c_job.strip(),
+                    "근무시작": c_w_start.strip(),
+                    "근무종료": c_w_end.strip(),
+                    "휴게시간(분)": c_break,
+                    "주근무일수": c_days,
+                    "주휴요일": c_rest,
+                    "임금구분": c_pay_type,
+                    "금액": c_pay_amt,
+                    "상여금": c_bonus.strip(),
+                    "기타급여": c_other_pay.strip(),
+                    "사회보험": ", ".join(c_ins) if c_ins else "해당없음",
+                    "주민번호": prefill.get("주민번호", ""),
+                    "은행명": prefill.get("은행명", ""),
+                    "계좌번호": prefill.get("계좌번호", ""),
+                    "이메일": prefill.get("이메일", ""),
+                }
+                new_cid = create_new_contract(st.secrets, payload)
+                sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
+                st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
+                st.code(sign_url, language="text")
 
 # ------------------------------------------------------------------------------
 # 최근 발급된 계약서 현황 리스트 및 구글 드라이브 PDF 바로가기
@@ -591,6 +638,4 @@ try:
                     if item.get("상태") == "서명완료" and item.get("드라이브PDF링크"):
                         st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
                     else:
-                        st.code(link_url, language="text")
-except Exception as e:
-    st.warning(f"근로계약서 목록을 불러오는 중 오류가 발생했습니다: {e}")
+                        st.code(
