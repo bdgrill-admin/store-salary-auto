@@ -4,6 +4,7 @@
 [역할] 전자 근로계약서 시스템의 백엔드 핵심 유틸리티 모듈
 [주요 기능]
   1. 구글 시트('근로계약서', '파트타임', '정규직') 데이터 조회, 동기화 및 미서명 건 삭제
+     - 정규직 [계약급여, 제세금, 계산급여] 컬럼 구조 호환
   2. 서명 완료 시 보건증 제출일 기준 +1년 만료일 자동 산출 후 직원 명부('보건증만료일') 동기화
   3. ReportLab을 이용한 A4 2페이지 표준근로계약서 PDF 생성 (대표자/근로자 서명 합성)
   4. Google Apps Script 웹앱과 통신하여 구글 드라이브 PDF 자동 저장 및 이메일 발송
@@ -420,7 +421,6 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     email = emp_inputs.get("이메일", "") or merged.get("이메일", "")
     s_date = merged.get("근로개시일", "")
 
-    # 보건증 제출일로부터 +1년 뒤를 보건증만료일 기본값으로 자동 계산
     h_sub_str = emp_inputs.get("보건증제출일", "")
     calc_expiry = ""
     if h_sub_str:
@@ -433,7 +433,7 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     is_regular = (merged.get("임금구분") == "월급")
     tab_name = "정규직" if is_regular else "파트타임"
     default_headers = (
-        ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
+        ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "제세금", "계산급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
         if is_regular
         else ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
     )
@@ -469,7 +469,12 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
 
     if is_regular:
         updated_dict["계약급여"] = pay_val
-        updated_dict["최종급여"] = existing_dict.get("최종급여") or pay_val
+        raw_tax = str(existing_dict.get("제세금", "0")).replace(",", "").strip()
+        tax_int = int(float(raw_tax)) if raw_tax.replace(".", "").isdigit() else 0
+        updated_dict["제세금"] = tax_int
+        updated_dict["계산급여"] = max(0, pay_val - tax_int)
+        if "최종급여" in headers:
+            updated_dict["최종급여"] = max(0, pay_val - tax_int)
     else:
         updated_dict["시급"] = pay_val
 
