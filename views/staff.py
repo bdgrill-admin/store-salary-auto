@@ -1,21 +1,23 @@
 """
 ================================================================================
 [파일명] views/staff.py
-[역할] 관리자/매니저 전용 '직원 · 시급/계좌 관리 및 전자 근로계약서 발급' 페이지
+[역할] 관리자/매니저 전용 '직원 · 시급/계좌 · 보건증 만료 관리 및 전자 근로계약서 발급' 페이지
 [주요 기능]
   1. 매니저 PIN 번호 잠금 해제
-  2. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼
-  3. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
-     - 두 명부 모두 [입사일자, 상태(재직/퇴사), 메모] 컬럼 완벽 통일
-  4. [필수 선택 프로세스] 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창과
-     계약서 링크 발급 버튼이 열리도록 UI 강제 (실수로 미선택 발급하는 문제 원천 차단)
-  5. 발급된 계약서 진행 상태(서명대기/서명완료) 및 구글 드라이브 PDF 열기 버튼 목록
+  2. [신규] 재직 직원 보건증 만료일(D-30 이내 및 만료 경과) 자동 감지 경고 배너 및 텔레그램 알림 발송
+  3. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼 (보건증 만료일 입력 포함)
+  4. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
+     - 두 명부 모두 [입사일자, 상태(재직/퇴사), 메모, 보건증만료일] 컬럼 완벽 통일
+  5. [필수 선택 프로세스] 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창이 열리는 전자계약서 발급
+  6. [신규] 미서명('⏳ 서명대기') 계약서 이메일/텔레그램 링크 재발송 및 [🗑️ 대기 삭제] 버튼 제공
 ================================================================================
 """
 
 import os
 import re
+import json
 import datetime
+import requests
 import pandas as pd
 import streamlit as st
 import gspread
@@ -54,11 +56,10 @@ STORES = {
 
 CREDENTIALS_FILE = "credentials.json"
 
-# 파트타임 탭(10열)과 정규직 탭(11열)의 통일된 컬럼 순서 정의
-PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID"]
-REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "상태", "메모", "이메일", "텔레그램ID"]
+# 파트타임 탭(11열)과 정규직 탭(12열)의 통일된 컬럼 순서 정의 ('보건증만료일' 추가)
+PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
+REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
 
-# 은행 대량이체 표준 은행명 리스트 및 약칭 변환 매핑
 BANK_OPTIONS = [
     "KB국민", "신한은행", "우리은행", "하나은행", "NH농협", "IBK기업은행",
     "카카오뱅크", "토스뱅크", "케이뱅크", "새마을금고", "신협", "우체국",
@@ -71,7 +72,6 @@ BANK_ALIAS_MAP = {
     "기업은행": "IBK기업은행", "카카오": "카카오뱅크", "토스": "토스뱅크", "케이": "케이뱅크",
 }
 
-# 화면 스타일(Pretendard 폰트 및 1단계 직원 선택 강조 박스 스타일) 설정
 st.markdown(
     """
     <style>
@@ -142,7 +142,6 @@ def get_gspread_client():
 
 
 def clean_int(val):
-    """콤마 등이 섞인 금액 문자열을 정수(int)로 안전하게 변환"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0
     digits = re.sub(r"[^\d.-]", "", str(val))
@@ -153,7 +152,6 @@ def clean_int(val):
 
 
 def normalize_bank_name(bank_str: str) -> str:
-    """'국민', '국민은행' 등을 대량이체 표준 명칭('KB국민')으로 통일"""
     b = str(bank_str).strip()
     if not b:
         return ""
@@ -161,11 +159,40 @@ def normalize_bank_name(bank_str: str) -> str:
 
 
 def format_ssn(ssn_str):
-    """주민번호 13자리 숫자를 앞6자리-뒤7자리 하이픈 형식으로 자동 포맷팅"""
     digits = re.sub(r"\D", "", str(ssn_str).strip())
     if len(digits) == 13:
         return f"{digits[:6]}-{digits[6:]}"
     return str(ssn_str).strip()
+
+
+def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str):
+    """Apps Script 웹앱을 통해 직원 이메일로 전자근로계약서 서명 링크를 재발송합니다."""
+    webapp_url = get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
+    if not webapp_url or not to_email or "@" not in to_email:
+        return False, "이메일 주소 또는 웹앱 URL 미설정"
+    payload = {
+        "action": "send_email",
+        "toEmail": to_email.strip(),
+        "subject": f"[분당그릴] {emp_name}님 전자 근로계약서 서명 요청 안내",
+        "body": (
+            f"안녕하세요, {emp_name}님. 분당그릴입니다.\n\n"
+            f"아래 전용 링크를 눌러 스마트폰 또는 PC에서 근로계약서 내용을 확인하시고 전자서명을 완료해 주세요.\n\n"
+            f"▶ 서명 링크: {sign_url}\n\n"
+            f"감사합니다.\n분당그릴 드림"
+        ),
+    }
+    try:
+        res = requests.post(
+            webapp_url,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            allow_redirects=True,
+            timeout=20,
+        )
+        rj = res.json()
+        return (True, "이메일 발송 완료") if rj.get("ok") else (False, rj.get("error", "발송 실패"))
+    except Exception as e:
+        return False, str(e)
 
 
 # ------------------------------------------------------------------------------
@@ -223,7 +250,7 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     p_ws.clear()
     p_ws.update(range_name="A1", values=[PART_COLS] + clean_p.values.tolist())
 
-    # 2) '정규직' 탭 저장 (입사일자, 상태, 메모 포함 통일 구조)
+    # 2) '정규직' 탭 저장
     r_ws = db_ss.worksheet("정규직")
     for c in REG_COLS:
         if c not in df_reg_edited.columns:
@@ -278,6 +305,54 @@ st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 
 df_part, df_reg = load_staff_tabs(store_cfg["db_id"])
 
 # =========================================================================
+# [신규 기능] 재직 직원 보건증 만료일(D-30 이내 및 경과) 자동 감지 경고 배너
+# =========================================================================
+today_dt = datetime.date.today()
+health_alerts = []
+
+for gubun_label, df_chk in [("파트타임", df_part), ("정규직", df_reg)]:
+    if df_chk.empty:
+        continue
+    for _, r in df_chk.iterrows():
+        nm = str(r.get("이름", "")).strip()
+        st_val = str(r.get("상태", "재직")).strip()
+        exp_str = str(r.get("보건증만료일", "")).strip()
+        if not nm or st_val == "퇴사" or not exp_str:
+            continue
+        try:
+            exp_dt = datetime.date.fromisoformat(exp_str[:10])
+            d_left = (exp_dt - today_dt).days
+            if d_left < 0:
+                health_alerts.append(f"🚨 **[{gubun_label}] {nm}** 님: 보건증 유효기간이 **{abs(d_left)}일 경과**했습니다! (만료일: `{exp_str}`)")
+            elif d_left <= 30:
+                health_alerts.append(f"⚠️ **[{gubun_label}] {nm}** 님: 보건증 만료 **D-{d_left}** 입니다. 갱신을 안내해 주세요. (만료일: `{exp_str}`)")
+        except Exception:
+            pass
+
+if health_alerts:
+    with st.container(border=True):
+        al_c1, al_c2 = st.columns([3.2, 1.0], vertical_alignment="center")
+        with al_c1:
+            st.error(f"🏥 **보건증 갱신/만료 확인이 필요한 재직 직원이 {len(health_alerts)}명 있습니다!**")
+            for ha in health_alerts:
+                st.markdown(f"- {ha}")
+        with al_c2:
+            if st.button("📲 텔레그램으로 갱신 명단 알림 전송", use_container_width=True):
+                bot_token = get_secret("TELEGRAM_BOT_TOKEN", "")
+                chat_id = get_secret("TELEGRAM_CHAT_ID", "")
+                if bot_token and chat_id:
+                    clean_lines = [re.sub(r"[*`]", "", x) for x in health_alerts]
+                    msg = f"🏥 [{selected_store} 보건증 갱신 알림]\n\n" + "\n".join(clean_lines)
+                    requests.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                        json={"chat_id": chat_id, "text": msg},
+                        timeout=5,
+                    )
+                    st.toast("텔레그램으로 보건증 갱신 알림을 전송했습니다!")
+                else:
+                    st.warning("텔레그램 토큰 설정을 확인해 주세요.")
+
+# =========================================================================
 # 신규 직원(파트타임 / 정규직) 통합 간편 등록 폼
 # =========================================================================
 with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", expanded=False):
@@ -300,13 +375,17 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
         new_email = fc7.text_input("이메일 (계약서·명세서 발송용)", placeholder="example@gmail.com")
         new_tg = fc8.text_input("텔레그램 ID (선택)", placeholder="숫자 ID")
 
+        mc1, mc2, mc3 = st.columns([1.0, 1.1, 2.2])
+        new_health_exp = mc1.text_input(
+            "보건증 만료일 (선택)",
+            placeholder="예: 2027-11-18",
+        )
         if is_reg_new:
-            mc1, mc2 = st.columns([1.0, 2.5])
-            new_net_wage = mc1.number_input("실지급 최종급여 (공제 후, 원)", min_value=0, value=int(new_wage), step=10000)
-            new_memo = mc2.text_input("메모 / 직책 · 특이사항", placeholder="예: 주방 실장")
+            new_net_wage = mc2.number_input("실지급 최종급여 (공제 후, 원)", min_value=0, value=int(new_wage), step=10000)
+            new_memo = mc3.text_input("메모 / 직책 · 특이사항", placeholder="예: 주방 실장")
         else:
             new_net_wage = 0
-            new_memo = st.text_input(
+            new_memo = mc3.text_input(
                 "메모 / 실근무자 이름 (예금주와 실제 출근자가 다를 때만 실근무자 이름 입력)",
                 placeholder="예: 강성원",
             )
@@ -329,6 +408,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                         "메모": new_memo.strip(),
                         "이메일": new_email.strip(),
                         "텔레그램ID": new_tg.strip(),
+                        "보건증만료일": new_health_exp.strip(),
                     }])
                     updated_reg = pd.concat([df_reg, new_row], ignore_index=True)
                     save_staff_tabs(store_cfg["db_id"], df_part, updated_reg)
@@ -344,6 +424,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                         "메모": new_memo.strip(),
                         "이메일": new_email.strip(),
                         "텔레그램ID": new_tg.strip(),
+                        "보건증만료일": new_health_exp.strip(),
                     }])
                     updated_part = pd.concat([df_part, new_row], ignore_index=True)
                     save_staff_tabs(store_cfg["db_id"], updated_part, df_reg)
@@ -355,7 +436,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
 # =========================================================================
 # 1. 파트타임 직원 명부 편집 표
 # =========================================================================
-st.markdown('<div class="section-title">1. 파트타임 직원 명부 (시급 · 계좌 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">1. 파트타임 직원 명부 (시급 · 계좌 · 보건증 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_part_disp = df_part.copy()
 df_part_disp["시급"] = df_part_disp["시급"].apply(clean_int)
 
@@ -376,13 +457,14 @@ edited_part = st.data_editor(
         "메모": st.column_config.TextColumn("메모 (실근무자명/퇴사일)"),
         "이메일": st.column_config.TextColumn("이메일"),
         "텔레그램ID": st.column_config.TextColumn("텔레그램ID"),
+        "보건증만료일": st.column_config.TextColumn("보건증만료일 (YYYY-MM-DD)"),
     },
 )
 
 # =========================================================================
 # 2. 정규직 직원 명부 편집 표
 # =========================================================================
-st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 보건증 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_reg_disp = df_reg.copy()
 df_reg_disp["계약급여"] = df_reg_disp["계약급여"].apply(clean_int)
 df_reg_disp["최종급여"] = df_reg_disp["최종급여"].apply(clean_int)
@@ -405,10 +487,11 @@ edited_reg = st.data_editor(
         "메모": st.column_config.TextColumn("메모 (직책/퇴사일)"),
         "이메일": st.column_config.TextColumn("이메일"),
         "텔레그램ID": st.column_config.TextColumn("텔레그램ID"),
+        "보건증만료일": st.column_config.TextColumn("보건증만료일 (YYYY-MM-DD)"),
     },
 )
 
-if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 저장하기", type="primary", use_container_width=True):
+if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 저장하기", type="primary", use_container_width=True):
     with st.spinner("통합근태DB 시트에 저장 중..."):
         save_staff_tabs(store_cfg["db_id"], edited_part, edited_reg)
         st.success("✅ 파트타임 및 정규직 직원 명부가 모두 저장되었습니다!")
@@ -419,7 +502,7 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 정보 저장하기"
 # 📝 전자 근로계약서 발급 및 서명 현황 관리 (1단계 직원 선택 시에만 2단계 입력폼 표시)
 # ==============================================================================
 import datetime as _dt
-from contract_utils import create_new_contract, load_all_contracts
+from contract_utils import create_new_contract, load_all_contracts, delete_contract_by_id
 
 st.divider()
 st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
@@ -427,7 +510,6 @@ st.caption("먼저 계약서를 작성할 직원을 선택하면, 해당 직원�
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
 
-# 기본 안내 문구(미선택 상태) + 재직 직원 목록 + 미등록 직접 입력 옵션 구성
 PLACEHOLDER_OPT = "🔽 여기를 눌러 계약서를 작성할 직원을 먼저 선택하세요..."
 DIRECT_INPUT_OPT = "➕ 직접 입력 (명부에 없는 신규 입사자)"
 
@@ -473,7 +555,6 @@ for _, r in df_reg.iterrows():
 staff_options.append(DIRECT_INPUT_OPT)
 
 with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필수)", expanded=True):
-    # [1단계] 눈에 잘 띄는 강조 박스 안에 직원 선택 드롭다운 배치
     st.markdown(
         """
         <div class="step1-highlight">
@@ -492,11 +573,9 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
         label_visibility="collapsed",
     )
 
-    # 직원을 아직 선택하지 않은 상태라면 아래 입력 폼을 아예 숨김 처리
     if selected_staff_label == PLACEHOLDER_OPT:
         st.warning("☝️ 위 드롭다운 박스를 클릭해 **계약서를 발급할 직원**을 선택하면 아래에 상세 입력란이 나타납니다.")
     else:
-        # 직원을 선택한 경우에만 2단계 상세 근로조건 입력 폼을 화면에 렌더링
         prefill = staff_lookup.get(selected_staff_label, {})
         default_name = prefill.get("직원명", "")
         default_pay_type = prefill.get("임금구분", "시급")
@@ -534,7 +613,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             c_emp_name = st.text_input(
                 "직원 성명",
                 value=default_name,
-                disabled=bool(default_name),  # 명부에서 선택한 경우 이름 오타 방지를 위해 고정
+                disabled=bool(default_name),
                 placeholder="예: 홍길동",
                 key=f"new_c_name_{k_sfx}",
             )
@@ -612,7 +691,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                 st.code(sign_url, language="text")
 
 # ------------------------------------------------------------------------------
-# 최근 발급된 계약서 현황 리스트 및 구글 드라이브 PDF 바로가기
+# 최근 발급된 계약서 현황 리스트 (미서명 건 링크 이메일 재발송 & 대기 삭제 기능 포함)
 # ------------------------------------------------------------------------------
 st.markdown("#### 📋 발급 및 서명 완료 목록")
 try:
@@ -621,23 +700,45 @@ try:
         st.info("아직 발급된 전자 근로계약서가 없습니다.")
     else:
         for item in reversed(all_contracts[-20:]):
-            status_badge = "✅ 서명완료" if item.get("상태") == "서명완료" else "⏳ 서명대기"
-            link_url = f"{APP_BASE_URL}?contract_id={item.get('계약ID')}"
+            cid_val = item.get("계약ID", "")
+            emp_nm = item.get("직원명", "")
+            is_done = item.get("상태") == "서명완료"
+            status_badge = "✅ 서명완료" if is_done else "⏳ 서명대기"
+            link_url = f"{APP_BASE_URL}?contract_id={cid_val}"
+
             with st.container(border=True):
-                r1, r2, r3 = st.columns([3, 2, 2])
+                r1, r2, r3 = st.columns([2.8, 2.2, 2.2], vertical_alignment="center")
                 with r1:
-                    st.markdown(f"**{item.get('직원명')}** · {status_badge} ({item.get('계약유형')})")
+                    st.markdown(f"**{emp_nm}** · {status_badge} ({item.get('계약유형')})")
                     st.caption(f"입사일: {item.get('근로개시일')} | {item.get('임금구분')} {item.get('금액')}원 | 생성: {item.get('생성일시')}")
                 with r2:
-                    if item.get("상태") == "서명완료":
+                    if is_done:
                         st.caption(f"서명일시: {item.get('서명일시')}")
-                        st.caption(f"연락처: {item.get('연락처')} / 이메일: {item.get('이메일')}")
-                    else:
-                        st.caption("직원 서명 대기 중입니다.")
-                with r3:
-                    if item.get("상태") == "서명완료" and item.get("드라이브PDF링크"):
-                        st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
+                        st.caption(f"연락처: {item.get('연락처')} / 보건증제출: {item.get('보건증제출일')}")
                     else:
                         st.code(link_url, language="text")
+                with r3:
+                    if is_done and item.get("드라이브PDF링크"):
+                        st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
+                    elif not is_done:
+                        b_col1, b_col2 = st.columns(2)
+                        with b_col1:
+                            if st.button("📨 링크 발송", key=f"resend_{cid_val}", use_container_width=True):
+                                target_mail = item.get("이메일", "").strip()
+                                if target_mail:
+                                    ok, msg = send_contract_link_via_webapp(target_mail, emp_nm, link_url)
+                                    if ok:
+                                        st.toast(f"{emp_nm} 님 이메일({target_mail})로 서명 링크를 발송했습니다!")
+                                    else:
+                                        st.error(f"발송 실패: {msg}")
+                                else:
+                                    st.warning("명부에 이메일이 없습니다. 링크를 직접 복사해 카톡/문자로 전달해 주세요.")
+                        with b_col2:
+                            if st.button("🗑️ 대기 삭제", key=f"del_c_{cid_val}", use_container_width=True):
+                                if delete_contract_by_id(st.secrets, cid_val):
+                                    st.toast(f"[{emp_nm}] 님의 서명대기 계약서를 삭제했습니다.")
+                                    st.rerun()
+                                else:
+                                    st.error("삭제 대상을 찾지 못했습니다.")
 except Exception as e:
     st.warning(f"근로계약서 목록을 불러오는 중 오류가 발생했습니다: {e}")
