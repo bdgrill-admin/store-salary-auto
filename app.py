@@ -37,6 +37,7 @@ else:
         st.Page("views/attendance.py", title="출퇴근 기록부", icon="⏱️", default=True),
         st.Page("views/payroll.py", title="급여 정산", icon="💰"),
         st.Page("views/staff.py", title="직원 관리", icon="👥"),
+        st.Page("views/manual.py", title="매니저 매뉴얼", icon="📖"), 
     ])
 
 # ------------------------------------------------------------------------------
