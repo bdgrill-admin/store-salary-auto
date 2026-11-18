@@ -638,4 +638,6 @@ try:
                     if item.get("상태") == "서명완료" and item.get("드라이브PDF링크"):
                         st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
                     else:
-                        st.code(
+                        st.code(link_url, language="text")
+except Exception as e:
+    st.warning(f"근로계약서 목록을 불러오는 중 오류가 발생했습니다: {e}")
