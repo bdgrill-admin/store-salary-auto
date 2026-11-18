@@ -4,13 +4,12 @@
 [역할] 매장 통합 월별 급여 정산 · 명세서 일괄 발송 · 매출 대비 인건비 경영 분석 페이지
 [주요 기능]
   1. 관리자 비밀번호(ADMIN_PASSWORD) 보안 로그인 잠금
-  2. 매월 5일 기준 정산 기간(전월 5일 ~ 당월 4일) 자동 계산 및 매니저 확인('TRUE') 근태 집계
-     - 정규직 명부에서 상태가 '퇴사'인 직원은 급여 정산 대상에서 자동 제외
-     - [신규] 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용 버튼
-  3. 정산 확정 및 원클릭 자동화:
-     - [개선] Apps Script 웹앱 연동으로 세무사(.txt 첨부) 및 직원 급여명세서 이메일 100% 안정 발송
-     - 급여히스토리 시트 백업, 은행 대량이체 엑셀 다운로드, 텔레그램 브리핑 전송
-  4. 경영 분석 대시보드 탭 (월별 총매출 대비 인건비율, 시간당 매출 SPLH, 전년 동월 대비 YoY)
+  2. 정규직 급여 계산 구조 개편:
+     - 계산급여 = 계약급여 - 제세금 (4대보험·세금 공제액)
+     - 입금급여 = 계산급여 +/- 변동급여 (추가근무·휴무차감 등)
+     - 세무사 .txt 전달 시: *총급여 -> 계약급여, *최종급여 -> 입금급여 자동 매핑
+  3. 정규직 중도 입·퇴사자 일할 계산기 (변동급여 차감액으로 원클릭 자동 반영)
+  4. 정산 확정 및 원클릭 자동화 (Apps Script 이메일 발송, 대량이체 엑셀, 히스토리 백업)
 ================================================================================
 """
 
@@ -35,9 +34,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# =========================================================================
-# 0. 매장별 설정 및 환경변수/시크릿 로드
-# =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -73,9 +69,6 @@ TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
 
-# =========================================================================
-# 커스텀 UI 스타일
-# =========================================================================
 def apply_clean_style():
     st.markdown(
         """
@@ -259,9 +252,12 @@ def minutes_to_hhmm(total_min: int):
 
 
 def clean_int(val):
+    """'+100,000'이나 '-100,000'처럼 부호와 콤마가 섞인 문자열도 정수로 정확히 변환"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0
-    digits = re.sub(r"[^\d.-]", "", str(val))
+    digits = re.sub(r"[^\d.+-]", "", str(val).strip())
+    if digits in ("", "+", "-", "."):
+        return 0
     try:
         return int(round(float(digits)))
     except ValueError:
@@ -436,7 +432,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 "이메일": "",
             })
 
-    # 3) '정규직' 탭 로드 (상태 == '퇴사'인 직원은 급여 정산 대상에서 자동 제외)
+    # 3) '정규직' 탭 로드 (계산급여 = 계약급여 - 제세금, 입금급여 = 계산급여 +/- 변동급여)
     ins_records = read_tab_records("정규직")
     ins_list = []
     for rec in ins_records:
@@ -444,15 +440,26 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
         status = str(rec.get("상태", "재직")).strip()
         if not name or status == "퇴사":
             continue
+
+        contract_pay = clean_int(rec.get("계약급여", 0))
+        old_net = clean_int(rec.get("계산급여", 0)) or clean_int(rec.get("최종급여", 0))
+        tax_val = clean_int(rec.get("제세금", 0))
+        # 기존 시트에 '최종급여'만 있고 '제세금'이 0인 경우 자동으로 차액을 제세금으로 산출
+        if tax_val == 0 and contract_pay > 0 and 0 < old_net < contract_pay:
+            tax_val = contract_pay - old_net
+        calc_pay = max(0, contract_pay - tax_val) if contract_pay > 0 else old_net
+
         ins_list.append({
             "이름": name,
             "주민번호": format_ssn(rec.get("주민번호", "")),
             "은행명": str(rec.get("은행명", "")).strip(),
             "계좌번호": str(rec.get("계좌번호", "")).strip(),
-            "계약급여": clean_int(rec.get("계약급여", 0)),
-            "그외비용": 0,
-            "그외비용사유": "",
-            "최종급여": clean_int(rec.get("최종급여", 0)),
+            "계약급여": contract_pay,
+            "제세금": tax_val,
+            "계산급여": calc_pay,
+            "변동급여": 0,
+            "변동급여사유": "",
+            "입금급여": calc_pay,
             "비고": str(rec.get("메모", "") or rec.get("비고", "")).strip(),
             "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
             "이메일": str(rec.get("이메일", "")).strip(),
@@ -465,6 +472,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
 # 4. 구글 시트 기반 급여 히스토리 저장 및 매출 연동 경영 분석 함수
 # =========================================================================
 def _parse_grid_values(all_rows: list):
+    """급여히스토리 시트 파싱 (과거 '최종급여' 탭과 신규 '입금급여' 탭 모두 완벽 호환)"""
     ins_sum, part_sum = 0, 0
     total_part_mins = 0
     staff_items = []
@@ -482,12 +490,13 @@ def _parse_grid_values(all_rows: list):
             col_map = {v: i for i, v in enumerate(vals) if v}
             continue
 
-        if mode and "이름" in col_map and "최종급여" in col_map:
+        if mode and "이름" in col_map and ("최종급여" in col_map or "입금급여" in col_map):
             name_val = vals[col_map["이름"]] if col_map["이름"] < len(vals) else ""
             if not name_val or name_val in ("소계", "합계", "실지급총계"):
                 continue
 
-            net_val = clean_int(vals[col_map["최종급여"]]) if col_map["최종급여"] < len(vals) else 0
+            net_col_key = "입금급여" if "입금급여" in col_map else "최종급여"
+            net_val = clean_int(vals[col_map[net_col_key]]) if col_map[net_col_key] < len(vals) else 0
             if net_val == 0:
                 continue
 
@@ -679,15 +688,16 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 # 5. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / Apps Script 이메일 발송
 # =========================================================================
 def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
+    """은행 대량이체 엑셀 생성 (정규직은 '입금급여', 파트타임은 '최종급여' 기준)"""
     rows = []
     memo = f"{store_name}{end_date.month}월급여"
 
-    for df_tmp in [df_ins, df_part]:
+    for df_tmp, pay_col in [(df_ins, "입금급여"), (df_part, "최종급여")]:
         if df_tmp.empty:
             continue
         for _, r in df_tmp.iterrows():
             name = str(r.get("이름", "")).strip()
-            amount = clean_int(r.get("최종급여", 0))
+            amount = clean_int(r.get(pay_col, 0))
             if not name or amount <= 0:
                 continue
             acct = re.sub(r"[^0-9]", "", str(r.get("계좌번호", "")))
@@ -707,6 +717,7 @@ def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd
 
 
 def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
+    """세무사 전달용 .txt 생성 (정규직: *총급여 -> 계약급여, *최종급여 -> 입금급여)"""
     output_lines = []
 
     if not df_ins.empty:
@@ -714,6 +725,12 @@ def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
             name = str(row.get("이름", "")).strip()
             if not name:
                 continue
+            c_pay = clean_int(row.get("계약급여", 0))
+            in_pay = clean_int(row.get("입금급여", 0))
+            var_pay = clean_int(row.get("변동급여", 0))
+            var_rsn = str(row.get("변동급여사유", "")).strip()
+            var_line = f"*변동급여: {var_pay:+,}원 ({var_rsn})\n" if var_pay != 0 else ""
+
             line = (
                 f"이름: {name}\n"
                 f"주민번호: {format_ssn(row.get('주민번호', ''))}\n"
@@ -722,8 +739,9 @@ def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
                 f"근무일자: \n"
                 f"시급: \n"
                 f"총시간 :\n"
-                f"*총급여: {clean_int(row.get('계약급여', 0)):,}원\n"
-                f"*최종급여: {clean_int(row.get('최종급여', 0)):,}원\n"
+                f"*총급여: {c_pay:,}원\n"
+                f"{var_line}"
+                f"*최종급여: {in_pay:,}원\n"
             )
             output_lines.append(line)
 
@@ -752,6 +770,7 @@ def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
 
 
 def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time: bool, start_dt: datetime.date, end_dt: datetime.date):
+    """직원 개별 급여명세서 생성 (정규직은 계약급여, 제세금, 계산급여, 변동급여, 입금급여 상세 표기)"""
     name = str(row.get("이름", "")).strip()
     period_str = f"{start_dt.strftime('%Y.%m.%d')} ~ {end_dt.strftime('%Y.%m.%d')}"
     bank_info = f"{row.get('은행명', '')} {row.get('계좌번호', '')}".strip()
@@ -778,8 +797,14 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
         )
     else:
         contract = clean_int(row.get("계약급여", 0))
-        net = clean_int(row.get("최종급여", 0))
-        deduct = max(0, contract - net)
+        tax = clean_int(row.get("제세금", 0))
+        calc_pay = clean_int(row.get("계산급여", 0))
+        var_pay = clean_int(row.get("변동급여", 0))
+        var_rsn = str(row.get("변동급여사유", "")).strip()
+        in_pay = clean_int(row.get("입금급여", 0))
+
+        var_str = f"• 변동급여: {var_pay:+,}원" + (f" ({var_rsn})\n" if var_rsn else "\n") if var_pay != 0 else ""
+
         return (
             f"🥩 [{store_name}] {end_dt.year}년 {end_dt.month}월분 급여명세서\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -787,19 +812,16 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
             f"• 정산기간: {period_str}\n"
             f"• 입금계좌: {bank_info}\n"
             f"• 계약급여: {contract:,}원\n"
-            f"• 4대보험/세금 공제: -{deduct:,}원\n"
-            f"• 실수령액: {net:,}원\n"
+            f"• 제세금(4대보험/세금): -{tax:,}원\n"
+            f"• 계산급여(기본실수령): {calc_pay:,}원\n"
+            f"{var_str}"
+            f"• 실수령 입금급여: {in_pay:,}원\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"이번 달도 {store_name}과 함께해 주셔서 진심으로 감사합니다."
         )
 
 
 def send_email_simple(to_email: str, subject: str, body_text: str, attachment_bytes=None, attachment_name=None):
-    """
-    [Apps Script 통합 이메일 발송 함수]
-    - 1순위: DRIVE_UPLOAD_WEBAPP_URL(Apps Script 웹앱)을 통해 SMTP 포트 차단 없이 안정 발송
-    - 2순위(백업): 웹앱 URL 미설정 시 기존 Gmail SMTP 방식으로 폴백
-    """
     if not to_email or "@" not in to_email:
         raise ValueError("유효한 수신자 이메일 주소가 없습니다.")
 
@@ -828,7 +850,6 @@ def send_email_simple(to_email: str, subject: str, body_text: str, attachment_by
             raise RuntimeError(f"Apps Script 메일 발송 실패: {res_json.get('error')}")
         return
 
-    # 백업: 기존 SMTP 방식
     if not SENDER_APP_PASSWORD:
         raise ValueError("DRIVE_UPLOAD_WEBAPP_URL 또는 SENDER_APP_PASSWORD가 설정되지 않았습니다.")
 
@@ -917,9 +938,10 @@ with tab_calc:
                     st.markdown(f"- {w}")
 
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
+        st.caption("💡 **계산급여** = `계약급여 - 제세금`  |  **입금급여(실이체액)** = `계산급여 ± 변동급여` (추가근무는 양수 `100000`, 휴무 차감은 음수 `-100000` 입력)")
 
         # ---------------------------------------------------------------------
-        # [신규 기능] 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
+        # 정규직 중도 입·퇴사자 일할 계산기 (변동급여 차감액으로 자동 반영)
         # ---------------------------------------------------------------------
         if "prorated_overrides" not in st.session_state:
             st.session_state["prorated_overrides"] = {}
@@ -929,13 +951,12 @@ with tab_calc:
         if not df_ins_raw.empty:
             total_period_days = (end_dt - start_dt).days + 1
             with st.expander("🧮 정규직 중도 입·퇴사자 일할 계산기 (클릭하여 열기)", expanded=False):
-                st.caption("월 중간에 입사하거나 퇴사한 정규직 직원의 근무일수만큼 일할 계산하여 아래 표에 즉시 반영합니다.")
-                pc1, pc2, pc3, pc4 = st.columns([1.2, 1.0, 1.0, 1.1])
+                st.caption("월 중간에 입사하거나 퇴사한 정규직 직원의 근무일수만큼 일할 계산하여 '변동급여' 차감액 및 '입금급여'에 즉시 반영합니다.")
+                pc1, pc2, pc3 = st.columns([1.4, 1.0, 1.0])
                 reg_names = df_ins_raw["이름"].tolist()
                 sel_p_emp = pc1.selectbox("대상 정규직 직원", options=reg_names, key="prorate_emp_sel")
                 p_emp_row = df_ins_raw[df_ins_raw["이름"] == sel_p_emp].iloc[0]
-                base_c_pay = clean_int(p_emp_row.get("계약급여", 0))
-                base_n_pay = clean_int(p_emp_row.get("최종급여", 0))
+                base_calc_pay = clean_int(p_emp_row.get("계산급여", 0))
 
                 p_base_days = pc2.number_input(
                     "기준 총일수 (일)",
@@ -953,45 +974,38 @@ with tab_calc:
                     step=1,
                     key="prorate_work_days",
                 )
-                p_method = pc4.selectbox(
-                    "계산 기준",
-                    ["실수령액(최종급여) 일할", "세전(계약급여) 일할"],
-                    key="prorate_method",
-                )
 
-                if p_method.startswith("실수령액"):
-                    calc_p_pay = int(round((base_n_pay / p_base_days) * p_work_days, -1))
-                    base_ref_pay = base_n_pay
-                else:
-                    calc_p_pay = int(round((base_c_pay / p_base_days) * p_work_days, -1))
-                    base_ref_pay = base_c_pay
+                target_in_pay = int(round((base_calc_pay / p_base_days) * p_work_days, -1))
+                diff_var_pay = target_in_pay - base_calc_pay
 
                 st.info(
-                    f"💡 **[{sel_p_emp}]** 님 일할 계산 결과: 기준액 `{base_ref_pay:,}원` × (`{p_work_days}일` / `{p_base_days}일`) "
-                    f"= **{calc_p_pay:,}원** *(원 단위 반올림)*"
+                    f"💡 **[{sel_p_emp}]** 님 일할 계산 결과: 계산급여 `{base_calc_pay:,}원` × (`{p_work_days}일` / `{p_base_days}일`) "
+                    f"= 입금급여 **{target_in_pay:,}원** (변동급여 `{diff_var_pay:+,}원` 자동 입력)"
                 )
-                if st.button(f"⚡ [{sel_p_emp}] 님 최종급여를 {calc_p_pay:,}원으로 아래 표에 즉시 적용", type="primary", use_container_width=True):
+                if st.button(f"⚡ [{sel_p_emp}] 님 입금급여를 {target_in_pay:,}원으로 아래 표에 즉시 적용", type="primary", use_container_width=True):
                     st.session_state["prorated_overrides"][sel_p_emp] = {
-                        "최종급여": calc_p_pay,
-                        "비고": f"일할계산({p_work_days}/{p_base_days}일)",
+                        "변동급여": diff_var_pay,
+                        "변동급여사유": f"일할계산({p_work_days}/{p_base_days}일)",
                     }
                     st.session_state["ins_editor_ver"] += 1
                     st.rerun()
 
-            # 일할 계산 오버라이드가 있으면 원본 데이터프레임에 먼저 반영
             for idx, r in df_ins_raw.iterrows():
                 nm = r["이름"]
                 if nm in st.session_state["prorated_overrides"]:
                     ov = st.session_state["prorated_overrides"][nm]
-                    df_ins_raw.at[idx, "최종급여"] = ov["최종급여"]
-                    old_b = str(df_ins_raw.at[idx, "비고"]).strip()
-                    if ov["비고"] not in old_b:
-                        df_ins_raw.at[idx, "비고"] = f"{old_b} {ov['비고']}".strip()
+                    df_ins_raw.at[idx, "변동급여"] = ov["변동급여"]
+                    df_ins_raw.at[idx, "변동급여사유"] = ov["변동급여사유"]
+                    df_ins_raw.at[idx, "입금급여"] = clean_int(df_ins_raw.at[idx, "계산급여"]) + ov["변동급여"]
 
         if df_ins_raw.empty:
             st.caption("ℹ️ '정규직' 탭에 재직 중인 직원이 없습니다.")
             df_ins_edited = pd.DataFrame(
-                columns=["이름", "주민번호", "은행명", "계좌번호", "계약급여", "그외비용", "그외비용사유", "최종급여", "비고", "텔레그램ID", "이메일"]
+                columns=[
+                    "이름", "주민번호", "은행명", "계좌번호",
+                    "계약급여", "제세금", "계산급여", "변동급여", "변동급여사유", "입금급여",
+                    "비고", "텔레그램ID", "이메일"
+                ]
             )
         else:
             df_ins_edited = st.data_editor(
@@ -1001,17 +1015,23 @@ with tab_calc:
                 key=f"editor_ins_{selected_store}_{st.session_state['ins_editor_ver']}",
                 column_config={
                     "계약급여": st.column_config.NumberColumn("계약급여", format="%,d"),
-                    "그외비용": st.column_config.NumberColumn("그외비용", format="%,d"),
-                    "최종급여": st.column_config.NumberColumn("최종급여", format="%,d"),
+                    "제세금": st.column_config.NumberColumn("제세금 (공제)", format="%,d"),
+                    "계산급여": st.column_config.NumberColumn("계산급여 (계약-제세금)", format="%,d", disabled=True),
+                    "변동급여": st.column_config.NumberColumn("변동급여 (+/-)", format="%+,d"),
+                    "변동급여사유": st.column_config.TextColumn("변동급여사유"),
+                    "입금급여": st.column_config.NumberColumn("입금급여 (실이체액)", format="%,d", disabled=True),
                 },
             )
+            # 실시간 자동 계산: 계산급여 = 계약급여 - 제세금  |  입금급여 = 계산급여 + 변동급여
             for idx, row in df_ins_edited.iterrows():
-                orig_row = df_ins_raw.loc[idx] if idx in df_ins_raw.index else None
-                extra_pay = clean_int(row.get("그외비용", 0))
-                if orig_row is not None and clean_int(row.get("계약급여", 0)) == clean_int(orig_row.get("계약급여", 0)):
-                    df_ins_edited.at[idx, "계약급여"] = clean_int(row.get("계약급여", 0)) + extra_pay
-                if orig_row is not None and clean_int(row.get("최종급여", 0)) == clean_int(orig_row.get("최종급여", 0)):
-                    df_ins_edited.at[idx, "최종급여"] = clean_int(row.get("최종급여", 0)) + extra_pay
+                c_pay = clean_int(row.get("계약급여", 0))
+                tax_pay = clean_int(row.get("제세금", 0))
+                var_pay = clean_int(row.get("변동급여", 0))
+                calc_pay = max(0, c_pay - tax_pay)
+                in_pay = max(0, calc_pay + var_pay)
+
+                df_ins_edited.at[idx, "계산급여"] = calc_pay
+                df_ins_edited.at[idx, "입금급여"] = in_pay
 
         st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
         df_part_edited = st.data_editor(
@@ -1051,7 +1071,7 @@ with tab_calc:
                 df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
                 df_part_edited.at[idx, "최종급여"] = net_pay
 
-        sum_reg = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
+        sum_reg = df_ins_edited["입금급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
         total_payout = sum_reg + sum_part
 
@@ -1081,16 +1101,16 @@ with tab_calc:
             p_part = int(prev_row.iloc[0]["파트타임"])
             p_tot = int(prev_row.iloc[0]["총인건비"])
             if p_reg > 0:
-                m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원", delta=f"{sum_reg - p_reg:+,}원 (전월 대비)", delta_color="inverse")
+                m1.metric("정규직 입금급여 소계(A)", f"{sum_reg:,}원", delta=f"{sum_reg - p_reg:+,}원 (전월 대비)", delta_color="inverse")
             else:
-                m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원")
+                m1.metric("정규직 입금급여 소계(A)", f"{sum_reg:,}원")
             if p_part > 0:
                 m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원", delta=f"{sum_part - p_part:+,}원 (전월 대비)", delta_color="inverse")
             else:
                 m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원", delta=f"{total_payout - p_tot:+,}원 (전월 대비)", delta_color="inverse")
         else:
-            m1.metric("정규직 실지급 소계(A)", f"{sum_reg:,}원")
+            m1.metric("정규직 입금급여 소계(A)", f"{sum_reg:,}원")
             m2.metric("파트타임 실지급 소계(B)", f"{sum_part:,}원")
             m3.metric("총 이체 합계(A+B)", f"{total_payout:,}원")
 
@@ -1249,15 +1269,22 @@ with tab_calc:
                         f"• 세무사/지정 수신처({len(recipient_list)}곳): {recipients_str}",
                         f"• 총 이체합계: {total_payout:,}원\n",
                     ]
-                    for df_tmp in [df_ins_edited, df_part_edited]:
-                        if not df_tmp.empty:
-                            for _, r in df_tmp.iterrows():
-                                extra_val = clean_int(r.get("그외비용", 0))
-                                extra_rsn = str(r.get("그외비용사유", "")).strip()
-                                extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
-                                transfer_lines.append(
-                                    f"- {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
-                                )
+                    if not df_ins_edited.empty:
+                        for _, r in df_ins_edited.iterrows():
+                            var_val = clean_int(r.get("변동급여", 0))
+                            var_rsn = str(r.get("변동급여사유", "")).strip()
+                            var_note = f" [변동급여 {var_val:+,}원: {var_rsn}]" if var_val != 0 else ""
+                            transfer_lines.append(
+                                f"- [정규직] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['입금급여']):,}원{var_note}"
+                            )
+                    if not df_part_edited.empty:
+                        for _, r in df_part_edited.iterrows():
+                            extra_val = clean_int(r.get("그외비용", 0))
+                            extra_rsn = str(r.get("그외비용사유", "")).strip()
+                            extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
+                            transfer_lines.append(
+                                f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
+                            )
 
                     if staff_sent_logs:
                         transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
