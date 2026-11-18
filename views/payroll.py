@@ -5,17 +5,10 @@
 [주요 기능]
   1. 관리자 비밀번호(ADMIN_PASSWORD) 보안 로그인 잠금
   2. 매월 5일 기준 정산 기간(전월 5일 ~ 당월 4일) 자동 계산 및 매니저 확인('TRUE') 근태 집계
-     - 미확인 근태 건이나 명부 미등록 근무자 자동 감지 및 상단 경고 배너 출력
+     - 정규직 명부에서 상태가 '퇴사'인 직원은 급여 정산 대상에서 자동 제외
      - 파트타임 총급여 기준 세율 자동 적용 (100만 원 이상 3.3%, 미만 0.9%) 및 실시간 표 편집
-     - '그외비용'(식대·보너스·공제 등) 입력 시 총급여 및 실수령액 즉시 자동 재계산
-  3. 정산 확정 및 원클릭 자동화:
-     - 구글 급여히스토리 시트에 해당 월('YY.MM') 탭 자동 생성 및 백업
-     - 은행 대량이체용 엑셀(.xlsx) 및 세무사 신고용 텍스트(.txt) 파일 다운로드
-     - 세무사 이메일 자동 발송 + 전 직원 개별 급여명세서(이메일·텔레그램) 동시 발송
-     - 대표님 텔레그램으로 총 이체 합계 및 계좌별 송금 내역 요약 브리핑 전송
-  4. 경영 분석 대시보드 탭:
-     - 월별 총매출 대비 인건비율(%), 시간당 매출(SPLH), 전년 동월 대비(YoY) 증감률 비교
-     - 연도별·직원별 누적 근무시간, 누적 실수령액, 원천세 요약 통계 제공
+  3. 정산 확정 및 원클릭 자동화 (급여히스토리 백업, 대량이체 엑셀, 세무사 보고, 명세서 발송)
+  4. 경영 분석 대시보드 탭 (월별 총매출 대비 인건비율, 시간당 매출 SPLH, 전년 동월 대비 YoY)
 ================================================================================
 """
 
@@ -40,7 +33,6 @@ load_dotenv()
 
 # =========================================================================
 # 0. 매장별 설정 및 환경변수/시크릿 로드
-# - 매장당 통합근태DB(db_id), 급여히스토리(hist_id), 매출관리(sales_id) 연결
 # =========================================================================
 def get_secret(key: str, default: str = ""):
     try:
@@ -69,7 +61,6 @@ STORES = {
 
 CREDENTIALS_FILE = "credentials.json"
 
-# 이메일(Gmail SMTP) 및 텔레그램 알림 봇 설정값 로드
 SENDER_EMAIL = get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com")
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
 TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
@@ -78,7 +69,7 @@ ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
 
 # =========================================================================
-# 커스텀 UI 스타일 (Pretendard 폰트, 지표 카드 디자인, 탭/버튼 여백 설정)
+# 커스텀 UI 스타일
 # =========================================================================
 def apply_clean_style():
     st.markdown(
@@ -154,7 +145,6 @@ apply_clean_style()
 
 # =========================================================================
 # 1. 관리자 보안 로그인 잠금
-# - 급여 및 인사 민감정보 보호를 위해 비밀번호 인증 통과 시에만 화면 표시
 # =========================================================================
 def check_login():
     if st.session_state.get("authenticated", False):
@@ -185,7 +175,6 @@ if not check_login():
 # 2. 구글 API 인증 및 날짜·시간·금액 정제 유틸리티 함수들
 # =========================================================================
 def get_gspread_client():
-    """구글 스프레드시트 및 드라이브 접근용 인증 클라이언트 반환"""
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -203,7 +192,6 @@ def get_gspread_client():
 
 
 def get_settlement_period(base_date: datetime.date):
-    """정산 기준일(매월 5일 급여일)을 기준으로 직전 정산 기간(전월 5일 ~ 당월 4일)을 자동 산출"""
     if base_date.day >= 5:
         end_date = base_date.replace(day=4)
         first_of_this_month = base_date.replace(day=1)
@@ -219,7 +207,6 @@ def get_settlement_period(base_date: datetime.date):
 
 
 def normalize_ym_label(val: str) -> str:
-    """'2026-11', '26년 11월' 등 다양한 연월 표기를 '26.11' 표준 포맷으로 통일"""
     s = str(val).strip()
     m = re.match(r"^(?:20)?(\d{2})[-./년\s]+(\d{1,2})월?$", s)
     if m:
@@ -228,7 +215,6 @@ def normalize_ym_label(val: str) -> str:
 
 
 def parse_sheet_date(val):
-    """시트에 입력된 날짜 문자열을 datetime.date 객체로 변환"""
     if not val:
         return None
     s = str(val).strip()
@@ -241,7 +227,6 @@ def parse_sheet_date(val):
 
 
 def parse_hhmm_to_minutes(val):
-    """'08:30' 또는 '8시간 30분' 형태의 근무시간 문자열을 총 분(minutes) 단위로 변환"""
     if pd.isna(val) or val is None:
         return 0
     s = str(val).strip()
@@ -262,7 +247,6 @@ def parse_hhmm_to_minutes(val):
 
 
 def minutes_to_hhmm(total_min: int):
-    """총 분(minutes)을 'HH:MM' 포맷 문자열로 변환"""
     total_min = int(round(total_min))
     h = total_min // 60
     m = total_min % 60
@@ -270,7 +254,6 @@ def minutes_to_hhmm(total_min: int):
 
 
 def clean_int(val):
-    """콤마(,)나 문자 등이 포함된 숫자 데이터에서 정수(int)만 추출"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0
     digits = re.sub(r"[^\d.-]", "", str(val))
@@ -281,7 +264,6 @@ def clean_int(val):
 
 
 def parse_rate(val):
-    """'3.3%' 또는 '0.9%' 같은 공제율 문자열을 소수점 비율(0.033, 0.009)로 변환"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0.0
     s = str(val).strip().replace("%", "")
@@ -293,7 +275,6 @@ def parse_rate(val):
 
 
 def format_ssn(ssn_str):
-    """주민번호 13자리 숫자를 하이픈(-) 포함 표준 형식으로 포맷팅 (세무사 전달용 마스킹 해제 유지)"""
     digits = re.sub(r"\D", "", str(ssn_str).strip())
     if len(digits) == 13:
         return f"{digits[:6]}-{digits[6:]}"
@@ -311,7 +292,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
     warnings = []
     attendance_map = {}
 
-    # 1) '통합근태DB' 탭에서 정산 기간 내 출퇴근 기록 조회 (매니저확인 == TRUE인 건만 급여 합산)
+    # 1) '통합근태DB' 탭 집계 (매니저확인 == TRUE 만 합산)
     att_ws = db_ss.worksheet("통합근태DB")
     att_rows = att_ws.get_all_values()
 
@@ -349,7 +330,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                     warnings.append(f"⚠️ [{emp_name}] {d_obj.strftime('%m-%d')} (DB {row_num}행): 근무시간 누락/오류 ({hm_val})")
                     continue
 
-                # 매니저 승인이 안 된 건은 급여 합산에서 제외하고 상단 경고 목록에 추가
                 is_checked = str(r[app_i]).strip().upper() == "TRUE" if len(r) > app_i else False
                 if not is_checked:
                     s_t = r[s_i].strip() if len(r) > s_i else ""
@@ -386,7 +366,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 records.append(row_dict)
         return records
 
-    # 2) '파트타임' 탭 직원 정보와 누적 근무시간 매칭 및 세금(3.3% / 0.9%) 자동 계산
+    # 2) '파트타임' 탭 로드 (해당 기간 근무시간이 있으면 퇴사자라도 마지막 급여 자동 산출)
     part_records = read_tab_records("파트타임")
     part_list = []
     processed_lookup_names = set()
@@ -398,7 +378,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
 
         memo_val = str(rec.get("메모", "")).strip()
         lookup_name = report_name
-        # 예금주명('이름')과 실제 출근부 기록 이름('메모')이 다른 경우 메모의 실근무자 이름으로 근태 매칭
         if memo_val and "퇴사" not in memo_val and len(memo_val) <= 5:
             lookup_name = memo_val
 
@@ -431,7 +410,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
             "이메일": str(rec.get("이메일", "")).strip(),
         })
 
-    # 출퇴근 기록은 있으나 '파트타임' 명부에 아직 등록되지 않은 직원 경고 표시
     for emp_n, att in attendance_map.items():
         if emp_n not in processed_lookup_names and att["total_min"] > 0:
             warnings.append(f"⚠️ [{emp_n}] '파트타임' 탭에 등록되지 않은 근무자입니다. 사이드바 '직원 관리'에서 등록해 주세요.")
@@ -453,12 +431,13 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 "이메일": "",
             })
 
-    # 3) '정규직' 탭 직원 명부 로드
+    # 3) '정규직' 탭 로드 (상태 == '퇴사'인 직원은 급여 정산 대상에서 자동 제외)
     ins_records = read_tab_records("정규직")
     ins_list = []
     for rec in ins_records:
         name = str(rec.get("이름", "")).strip()
-        if not name:
+        status = str(rec.get("상태", "재직")).strip()
+        if not name or status == "퇴사":
             continue
         ins_list.append({
             "이름": name,
@@ -469,7 +448,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
             "그외비용": 0,
             "그외비용사유": "",
             "최종급여": clean_int(rec.get("최종급여", 0)),
-            "비고": str(rec.get("비고", "")).strip(),
+            "비고": str(rec.get("메모", "") or rec.get("비고", "")).strip(),
             "텔레그램ID": str(rec.get("텔레그램ID", "")).strip(),
             "이메일": str(rec.get("이메일", "")).strip(),
         })
@@ -481,7 +460,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
 # 4. 구글 시트 기반 급여 히스토리 저장 및 매출 연동 경영 분석 함수
 # =========================================================================
 def _parse_grid_values(all_rows: list):
-    """급여히스토리 시트의 각 월별 탭('YY.MM')에서 정규직/파트타임 급여 및 근무시간을 파싱"""
     ins_sum, part_sum = 0, 0
     total_part_mins = 0
     staff_items = []
@@ -538,7 +516,6 @@ def _parse_grid_values(all_rows: list):
 
 
 def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
-    """정산 확정 시 급여히스토리 구글 시트에 'YY.MM' 탭으로 정규직·파트타임 급여표를 자동 백업"""
     sheet_name = end_date.strftime("%y.%m")
 
     buf = io.BytesIO()
@@ -582,7 +559,6 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
 
 @st.cache_data(ttl=60, show_spinner="매출 관리 시트에서 월별 매출을 불러오는 중...")
 def load_gsheet_sales(sales_id: str) -> pd.DataFrame:
-    """분당그릴_매출관리 시트에서 월별 총매출 데이터를 로드하여 인건비율 분석에 활용"""
     if not sales_id:
         return pd.DataFrame(columns=["정산월", "총매출"])
     try:
@@ -617,7 +593,6 @@ def load_gsheet_sales(sales_id: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner="구글 히스토리 시트에서 누적 추이를 분석하는 중...")
 def load_gsheet_history(hist_id: str, sales_id: str = ""):
-    """급여히스토리 시트의 전체 월별 탭을 읽어와 매출 대비 인건비율 및 SPLH(시간당 매출) 계산"""
     if not hist_id:
         return pd.DataFrame(), pd.DataFrame()
     try:
@@ -699,7 +674,6 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 # 5. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 생성 및 발송 함수
 # =========================================================================
 def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
-    """은행 인터넷뱅킹 대량이체 업로드용 표준 엑셀(.xlsx) 바이너리 생성"""
     rows = []
     memo = f"{store_name}{end_date.month}월급여"
 
@@ -728,7 +702,6 @@ def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd
 
 
 def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
-    """세무사 사무실 전달용 인건비 신고 텍스트(.txt) 포맷 생성"""
     output_lines = []
 
     if not df_ins.empty:
@@ -774,7 +747,6 @@ def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
 
 
 def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time: bool, start_dt: datetime.date, end_dt: datetime.date):
-    """직원 개인별 이메일·텔레그램 발송용 급여명세서 안내문 생성"""
     name = str(row.get("이름", "")).strip()
     period_str = f"{start_dt.strftime('%Y.%m.%d')} ~ {end_dt.strftime('%Y.%m.%d')}"
     bank_info = f"{row.get('은행명', '')} {row.get('계좌번호', '')}".strip()
@@ -818,7 +790,6 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
 
 
 def send_email_simple(to_email: str, subject: str, body_text: str, attachment_bytes=None, attachment_name=None):
-    """Gmail SMTP를 이용한 세무사 내역서 및 직원 급여명세서 이메일 발송"""
     if not SENDER_APP_PASSWORD:
         raise ValueError("SENDER_APP_PASSWORD(구글 앱 비밀번호)가 설정되지 않았습니다.")
     if not to_email:
@@ -843,7 +814,6 @@ def send_email_simple(to_email: str, subject: str, body_text: str, attachment_by
 
 
 def send_telegram_to_chat(chat_id: str, message: str):
-    """텔레그램 봇 API를 이용해 대표님 또는 직원 개인 채팅방으로 메시지 전송"""
     if not TELEGRAM_TOKEN or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -855,7 +825,7 @@ def send_telegram_to_chat(chat_id: str, message: str):
 
 
 # =========================================================================
-# 6. Streamlit 메인 대시보드 UI (탭 1: 월별 급여 정산 / 탭 2: 경영 분석)
+# 6. Streamlit 메인 대시보드 UI
 # =========================================================================
 head_c1, head_c2 = st.columns([3.2, 1], vertical_alignment="center")
 with head_c1:
@@ -878,9 +848,6 @@ tab_calc, tab_trend = st.tabs([
     f"📈 {selected_store} 매출 · 인건비 경영 분석",
 ])
 
-# -------------------------------------------------------------------------
-# [탭 1] 월별 급여 정산 (정규직/파트타임 급여 계산, 엑셀/텍스트 다운로드, 일괄 발송)
-# -------------------------------------------------------------------------
 with tab_calc:
     with st.container(border=True):
         ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
@@ -906,17 +873,15 @@ with tab_calc:
             store_cfg["db_id"], start_dt, end_dt
         )
 
-        # 미승인 근태나 미등록 직원 알림 표시
         if warnings:
             st.error(f"🚨 확인이 필요한 근태/명부 알림이 **{len(warnings)}건** 있습니다. 정산 확정 전 확인해 주세요.")
             with st.expander(f"상세 내역 보기 ({len(warnings)}건)", expanded=True):
                 for w in warnings:
                     st.markdown(f"- {w}")
 
-        # 1) 정규직 급여 편집 표 ('그외비용' 입력 시 계약급여·최종급여 자동 가감)
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         if df_ins_raw.empty:
-            st.caption("ℹ️ '정규직' 탭에 등록된 직원이 없습니다.")
+            st.caption("ℹ️ '정규직' 탭에 재직 중인 직원이 없습니다.")
             df_ins_edited = pd.DataFrame(
                 columns=["이름", "주민번호", "은행명", "계좌번호", "계약급여", "그외비용", "그외비용사유", "최종급여", "비고", "텔레그램ID", "이메일"]
             )
@@ -940,7 +905,6 @@ with tab_calc:
                 if orig_row is not None and clean_int(row.get("최종급여", 0)) == clean_int(orig_row.get("최종급여", 0)):
                     df_ins_edited.at[idx, "최종급여"] = clean_int(row.get("최종급여", 0)) + extra_pay
 
-        # 2) 파트타임 급여 편집 표 (시급·총시간·그외비용·공제율 변경 시 최종급여 자동 재계산)
         st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
         df_part_edited = st.data_editor(
             df_part_raw,
@@ -979,7 +943,6 @@ with tab_calc:
                 df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
                 df_part_edited.at[idx, "최종급여"] = net_pay
 
-        # 전월 및 전년 동월 대비 인건비/매출 요약 지표(Metric) 5개 출력
         sum_reg = df_ins_edited["최종급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
         total_payout = sum_reg + sum_part
@@ -1062,7 +1025,6 @@ with tab_calc:
         else:
             m5.metric("전년 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
 
-        # 3) 세무사 전달용 텍스트 편집, 대량이체 엑셀 다운로드 및 일괄 발송 패널
         st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
 
@@ -1121,7 +1083,6 @@ with tab_calc:
                     use_container_width=True,
                 )
 
-        # '정산 확정 및 발송하기' 클릭 시: 히스토리 저장 -> 세무사 메일 -> 직원 명세서 -> 대표님 텔레그램 보고
         if confirm_clicked:
             recipient_list = [e.strip() for e in re.split(r"[,;\n]+", raw_emails) if e.strip()]
             if not recipient_list:
@@ -1203,9 +1164,6 @@ with tab_calc:
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
 
-# -------------------------------------------------------------------------
-# [탭 2] 매출 · 인건비 경영 분석 (월별 추이 차트, YoY 비교, 직원별 누적 요약)
-# -------------------------------------------------------------------------
 with tab_trend:
     df_monthly, df_staff = load_gsheet_history(store_cfg["hist_id"], store_cfg["sales_id"])
 
@@ -1249,7 +1207,6 @@ with tab_trend:
             k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
             k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%" if part_ratio > 0 else "-")
 
-        # 1) 월별 매출·인건비 막대 차트 및 인건비율(%) 꺾은선 차트
         st.markdown('<div class="section-title">1. 월별 매출 · 인건비 및 인건비율 추이</div>', unsafe_allow_html=True)
         if has_sales:
             ch1, ch2 = st.columns(2)
@@ -1265,7 +1222,6 @@ with tab_trend:
             with st.container(border=True):
                 st.bar_chart(df_monthly.set_index("정산월")[["총인건비"]], height=320)
 
-        # 2) 전년 동월 대비(YoY) 비교 테이블
         df_monthly_calc = df_monthly.copy()
         df_monthly_calc["월번호"] = df_monthly_calc["정산월"].str.split(".").str[1]
 
@@ -1311,7 +1267,6 @@ with tab_trend:
                 },
             )
 
-        # 3) 월별 매출 · 인건비 상세 내역 표
         sec_num = "3" if yoy_records else "2"
         st.markdown(f'<div class="section-title">{sec_num}. 월별 매출 · 인건비 상세 내역</div>', unsafe_allow_html=True)
         df_monthly_disp = df_monthly.copy()
@@ -1340,14 +1295,13 @@ with tab_trend:
             },
         )
 
-        # 4) 연도별·직원별 누적 근무시간 및 급여 요약 표
         if not df_staff.empty:
             sec_staff_num = "4" if yoy_records else "3"
             st.markdown(f'<div class="section-title">{sec_staff_num}. 직원별 누적 근무시간 · 급여 요약 (상세 내역 기준)</div>', unsafe_allow_html=True)
 
             f_col1, _ = st.columns([1, 3])
             with f_col1:
-                years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정산월"].unique()])))
+                years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정규직" if "정규직" in df_staff.columns else "정산월"].unique()])))
                 sel_year = st.selectbox("조회 연도", years, index=0)
 
             df_filtered = df_staff.copy()
