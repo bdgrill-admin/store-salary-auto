@@ -6,9 +6,8 @@
   1. 날짜별 일 근무현황 실시간 표 조회 (선택된 행 파란색 / 방금 수정된 행 초록색 하이라이트)
   2. 매니저 전용 확인(PIN 번호 입력): 미확인 근태 일괄 승인 및 승인 완료 건 잠금 해제
   3. 직원 출퇴근 시간 신규 입력 및 기존 내역 선택 수정
-     - [개인정보 보호 & 오입력 방지] 최초 접속 시 '본인 이름 선택'을 미선택 상태로 두어
-       특정 직원의 누적 근무시간이 기본 노출되지 않도록 차단
-     - 출퇴근 기록 저장 완료 즉시 이름 선택창을 다시 '미선택 상태'로 자동 초기화
+     - [순차 입력 유도] '본인 이름'을 먼저 선택해야만 근무타임·시작/종료시간·비고 입력칸이 활성화됨
+     - 출퇴근 기록 저장 완료 즉시 이름·시간·비고 입력창을 모두 초기 상태로 자동 리셋
      - 매니저 확인 완료('TRUE')된 기록은 직원이 임의로 수정하지 못하도록 자동 잠금
   4. 선택한 직원의 정산월 기준(매월 5일 ~ 익월 4일) 누적 출근일수 및 총 근무시간 실시간 집계
 ================================================================================
@@ -55,7 +54,7 @@ STORES = {
 CREDENTIALS_FILE = "credentials.json"
 PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 다음 달 4일)
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
-EMP_PLACEHOLDER = "🔽 본인 이름 선택"
+EMP_PLACEHOLDER = "🔽 이름 선택"
 
 
 # ------------------------------------------------------------------------------
@@ -301,7 +300,7 @@ with d_c2:
     )
 with d_c3:
     st.markdown(
-        '<div style="font-size:0.88rem; color:#475569;">💡 <b>신규 입력</b>: 아래에서 본인 이름·시간 입력 후 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
+        '<div style="font-size:0.88rem; color:#475569;">💡 <b>신규 입력</b>: 아래에서 본인 이름 선택 후 시간 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
         unsafe_allow_html=True,
     )
 
@@ -454,9 +453,13 @@ with top_right:
 # ==============================================================================
 # 하단 좌/우 영역: [좌] 2. 출퇴근 시간 입력/수정  |  [우] 3. 개인별 월 누적 근무시간 조회
 # ==============================================================================
-# 출퇴근 저장 직후 다음 사람을 위해 이름 선택창을 '미선택'으로 자동 리셋하는 플래그 처리
+if "form_reset_ver" not in st.session_state:
+    st.session_state["form_reset_ver"] = 0
+
+# 출퇴근 저장 직후 다음 사람을 위해 이름 선택창을 '미선택'으로 리셋하고 시간/비고 위젯 버전 갱신
 if st.session_state.get("reset_emp_selector", False):
     st.session_state["att_emp_selector"] = EMP_PLACEHOLDER
+    st.session_state["form_reset_ver"] += 1
     st.session_state["reset_emp_selector"] = False
 
 left_col, right_col = st.columns([1.5, 1.0])
@@ -510,7 +513,7 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        c_name, c1, c2, c3 = st.columns([1.05, 1.05, 0.95, 0.95])
+        c_name, c1, c2, c3 = st.columns([1.15, 1.0, 0.92, 0.92])
         with c_name:
             if mode == "기존 수정":
                 st.text_input("본인 이름", value=real_emp_name, disabled=True)
@@ -529,17 +532,34 @@ with left_col:
                     real_emp_name = ""
                     is_emp_selected = False
 
+        # [핵심] 본인 이름을 선택하지 않았거나(not is_emp_selected) 매니저 잠금(is_locked) 상태면 나머지 입력칸 모두 비활성화
+        inputs_disabled = is_locked or (not is_emp_selected)
+        w_key_sfx = f"{mode}_{target_sheet_row}_{st.session_state['form_reset_ver']}"
+
         with c1:
             shift_type = st.selectbox(
                 "근무 타임",
                 options=SHIFT_OPTIONS,
                 index=default_shift_idx,
-                disabled=is_locked,
+                disabled=inputs_disabled,
+                key=f"shift_{w_key_sfx}",
             )
         with c2:
-            start_t = st.time_input("시작시간", value=def_s, step=600, disabled=is_locked)
+            start_t = st.time_input(
+                "시작시간",
+                value=def_s,
+                step=600,
+                disabled=inputs_disabled,
+                key=f"start_{w_key_sfx}",
+            )
         with c3:
-            end_t = st.time_input("종료시간", value=def_e, step=600, disabled=is_locked)
+            end_t = st.time_input(
+                "종료시간",
+                value=def_e,
+                step=600,
+                disabled=inputs_disabled,
+                key=f"end_{w_key_sfx}",
+            )
 
         # 근무시간 자동 계산 (종료시간이 시작시간보다 빠르면 자정을 넘긴 익일 퇴근으로 자동 계산)
         dt_s = datetime.datetime.combine(sel_date, start_t)
@@ -551,11 +571,11 @@ with left_col:
         dec_hours = round(diff_mins / 60.0, 2)
 
         if not is_emp_selected:
-            st.warning("☝️ 먼저 **본인 이름**을 선택한 뒤 시작시간과 종료시간을 입력해 주세요.")
+            st.warning("☝️ 먼저 좌측의 **본인 이름 선택**을 눌러 이름을 고르면 시간 입력칸이 활성화됩니다.")
         elif diff_mins > 0:
             st.success(f"⏱️ 계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
         else:
-            st.warning("시작시간과 종료시간을 직접 입력해 주세요.")
+            st.warning("시작시간과 종료시간을 입력해 주세요.")
 
         st.markdown(
             """
@@ -570,7 +590,8 @@ with left_col:
             edit_reason = st.text_input(
                 "🚨 수정 사유 (필수 입력)",
                 placeholder="예: 퇴근 시간 입력 오타 정정",
-                disabled=is_locked,
+                disabled=inputs_disabled,
+                key=f"reason_{w_key_sfx}",
             )
             memo_val = str(old_record.get("비고", ""))
         else:
@@ -578,7 +599,8 @@ with left_col:
             memo_val = st.text_input(
                 "비고 / 특이사항 (선택)",
                 placeholder="예: 홀 마감 지원, 대타 등",
-                disabled=is_locked,
+                disabled=inputs_disabled,
+                key=f"memo_{w_key_sfx}",
             )
 
         can_submit = (
@@ -589,7 +611,7 @@ with left_col:
         )
         btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기"
 
-        # 저장 버튼 클릭 시 '통합근태DB' 시트에 추가(append) 또는 해당 행 업데이트(update) 후 이름 선택 자동 초기화
+        # 저장 버튼 클릭 시 '통합근태DB' 시트에 추가(append) 또는 해당 행 업데이트(update) 후 전체 입력칸 초기화
         if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
             now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             now_short = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
@@ -621,7 +643,7 @@ with left_col:
                 st.session_state["last_edited_sheet_row"] = None
                 st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str})이 저장되었습니다."
 
-            # 저장 직후 다음 직원이 앞 사람의 누적 근무시간을 보지 못하도록 이름 선택창 리셋 예약
+            # 저장 직후 다음 직원을 위해 이름 선택창 및 시간/비고 입력칸 전체 리셋 예약
             st.session_state["reset_emp_selector"] = True
             st.cache_data.clear()
             st.rerun()
