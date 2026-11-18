@@ -4,12 +4,12 @@
 [역할] 관리자/매니저 전용 '직원 · 시급/계좌 · 보건증 만료 관리 및 전자 근로계약서 발급' 페이지
 [주요 기능]
   1. 매니저 PIN 번호 잠금 해제
-  2. [신규] 재직 직원 보건증 만료일(D-30 이내 및 만료 경과) 자동 감지 경고 배너 및 텔레그램 알림 발송
-  3. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼 (보건증 만료일 입력 포함)
+  2. 재직 직원 보건증 만료일(D-30 이내 및 만료 경과) 자동 감지 경고 배너 및 텔레그램 알림 발송
+  3. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼 (정규직: 계약급여, 제세금 입력 시 계산급여 자동 산출)
   4. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
-     - 두 명부 모두 [입사일자, 상태(재직/퇴사), 메모, 보건증만료일] 컬럼 완벽 통일
-  5. [필수 선택 프로세스] 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창이 열리는 전자계약서 발급
-  6. [신규] 미서명('⏳ 서명대기') 계약서 이메일/텔레그램 링크 재발송 및 [🗑️ 대기 삭제] 버튼 제공
+     - 정규직 명부: [계약급여 - 제세금 = 계산급여] 자동 계산 및 기존 '최종급여' 데이터 완벽 호환
+  5. 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창이 열리는 전자계약서 발급
+  6. 미서명('⏳ 서명대기') 계약서 이메일 링크 재발송 및 [🗑️ 대기 삭제] 버튼 제공
 ================================================================================
 """
 
@@ -27,9 +27,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# ------------------------------------------------------------------------------
-# 환경변수 및 Streamlit Secrets 조회 함수
-# ------------------------------------------------------------------------------
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -39,9 +36,6 @@ def get_secret(key: str, default: str = ""):
     return os.getenv(key, default)
 
 
-# ------------------------------------------------------------------------------
-# 매장별 통합근태DB 시트 ID 및 매니저 PIN 설정
-# ------------------------------------------------------------------------------
 STORES = {
     "분당그릴": {
         "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
@@ -56,9 +50,9 @@ STORES = {
 
 CREDENTIALS_FILE = "credentials.json"
 
-# 파트타임 탭(11열)과 정규직 탭(12열)의 통일된 컬럼 순서 정의 ('보건증만료일' 추가)
+# 파트타임 탭(11열)과 정규직 탭(13열: 계약급여, 제세금, 계산급여 포함)의 컬럼 순서 정의
 PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
-REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "최종급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
+REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "제세금", "계산급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
 
 BANK_OPTIONS = [
     "KB국민", "신한은행", "우리은행", "하나은행", "NH농협", "IBK기업은행",
@@ -122,9 +116,6 @@ st.markdown(
 )
 
 
-# ------------------------------------------------------------------------------
-# 구글 시트 연결 및 데이터 정제 보조 함수들
-# ------------------------------------------------------------------------------
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -166,7 +157,6 @@ def format_ssn(ssn_str):
 
 
 def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str):
-    """Apps Script 웹앱을 통해 직원 이메일로 전자근로계약서 서명 링크를 재발송합니다."""
     webapp_url = get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
     if not webapp_url or not to_email or "@" not in to_email:
         return False, "이메일 주소 또는 웹앱 URL 미설정"
@@ -195,16 +185,13 @@ def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str):
         return False, str(e)
 
 
-# ------------------------------------------------------------------------------
-# '파트타임' 및 '정규직' 탭 데이터 로드 및 저장 함수
-# ------------------------------------------------------------------------------
 @st.cache_data(ttl=25, show_spinner="직원 명부(파트타임 · 정규직)를 불러오는 중...")
 def load_staff_tabs(db_id: str):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in db_ss.worksheets()]
 
-    def read_tab(tab_name: str, expected_cols: list):
+    def read_tab(tab_name: str, expected_cols: list, is_reg: bool = False):
         if tab_name not in titles:
             return pd.DataFrame(columns=expected_cols)
         ws = db_ss.worksheet(tab_name)
@@ -214,8 +201,20 @@ def load_staff_tabs(db_id: str):
             headers = [c.strip() for c in rows[0]]
             for r in rows[1:]:
                 d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
-                if d.get("이름"):
-                    out.append(d)
+                if not d.get("이름"):
+                    continue
+                # 정규직 기존 시트('최종급여'만 있던 구조)에서 '제세금'과 '계산급여' 자동 마이그레이션
+                if is_reg:
+                    c_pay = clean_int(d.get("계약급여", 0))
+                    old_net = clean_int(d.get("계산급여", 0)) or clean_int(d.get("최종급여", 0))
+                    tax_v = clean_int(d.get("제세금", 0))
+                    if tax_v == 0 and c_pay > 0 and 0 < old_net < c_pay:
+                        tax_v = c_pay - old_net
+                    calc_v = c_pay - tax_v if c_pay > 0 else old_net
+                    d["계약급여"] = str(c_pay) if c_pay > 0 else ""
+                    d["제세금"] = str(tax_v) if tax_v > 0 else "0"
+                    d["계산급여"] = str(calc_v) if calc_v > 0 else ""
+                out.append(d)
         df = pd.DataFrame(out)
         for col in expected_cols:
             if col not in df.columns:
@@ -226,8 +225,8 @@ def load_staff_tabs(db_id: str):
             df["은행명"] = df["은행명"].apply(normalize_bank_name)
         return df[expected_cols].copy()
 
-    df_part = read_tab("파트타임", PART_COLS)
-    df_reg = read_tab("정규직", REG_COLS)
+    df_part = read_tab("파트타임", PART_COLS, is_reg=False)
+    df_reg = read_tab("정규직", REG_COLS, is_reg=True)
     return df_part, df_reg
 
 
@@ -250,15 +249,22 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     p_ws.clear()
     p_ws.update(range_name="A1", values=[PART_COLS] + clean_p.values.tolist())
 
-    # 2) '정규직' 탭 저장
+    # 2) '정규직' 탭 저장 (계산급여 = 계약급여 - 제세금 자동 산출)
     r_ws = db_ss.worksheet("정규직")
     for c in REG_COLS:
         if c not in df_reg_edited.columns:
             df_reg_edited[c] = "재직" if c == "상태" else ""
     clean_r = df_reg_edited[REG_COLS].copy()
     clean_r["은행명"] = clean_r["은행명"].apply(normalize_bank_name)
-    clean_r["계약급여"] = clean_r["계약급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
-    clean_r["최종급여"] = clean_r["최종급여"].apply(lambda x: str(clean_int(x)) if clean_int(x) > 0 else "")
+
+    for idx, row in clean_r.iterrows():
+        c_val = clean_int(row.get("계약급여", 0))
+        t_val = clean_int(row.get("제세금", 0))
+        calc_val = max(0, c_val - t_val)
+        clean_r.at[idx, "계약급여"] = str(c_val) if c_val > 0 else ""
+        clean_r.at[idx, "제세금"] = str(t_val)
+        clean_r.at[idx, "계산급여"] = str(calc_val) if calc_val > 0 else ""
+
     clean_r["주민번호"] = clean_r["주민번호"].apply(format_ssn)
     clean_r["상태"] = clean_r["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")
     clean_r = clean_r.fillna("").astype(str)
@@ -305,7 +311,7 @@ st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 
 df_part, df_reg = load_staff_tabs(store_cfg["db_id"])
 
 # =========================================================================
-# [신규 기능] 재직 직원 보건증 만료일(D-30 이내 및 경과) 자동 감지 경고 배너
+# 재직 직원 보건증 만료일(D-30 이내 및 경과) 자동 감지 경고 배너
 # =========================================================================
 today_dt = datetime.date.today()
 health_alerts = []
@@ -364,7 +370,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
         new_join_date = fc1.date_input("입사일자", value=datetime.date.today())
         new_name = fc2.text_input("이름 (계좌 예금주명)*", placeholder="예: 홍길동")
         if is_reg_new:
-            new_wage = fc3.number_input("계약 월급여 (세전, 원)", min_value=0, value=3000000, step=50000)
+            new_wage = fc3.number_input("계약 월급여 (세전, 원)", min_value=0, value=3500000, step=50000)
         else:
             new_wage = fc3.number_input("시급 (원)", min_value=0, value=12000, step=100)
         new_ssn = fc4.text_input("주민등록번호", placeholder="숫자 13자리 입력")
@@ -381,10 +387,10 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
             placeholder="예: 2027-11-18",
         )
         if is_reg_new:
-            new_net_wage = mc2.number_input("실지급 최종급여 (공제 후, 원)", min_value=0, value=int(new_wage), step=10000)
+            new_tax = mc2.number_input("월 제세금 (4대보험·세금 공제액, 원)", min_value=0, value=242320, step=1000)
             new_memo = mc3.text_input("메모 / 직책 · 특이사항", placeholder="예: 주방 실장")
         else:
-            new_net_wage = 0
+            new_tax = 0
             new_memo = mc3.text_input(
                 "메모 / 실근무자 이름 (예금주와 실제 출근자가 다를 때만 실근무자 이름 입력)",
                 placeholder="예: 강성원",
@@ -396,6 +402,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                 st.error("직원 이름을 입력해 주세요.")
             else:
                 if is_reg_new:
+                    calc_pay = max(0, int(new_wage) - int(new_tax))
                     new_row = pd.DataFrame([{
                         "입사일자": new_join_date.strftime("%Y-%m-%d"),
                         "이름": clean_nm,
@@ -403,7 +410,8 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                         "은행명": new_bank,
                         "계좌번호": new_acct.strip(),
                         "계약급여": str(int(new_wage)),
-                        "최종급여": str(int(new_net_wage if new_net_wage > 0 else new_wage)),
+                        "제세금": str(int(new_tax)),
+                        "계산급여": str(calc_pay),
                         "상태": "재직",
                         "메모": new_memo.strip(),
                         "이메일": new_email.strip(),
@@ -462,12 +470,15 @@ edited_part = st.data_editor(
 )
 
 # =========================================================================
-# 2. 정규직 직원 명부 편집 표
+# 2. 정규직 직원 명부 편집 표 (계약급여 - 제세금 = 계산급여 자동 산출)
 # =========================================================================
-st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 · 계좌 · 보건증 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 - 제세금 = 계산급여 자동 산출)</div>', unsafe_allow_html=True)
+st.caption("💡 **계약급여**와 매월 고정 공제되는 **제세금**(4대보험+소득세)을 입력하면 **계산급여**(고정 실수령액)가 자동 계산됩니다.")
+
 df_reg_disp = df_reg.copy()
 df_reg_disp["계약급여"] = df_reg_disp["계약급여"].apply(clean_int)
-df_reg_disp["최종급여"] = df_reg_disp["최종급여"].apply(clean_int)
+df_reg_disp["제세금"] = df_reg_disp["제세금"].apply(clean_int)
+df_reg_disp["계산급여"] = (df_reg_disp["계약급여"] - df_reg_disp["제세금"]).clip(lower=0)
 
 edited_reg = st.data_editor(
     df_reg_disp,
@@ -482,7 +493,8 @@ edited_reg = st.data_editor(
         "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
         "계좌번호": st.column_config.TextColumn("계좌번호"),
         "계약급여": st.column_config.NumberColumn("계약급여 (원)", format="%,d"),
-        "최종급여": st.column_config.NumberColumn("최종급여 (원)", format="%,d"),
+        "제세금": st.column_config.NumberColumn("제세금 (공제액)", format="%,d"),
+        "계산급여": st.column_config.NumberColumn("계산급여 (계약-제세금)", format="%,d", disabled=True),
         "상태": st.column_config.SelectboxColumn("상태 (퇴사 시 정산 제외)", options=["재직", "퇴사"], default="재직"),
         "메모": st.column_config.TextColumn("메모 (직책/퇴사일)"),
         "이메일": st.column_config.TextColumn("이메일"),
@@ -499,7 +511,7 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 
         st.rerun()
 
 # ==============================================================================
-# 📝 전자 근로계약서 발급 및 서명 현황 관리 (1단계 직원 선택 시에만 2단계 입력폼 표시)
+# 📝 전자 근로계약서 발급 및 서명 현황 관리
 # ==============================================================================
 import datetime as _dt
 from contract_utils import create_new_contract, load_all_contracts, delete_contract_by_id
@@ -691,7 +703,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                 st.code(sign_url, language="text")
 
 # ------------------------------------------------------------------------------
-# 최근 발급된 계약서 현황 리스트 (미서명 건 링크 이메일 재발송 & 대기 삭제 기능 포함)
+# 최근 발급된 계약서 현황 리스트
 # ------------------------------------------------------------------------------
 st.markdown("#### 📋 발급 및 서명 완료 목록")
 try:
