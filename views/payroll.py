@@ -6,8 +6,10 @@
   1. 관리자 비밀번호(ADMIN_PASSWORD) 보안 로그인 잠금
   2. 매월 5일 기준 정산 기간(전월 5일 ~ 당월 4일) 자동 계산 및 매니저 확인('TRUE') 근태 집계
      - 정규직 명부에서 상태가 '퇴사'인 직원은 급여 정산 대상에서 자동 제외
-     - 파트타임 총급여 기준 세율 자동 적용 (100만 원 이상 3.3%, 미만 0.9%) 및 실시간 표 편집
-  3. 정산 확정 및 원클릭 자동화 (급여히스토리 백업, 대량이체 엑셀, 세무사 보고, 명세서 발송)
+     - [신규] 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용 버튼
+  3. 정산 확정 및 원클릭 자동화:
+     - [개선] Apps Script 웹앱 연동으로 세무사(.txt 첨부) 및 직원 급여명세서 이메일 100% 안정 발송
+     - 급여히스토리 시트 백업, 은행 대량이체 엑셀 다운로드, 텔레그램 브리핑 전송
   4. 경영 분석 대시보드 탭 (월별 총매출 대비 인건비율, 시간당 매출 SPLH, 전년 동월 대비 YoY)
 ================================================================================
 """
@@ -15,6 +17,8 @@
 import os
 import io
 import re
+import json
+import base64
 import datetime
 import smtplib
 import requests
@@ -63,6 +67,7 @@ CREDENTIALS_FILE = "credentials.json"
 
 SENDER_EMAIL = get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com")
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
+DRIVE_UPLOAD_WEBAPP_URL = get_secret("DRIVE_UPLOAD_WEBAPP_URL", "")
 TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
@@ -366,7 +371,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 records.append(row_dict)
         return records
 
-    # 2) '파트타임' 탭 로드 (해당 기간 근무시간이 있으면 퇴사자라도 마지막 급여 자동 산출)
+    # 2) '파트타임' 탭 로드
     part_records = read_tab_records("파트타임")
     part_list = []
     processed_lookup_names = set()
@@ -671,7 +676,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 
 
 # =========================================================================
-# 5. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 생성 및 발송 함수
+# 5. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / Apps Script 이메일 발송
 # =========================================================================
 def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
     rows = []
@@ -774,7 +779,7 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
     else:
         contract = clean_int(row.get("계약급여", 0))
         net = clean_int(row.get("최종급여", 0))
-        deduct = contract - net
+        deduct = max(0, contract - net)
         return (
             f"🥩 [{store_name}] {end_dt.year}년 {end_dt.month}월분 급여명세서\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -790,10 +795,42 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
 
 
 def send_email_simple(to_email: str, subject: str, body_text: str, attachment_bytes=None, attachment_name=None):
+    """
+    [Apps Script 통합 이메일 발송 함수]
+    - 1순위: DRIVE_UPLOAD_WEBAPP_URL(Apps Script 웹앱)을 통해 SMTP 포트 차단 없이 안정 발송
+    - 2순위(백업): 웹앱 URL 미설정 시 기존 Gmail SMTP 방식으로 폴백
+    """
+    if not to_email or "@" not in to_email:
+        raise ValueError("유효한 수신자 이메일 주소가 없습니다.")
+
+    webapp_url = DRIVE_UPLOAD_WEBAPP_URL.strip()
+    if webapp_url:
+        payload = {
+            "action": "send_email",
+            "toEmail": to_email.strip(),
+            "subject": subject,
+            "body": body_text,
+        }
+        if attachment_bytes and attachment_name:
+            payload["filename"] = attachment_name
+            payload["mimeType"] = "text/plain" if attachment_name.endswith(".txt") else "application/octet-stream"
+            payload["base64Data"] = base64.b64encode(attachment_bytes).decode("utf-8")
+
+        res = requests.post(
+            webapp_url,
+            data=json.dumps(payload),
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            allow_redirects=True,
+            timeout=30,
+        )
+        res_json = res.json()
+        if not res_json.get("ok"):
+            raise RuntimeError(f"Apps Script 메일 발송 실패: {res_json.get('error')}")
+        return
+
+    # 백업: 기존 SMTP 방식
     if not SENDER_APP_PASSWORD:
-        raise ValueError("SENDER_APP_PASSWORD(구글 앱 비밀번호)가 설정되지 않았습니다.")
-    if not to_email:
-        raise ValueError("수신자 이메일 주소가 비어 있습니다.")
+        raise ValueError("DRIVE_UPLOAD_WEBAPP_URL 또는 SENDER_APP_PASSWORD가 설정되지 않았습니다.")
 
     msg = MIMEMultipart()
     msg["From"] = SENDER_EMAIL
@@ -880,6 +917,77 @@ with tab_calc:
                     st.markdown(f"- {w}")
 
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
+
+        # ---------------------------------------------------------------------
+        # [신규 기능] 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
+        # ---------------------------------------------------------------------
+        if "prorated_overrides" not in st.session_state:
+            st.session_state["prorated_overrides"] = {}
+        if "ins_editor_ver" not in st.session_state:
+            st.session_state["ins_editor_ver"] = 0
+
+        if not df_ins_raw.empty:
+            total_period_days = (end_dt - start_dt).days + 1
+            with st.expander("🧮 정규직 중도 입·퇴사자 일할 계산기 (클릭하여 열기)", expanded=False):
+                st.caption("월 중간에 입사하거나 퇴사한 정규직 직원의 근무일수만큼 일할 계산하여 아래 표에 즉시 반영합니다.")
+                pc1, pc2, pc3, pc4 = st.columns([1.2, 1.0, 1.0, 1.1])
+                reg_names = df_ins_raw["이름"].tolist()
+                sel_p_emp = pc1.selectbox("대상 정규직 직원", options=reg_names, key="prorate_emp_sel")
+                p_emp_row = df_ins_raw[df_ins_raw["이름"] == sel_p_emp].iloc[0]
+                base_c_pay = clean_int(p_emp_row.get("계약급여", 0))
+                base_n_pay = clean_int(p_emp_row.get("최종급여", 0))
+
+                p_base_days = pc2.number_input(
+                    "기준 총일수 (일)",
+                    min_value=28,
+                    max_value=31,
+                    value=int(total_period_days) if 28 <= total_period_days <= 31 else 30,
+                    step=1,
+                    key="prorate_base_days",
+                )
+                p_work_days = pc3.number_input(
+                    "실근무 일수 (일)",
+                    min_value=1,
+                    max_value=31,
+                    value=15,
+                    step=1,
+                    key="prorate_work_days",
+                )
+                p_method = pc4.selectbox(
+                    "계산 기준",
+                    ["실수령액(최종급여) 일할", "세전(계약급여) 일할"],
+                    key="prorate_method",
+                )
+
+                if p_method.startswith("실수령액"):
+                    calc_p_pay = int(round((base_n_pay / p_base_days) * p_work_days, -1))
+                    base_ref_pay = base_n_pay
+                else:
+                    calc_p_pay = int(round((base_c_pay / p_base_days) * p_work_days, -1))
+                    base_ref_pay = base_c_pay
+
+                st.info(
+                    f"💡 **[{sel_p_emp}]** 님 일할 계산 결과: 기준액 `{base_ref_pay:,}원` × (`{p_work_days}일` / `{p_base_days}일`) "
+                    f"= **{calc_p_pay:,}원** *(원 단위 반올림)*"
+                )
+                if st.button(f"⚡ [{sel_p_emp}] 님 최종급여를 {calc_p_pay:,}원으로 아래 표에 즉시 적용", type="primary", use_container_width=True):
+                    st.session_state["prorated_overrides"][sel_p_emp] = {
+                        "최종급여": calc_p_pay,
+                        "비고": f"일할계산({p_work_days}/{p_base_days}일)",
+                    }
+                    st.session_state["ins_editor_ver"] += 1
+                    st.rerun()
+
+            # 일할 계산 오버라이드가 있으면 원본 데이터프레임에 먼저 반영
+            for idx, r in df_ins_raw.iterrows():
+                nm = r["이름"]
+                if nm in st.session_state["prorated_overrides"]:
+                    ov = st.session_state["prorated_overrides"][nm]
+                    df_ins_raw.at[idx, "최종급여"] = ov["최종급여"]
+                    old_b = str(df_ins_raw.at[idx, "비고"]).strip()
+                    if ov["비고"] not in old_b:
+                        df_ins_raw.at[idx, "비고"] = f"{old_b} {ov['비고']}".strip()
+
         if df_ins_raw.empty:
             st.caption("ℹ️ '정규직' 탭에 재직 중인 직원이 없습니다.")
             df_ins_edited = pd.DataFrame(
@@ -890,7 +998,7 @@ with tab_calc:
                 df_ins_raw,
                 num_rows="dynamic",
                 use_container_width=True,
-                key=f"editor_ins_{selected_store}",
+                key=f"editor_ins_{selected_store}_{st.session_state['ins_editor_ver']}",
                 column_config={
                     "계약급여": st.column_config.NumberColumn("계약급여", format="%,d"),
                     "그외비용": st.column_config.NumberColumn("그외비용", format="%,d"),
@@ -1069,7 +1177,7 @@ with tab_calc:
                 )
 
                 st.divider()
-                st.markdown("**🚀 일괄 정산 확정**")
+                st.markdown("**🚀 일괄 정산 확정 (Apps Script 메일 연동)**")
                 send_to_staff = st.checkbox(
                     "직원 개별 급여명세서 동시 발송 (이메일/텔레그램)",
                     value=True,
@@ -1301,7 +1409,7 @@ with tab_trend:
 
             f_col1, _ = st.columns([1, 3])
             with f_col1:
-                years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정규직" if "정규직" in df_staff.columns else "정산월"].unique()])))
+                years = sorted(list(set(["전체"] + [f"20{m[:2]}년" for m in df_staff["정산월"].unique()])))
                 sel_year = st.selectbox("조회 연도", years, index=0)
 
             df_filtered = df_staff.copy()
