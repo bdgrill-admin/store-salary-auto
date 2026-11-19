@@ -36,6 +36,7 @@ def get_secret(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+@st.cache_resource
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -169,6 +170,7 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
         "tg_alert_health": "TRUE",
         "tg_alert_contract": "TRUE",
         "tg_alert_payroll": "TRUE",
+        "tg_alert_reg_change": "TRUE",
     }
 
 
