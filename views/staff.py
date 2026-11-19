@@ -2,52 +2,22 @@
 ================================================================================
 [파일명] views/staff.py
 [역할] 관리자/매니저 전용 '직원 · 시급/계좌 · 보건증 만료 관리 및 전자 근로계약서 발급' 페이지
-[주요 기능]
-  1. '환경설정' 탭과 실시간 연동 (매니저 PIN, 보건증 알림 기준일, 계약서 기본 근무조건, 텔레그램/이메일 설정)
-  2. 재직 직원 보건증 만료일(설정 기준일 이내 및 경과) 자동 감지 경고 배너 및 텔레그램 알림 발송
-  3. 신규 직원(파트타임 / 정규직 선택) 통합 간편 등록 폼
-  4. 파트타임 / 정규직 직원 명부 표(data_editor) 조회, 수정 및 시트 저장
-  5. 1단계에서 직원을 반드시 선택해야만 하단 근로조건 입력창이 열리는 전자계약서 발급
-  6. 미서명('⏳ 서명대기') 계약서 이메일 링크 재발송 및 [🗑️ 대기 삭제] 버튼 제공
 ================================================================================
 """
 
-import os
 import re
 import json
 import datetime
 import requests
 import pandas as pd
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-from dotenv import load_dotenv
+from store_registry import (
+    load_all_stores,
+    load_store_settings,
+    get_gspread_client,
+)
 
-load_dotenv()
-
-
-def get_secret(key: str, default: str = ""):
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-    return os.getenv(key, default)
-
-
-STORES = {
-    "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
-        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-    },
-    # 향후 감동한점 오픈 시 주석 해제 후 시트 ID 입력
-    # "감동한점": {
-    #     "db_id": "여기에_감동한점_통합근태DB_ID",
-    #     "manager_pin": get_secret("MANAGER_PIN_GAMDONG", "0524"),
-    # },
-}
-
-CREDENTIALS_FILE = "credentials.json"
+STORES = load_all_stores()
 
 PART_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
 REG_COLS = ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "계약급여", "제세금", "계산급여", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
@@ -114,46 +84,35 @@ st.markdown(
 )
 
 
-def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
+def clean_int(val):
+    if pd.isna(val) or val is None or str(val).strip() == "":
+        return 0
+    digits = re.sub(r"[^\d.-]", "", str(val))
     try:
-        if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            return gspread.authorize(creds)
-    except Exception:
-        pass
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
-    return gspread.authorize(creds)
+        return int(round(float(digits)))
+    except ValueError:
+        return 0
 
 
-@st.cache_data(ttl=25, show_spinner="환경설정 및 직원 명부를 불러오는 중...")
-def load_staff_and_settings(db_id: str):
+def normalize_bank_name(bank_str: str) -> str:
+    b = str(bank_str).strip()
+    if not b:
+        return ""
+    return BANK_ALIAS_MAP.get(b, b)
+
+
+def format_ssn(ssn_str):
+    digits = re.sub(r"\D", "", str(ssn_str).strip())
+    if len(digits) == 13:
+        return f"{digits[:6]}-{digits[6:]}"
+    return str(ssn_str).strip()
+
+
+@st.cache_data(ttl=25, show_spinner="직원 명부를 불러오는 중...")
+def load_staff_sheets(db_id: str):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in db_ss.worksheets()]
-
-    # 환경설정 탭 로드
-    cfg = {
-        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-        "health_alert_days": "30",
-        "store_title": "분당그릴",
-        "default_work_start": "17:00",
-        "default_work_end": "22:00",
-        "default_break_min": "30",
-        "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
-        "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
-        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
-        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
-    }
-    if "환경설정" in titles:
-        ws_cfg = db_ss.worksheet("환경설정")
-        for r in ws_cfg.get_all_values()[1:]:
-            if len(r) >= 2 and r[0].strip() and r[1].strip():
-                cfg[r[0].strip()] = r[1].strip()
 
     def read_tab(tab_name: str, expected_cols: list, is_reg: bool = False):
         if tab_name not in titles:
@@ -190,31 +149,7 @@ def load_staff_and_settings(db_id: str):
 
     df_part = read_tab("파트타임", PART_COLS, is_reg=False)
     df_reg = read_tab("정규직", REG_COLS, is_reg=True)
-    return df_part, df_reg, cfg
-
-
-def clean_int(val):
-    if pd.isna(val) or val is None or str(val).strip() == "":
-        return 0
-    digits = re.sub(r"[^\d.-]", "", str(val))
-    try:
-        return int(round(float(digits)))
-    except ValueError:
-        return 0
-
-
-def normalize_bank_name(bank_str: str) -> str:
-    b = str(bank_str).strip()
-    if not b:
-        return ""
-    return BANK_ALIAS_MAP.get(b, b)
-
-
-def format_ssn(ssn_str):
-    digits = re.sub(r"\D", "", str(ssn_str).strip())
-    if len(digits) == 13:
-        return f"{digits[:6]}-{digits[6:]}"
-    return str(ssn_str).strip()
+    return df_part, df_reg
 
 
 def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str, app_cfg: dict):
@@ -263,7 +198,7 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     clean_p = clean_p.fillna("").astype(str)
     clean_p = clean_p[clean_p["이름"].str.strip() != ""]
     p_ws.clear()
-    p_ws.update(range_name="A1", values=[PART_COLS] + clean_p.values.tolist())
+    p_ws.update(range_name="A1", values=[PART_COLS] + clean_p.values.tolist(), value_input_option="RAW")
 
     r_ws = db_ss.worksheet("정규직")
     for c in REG_COLS:
@@ -285,12 +220,9 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     clean_r = clean_r.fillna("").astype(str)
     clean_r = clean_r[clean_r["이름"].str.strip() != ""]
     r_ws.clear()
-    r_ws.update(range_name="A1", values=[REG_COLS] + clean_r.values.tolist())
+    r_ws.update(range_name="A1", values=[REG_COLS] + clean_r.values.tolist(), value_input_option="RAW")
 
 
-# =========================================================================
-# 상단 헤더 및 환경설정 연동 비밀번호 잠금 확인
-# =========================================================================
 h1, h2, h3 = st.columns([2.6, 0.9, 0.7], vertical_alignment="center")
 with h1:
     st.markdown('<div class="app-title">👥 직원 · 시급/계좌 관리</div>', unsafe_allow_html=True)
@@ -302,7 +234,8 @@ with h3:
         st.rerun()
 
 store_cfg = STORES[selected_store]
-df_part, df_reg, app_cfg = load_staff_and_settings(store_cfg["db_id"])
+app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
+df_part, df_reg = load_staff_sheets(store_cfg["db_id"])
 active_mgr_pin = app_cfg.get("manager_pin") or store_cfg["manager_pin"]
 
 is_unlocked = st.session_state.get("authenticated", False) or st.session_state.get("staff_mgr_unlocked", False)
@@ -325,9 +258,6 @@ if not is_unlocked:
 
 st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 뒤 → **Step 2.** 하단 전자 근로계약서에서 해당 직원을 선택하면 기본정보가 자동으로 연동됩니다.")
 
-# =========================================================================
-# 재직 직원 보건증 만료일(환경설정 기준일 이내 및 경과) 자동 감지 경고 배너
-# =========================================================================
 today_dt = datetime.date.today()
 alert_threshold_days = int(app_cfg.get("health_alert_days", "30") or 30)
 health_alerts = []
@@ -375,9 +305,6 @@ if health_alerts:
                 else:
                     st.warning("환경설정에서 텔레그램 토큰과 채팅 ID를 확인해 주세요.")
 
-# =========================================================================
-# 신규 직원(파트타임 / 정규직) 통합 간편 등록 폼
-# =========================================================================
 with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", expanded=False):
     emp_type_choice = st.radio("등록할 직원 구분", ["파트타임 (시급제)", "정규직 (월급제)"], horizontal=True)
     is_reg_new = emp_type_choice.startswith("정규직")
@@ -399,10 +326,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
         new_tg = fc8.text_input("텔레그램 ID (선택)", placeholder="숫자 ID")
 
         mc1, mc2, mc3 = st.columns([1.0, 1.1, 2.2])
-        new_health_exp = mc1.text_input(
-            "보건증 만료일 (선택)",
-            placeholder="예: 2027-11-18",
-        )
+        new_health_exp = mc1.text_input("보건증 만료일 (선택)", placeholder="예: 2027-11-18")
         if is_reg_new:
             new_tax = mc2.number_input("월 제세금 (4대보험·세금 공제액, 원)", min_value=0, value=242320, step=1000)
             new_memo = mc3.text_input("메모 / 직책 · 특이사항", placeholder="예: 주방 실장")
@@ -458,9 +382,6 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                 st.cache_data.clear()
                 st.rerun()
 
-# =========================================================================
-# 1. 파트타임 직원 명부 편집 표
-# =========================================================================
 st.markdown('<div class="section-title">1. 파트타임 직원 명부 (시급 · 계좌 · 보건증 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
 df_part_disp = df_part.copy()
 df_part_disp["시급"] = df_part_disp["시급"].apply(clean_int)
@@ -486,9 +407,6 @@ edited_part = st.data_editor(
     },
 )
 
-# =========================================================================
-# 2. 정규직 직원 명부 편집 표
-# =========================================================================
 st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 - 제세금 = 계산급여 자동 산출)</div>', unsafe_allow_html=True)
 st.caption("💡 **계약급여**와 매월 고정 공제되는 **제세금**(4대보험+소득세)을 입력하면 **계산급여**(고정 실수령액)가 자동 계산됩니다.")
 
@@ -528,7 +446,7 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 
         st.rerun()
 
 # ==============================================================================
-# 📝 전자 근로계약서 발급 및 서명 현황 관리 ('환경설정' 기본 근무조건 자동 연동)
+# 📝 전자 근로계약서 발급 및 서명 현황 관리
 # ==============================================================================
 import datetime as _dt
 from contract_utils import create_new_contract, load_all_contracts, delete_contract_by_id
@@ -598,7 +516,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
         "계약 대상 직원 선택",
         options=staff_options,
         index=0,
-        key="c_staff_selector",
+        key=f"c_staff_selector_{selected_store}",
         label_visibility="collapsed",
     )
 
@@ -630,7 +548,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
         else:
             st.info("ℹ️ 미등록 신규 입사자 직접 입력 모드입니다. 가급적 상단 명부에 먼저 등록하신 뒤 선택하시는 것을 권장합니다.")
 
-        k_sfx = selected_staff_label
+        k_sfx = f"{selected_store}_{selected_staff_label}"
 
         c_col1, c_col2, c_col3 = st.columns(3)
         with c_col1:
@@ -668,7 +586,6 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             c_bonus = st.text_input("상여금", value="없음", key=f"new_c_bonus_{k_sfx}")
             c_other_pay = st.text_input("기타급여(제수당 등)", value="없음", key=f"new_c_other_{k_sfx}")
 
-        # 환경설정에서 지정한 기본 근무시간·휴게시간·업무내용 자동 적용
         with c_col3:
             c_w_start = st.text_input(
                 "소정근로 시작시간",
@@ -704,7 +621,6 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             key=f"new_c_ins_{k_sfx}",
         )
 
-        # [추가] 비밀유지 및 경업금지 서약서 동시 징구 선택 체크박스
         c_include_nda = st.checkbox(
             "🔒 비밀유지 및 경업금지 서약서 함께 받기 (레시피·숙성법·원가·거래처 보호 및 퇴직 후 2년 경업금지)",
             value=(prefill.get("구분") == "정규직"),
@@ -744,9 +660,6 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                 st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서{nda_msg} 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
                 st.code(sign_url, language="text")
 
-# ------------------------------------------------------------------------------
-# 최근 발급된 계약서 현황 리스트
-# ------------------------------------------------------------------------------
 st.markdown("#### 📋 발급 및 서명 완료 목록")
 try:
     all_contracts = load_all_contracts(st.secrets)
@@ -758,12 +671,13 @@ try:
             emp_nm = item.get("직원명", "")
             is_done = item.get("상태") == "서명완료"
             status_badge = "✅ 서명완료" if is_done else "⏳ 서명대기"
+            nda_badge = " · 🔒 비밀유지서약포함" if str(item.get("비밀유지서약", "")).upper() == "Y" else ""
             link_url = f"{APP_BASE_URL}?contract_id={cid_val}"
 
             with st.container(border=True):
                 r1, r2, r3 = st.columns([2.8, 2.2, 2.2], vertical_alignment="center")
                 with r1:
-                    st.markdown(f"**{emp_nm}** · {status_badge} ({item.get('계약유형')})")
+                    st.markdown(f"**{emp_nm}** · {status_badge}{nda_badge} ({item.get('계약유형')})")
                     st.caption(f"입사일: {item.get('근로개시일')} | {item.get('임금구분')} {item.get('금액')}원 | 생성: {item.get('생성일시')}")
                 with r2:
                     if is_done:
