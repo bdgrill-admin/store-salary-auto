@@ -252,7 +252,8 @@ def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values:
         f"• 구분: {row_values[2]} ({row_values[3]})\n"
         f"• 사유: {row_values[4] or '없음'}"
     )
-    send_telegram_notice(app_cfg, store_key, msg)
+    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
+        send_telegram_notice(app_cfg, store_key, msg)
 
 
 def update_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, row_values: list):
@@ -267,7 +268,8 @@ def update_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: 
         f"• 변경내용: {row_values[2]} ({row_values[3]})\n"
         f"• 사유: {row_values[4] or '없음'}"
     )
-    send_telegram_notice(app_cfg, store_key, msg)
+    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
+        send_telegram_notice(app_cfg, store_key, msg)
 
 
 def delete_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, summary_str: str):
@@ -276,7 +278,8 @@ def delete_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: 
 
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     msg = f"🗑️ [{store_title} 정규직 근태변동 삭제]\n• 삭제된 내역: {summary_str}"
-    send_telegram_notice(app_cfg, store_key, msg)
+    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
+        send_telegram_notice(app_cfg, store_key, msg)
 
 
 @st.cache_resource
