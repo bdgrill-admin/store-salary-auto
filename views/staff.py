@@ -152,6 +152,36 @@ def load_staff_sheets(db_id: str):
     return df_part, df_reg
 
 
+def _send_telegram_msg(app_cfg: dict, text: str):
+    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+    chat_id = app_cfg.get("telegram_chat_id", "").strip()
+    if bot_token and chat_id:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=4,
+            )
+        except Exception:
+            pass
+
+
+def notify_new_part_staff(emp_name: str, join_date_str: str, wage: int, memo: str, app_cfg: dict, store_key: str):
+    """신규 파트타임 직원 등록 시 대표님 텔레그램으로 입사 및 시급 알림을 전송합니다."""
+    if app_cfg.get("tg_alert_wage_change", "TRUE").upper() != "TRUE":
+        return
+
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    memo_line = f"\n• 메모/실근무자: {memo}" if memo else ""
+    msg = (
+        f"🆕 [{store_title} 신규 파트타임 등록 알림]\n"
+        f"• 성명: {emp_name}\n"
+        f"• 입사일자: {join_date_str}\n"
+        f"• 책정 시급: {wage:,}원{memo_line}"
+    )
+    _send_telegram_msg(app_cfg, msg)
+
+
 def notify_part_wage_changes(df_old: pd.DataFrame, df_new: pd.DataFrame, app_cfg: dict, store_key: str):
     """파트타임 명부 저장 시 시급이 변경된 직원이 있으면 대표님 텔레그램으로 즉시 알림을 전송합니다."""
     if app_cfg.get("tg_alert_wage_change", "TRUE").upper() != "TRUE":
@@ -177,19 +207,9 @@ def notify_part_wage_changes(df_old: pd.DataFrame, df_new: pd.DataFrame, app_cfg
     if not changes:
         return
 
-    bot_token = app_cfg.get("telegram_bot_token", "").strip()
-    chat_id = app_cfg.get("telegram_chat_id", "").strip()
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
-    if bot_token and chat_id:
-        msg = f"💵 [{store_title} 파트타임 시급 변경 알림]\n" + "\n".join(changes)
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": msg},
-                timeout=4,
-            )
-        except Exception:
-            pass
+    msg = f"💵 [{store_title} 파트타임 시급 변경 알림]\n" + "\n".join(changes)
+    _send_telegram_msg(app_cfg, msg)
 
 
 def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str, app_cfg: dict):
@@ -382,10 +402,11 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
             if not clean_nm:
                 st.error("직원 이름을 입력해 주세요.")
             else:
+                join_str = new_join_date.strftime("%Y-%m-%d")
                 if is_reg_new:
                     calc_pay = max(0, int(new_wage) - int(new_tax))
                     new_row = pd.DataFrame([{
-                        "입사일자": new_join_date.strftime("%Y-%m-%d"),
+                        "입사일자": join_str,
                         "이름": clean_nm,
                         "주민번호": format_ssn(new_ssn),
                         "은행명": new_bank,
@@ -403,7 +424,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                     save_staff_tabs(store_cfg["db_id"], df_part, updated_reg)
                 else:
                     new_row = pd.DataFrame([{
-                        "입사일자": new_join_date.strftime("%Y-%m-%d"),
+                        "입사일자": join_str,
                         "이름": clean_nm,
                         "주민번호": format_ssn(new_ssn),
                         "은행명": new_bank,
@@ -417,6 +438,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                     }])
                     updated_part = pd.concat([df_part, new_row], ignore_index=True)
                     save_staff_tabs(store_cfg["db_id"], updated_part, df_reg)
+                    notify_new_part_staff(clean_nm, join_str, int(new_wage), new_memo.strip(), app_cfg, selected_store)
 
                 st.success(f"🎉 [{clean_nm}] 님이 신규 등록되었습니다! 아래 전자 근로계약서에서 직원을 선택해 계약서를 발급하세요.")
                 st.cache_data.clear()
