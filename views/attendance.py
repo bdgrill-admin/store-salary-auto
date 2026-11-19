@@ -19,6 +19,8 @@ from store_registry import (
 STORES = load_all_stores()
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
+REG_CHANGE_TYPES = ["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"]
+REG_CHANGE_UNITS = ["1일", "0.5일 (반차)", "시간 단위 (사유란 기재)"]
 
 
 def apply_clean_style():
@@ -150,6 +152,20 @@ def format_date_with_weekday(d_str: str) -> str:
         return str(d_str)[5:] if len(str(d_str)) >= 10 else str(d_str)
 
 
+def send_telegram_notice(app_cfg: dict, store_key: str, text: str):
+    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+    chat_id = app_cfg.get("telegram_chat_id", "").strip()
+    if bot_token and chat_id:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=4,
+            )
+        except Exception:
+            pass
+
+
 @st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
 def load_db_sheets(db_id: str):
     gc = get_gspread_client()
@@ -189,9 +205,10 @@ def load_regular_changes(db_id: str) -> pd.DataFrame:
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정직원근태변동" not in titles:
+    tab_name = "정규직근태변동" if "정규직근태변동" in titles else ("정직원근태변동" if "정직원근태변동" in titles else "")
+    if not tab_name:
         return pd.DataFrame()
-    ws = ss.worksheet("정직원근태변동")
+    ws = ss.worksheet(tab_name)
     rows = ws.get_all_values()
     if len(rows) < 2:
         return pd.DataFrame()
@@ -205,40 +222,61 @@ def load_regular_changes(db_id: str) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values: list):
+def _get_or_create_reg_change_ws(db_id: str):
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정직원근태변동" not in titles:
-        ws = ss.add_worksheet(title="정직원근태변동", rows=500, cols=8)
-        ws.append_row(
-            ["발생일", "이름", "구분", "일수_시간", "상세메모", "정산반영여부", "등록일시"],
-            value_input_option="RAW",
-        )
-    else:
+    if "정규직근태변동" in titles:
+        return ss.worksheet("정규직근태변동")
+    if "정직원근태변동" in titles:
         ws = ss.worksheet("정직원근태변동")
+        ws.update_title("정규직근태변동")
+        return ws
+    ws = ss.add_worksheet(title="정규직근태변동", rows=500, cols=8)
+    ws.append_row(
+        ["발생일", "이름", "구분", "일수_시간", "상세메모", "정산반영여부", "등록일시"],
+        value_input_option="RAW",
+    )
+    return ws
 
+
+def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values: list):
+    ws = _get_or_create_reg_change_ws(db_id)
     ws.append_row(row_values, value_input_option="USER_ENTERED")
 
-    bot_token = app_cfg.get("telegram_bot_token", "").strip()
-    chat_id = app_cfg.get("telegram_chat_id", "").strip()
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
-    if bot_token and chat_id:
-        msg = (
-            f"📌 [{store_title} 정직원 근태변동 등록]\n"
-            f"• 발생일: {row_values[0]}\n"
-            f"• 이름: {row_values[1]}\n"
-            f"• 구분: {row_values[2]} ({row_values[3]})\n"
-            f"• 사유: {row_values[4] or '없음'}"
-        )
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": msg},
-                timeout=4,
-            )
-        except Exception:
-            pass
+    msg = (
+        f"📌 [{store_title} 정규직 근태변동 등록]\n"
+        f"• 발생일: {row_values[0]}\n"
+        f"• 이름: {row_values[1]}\n"
+        f"• 구분: {row_values[2]} ({row_values[3]})\n"
+        f"• 사유: {row_values[4] or '없음'}"
+    )
+    send_telegram_notice(app_cfg, store_key, msg)
+
+
+def update_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, row_values: list):
+    ws = _get_or_create_reg_change_ws(db_id)
+    ws.update(range_name=f"A{sheet_row}:G{sheet_row}", values=[row_values], value_input_option="USER_ENTERED")
+
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    msg = (
+        f"✏️ [{store_title} 정규직 근태변동 수정]\n"
+        f"• 발생일: {row_values[0]}\n"
+        f"• 이름: {row_values[1]}\n"
+        f"• 변경내용: {row_values[2]} ({row_values[3]})\n"
+        f"• 사유: {row_values[4] or '없음'}"
+    )
+    send_telegram_notice(app_cfg, store_key, msg)
+
+
+def delete_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, summary_str: str):
+    ws = _get_or_create_reg_change_ws(db_id)
+    ws.delete_rows(sheet_row)
+
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    msg = f"🗑️ [{store_title} 정규직 근태변동 삭제]\n• 삭제된 내역: {summary_str}"
+    send_telegram_notice(app_cfg, store_key, msg)
 
 
 @st.cache_resource
@@ -449,7 +487,7 @@ with top_right:
                 st.form_submit_button("확인", use_container_width=True)
 
         if pin_input == active_mgr_pin:
-            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정직원 특근/휴무"])
+            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정규직 특근/휴무"])
 
             with t_app:
                 pending_df = (
@@ -570,26 +608,20 @@ with top_right:
                         with rc1:
                             reg_date = st.date_input("발생 날짜", value=sel_date)
                         with rc2:
-                            reg_emp = st.selectbox("정직원 선택", options=reg_names)
+                            reg_emp = st.selectbox("정규직 선택", options=reg_names)
 
                         rc3, rc4 = st.columns(2)
                         with rc3:
-                            reg_type = st.selectbox(
-                                "변동 구분",
-                                options=["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"],
-                            )
+                            reg_type = st.selectbox("변동 구분", options=REG_CHANGE_TYPES)
                         with rc4:
-                            reg_unit = st.selectbox(
-                                "단위",
-                                options=["1일", "0.5일 (반차)", "시간 단위 (사유란 기재)"],
-                            )
+                            reg_unit = st.selectbox("단위", options=REG_CHANGE_UNITS)
 
                         reg_memo = st.text_input(
                             "사유 및 정산 메모",
                             placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
                         )
                         submitted_reg = st.form_submit_button(
-                            "📌 정직원 특근/휴무 기록 저장",
+                            "📌 정규직 특근/휴무 기록 저장",
                             type="primary",
                             use_container_width=True,
                         )
@@ -623,6 +655,80 @@ with top_right:
                             disp_rc = cur_rc[["발생일", "이름", "구분", "일수_시간", "상세메모"]].copy()
                             disp_rc["발생일"] = disp_rc["발생일"].str[5:]
                             st.dataframe(disp_rc, use_container_width=True, hide_index=True, row_height=26)
+
+                            with st.expander("✏️ 등록 내역 수정 / 삭제", expanded=False):
+                                rc_records = cur_rc.to_dict("records")
+                                rc_labels = [
+                                    f"[{r['발생일'][5:]}] {r['이름']} | {r['구분']} ({r['일수_시간']}) - {r.get('상세메모', '')}"
+                                    for r in rc_records
+                                ]
+                                sel_rc_idx = st.selectbox(
+                                    "수정 또는 삭제할 내역 선택",
+                                    options=range(len(rc_labels)),
+                                    format_func=lambda i: rc_labels[i],
+                                    key=f"sel_edit_rc_{selected_store}",
+                                )
+                                target_rc = rc_records[sel_rc_idx]
+                                target_rc_row = int(target_rc["_sheet_row"])
+
+                                try:
+                                    def_rc_dt = datetime.date.fromisoformat(str(target_rc["발생일"])[:10])
+                                except Exception:
+                                    def_rc_dt = sel_date
+
+                                def_emp_idx = reg_names.index(target_rc["이름"]) if target_rc["이름"] in reg_names else 0
+                                def_type_idx = REG_CHANGE_TYPES.index(target_rc["구분"]) if target_rc["구분"] in REG_CHANGE_TYPES else 0
+                                def_unit_idx = REG_CHANGE_UNITS.index(target_rc["일수_시간"]) if target_rc["일수_시간"] in REG_CHANGE_UNITS else 0
+
+                                ec1, ec2 = st.columns(2)
+                                with ec1:
+                                    edit_rc_date = st.date_input("발생 날짜 수정", value=def_rc_dt, key=f"ed_rc_dt_{selected_store}_{target_rc_row}")
+                                with ec2:
+                                    edit_rc_emp = st.selectbox("정규직 수정", options=reg_names, index=def_emp_idx, key=f"ed_rc_emp_{selected_store}_{target_rc_row}")
+
+                                ec3, ec4 = st.columns(2)
+                                with ec3:
+                                    edit_rc_type = st.selectbox("변동 구분 수정", options=REG_CHANGE_TYPES, index=def_type_idx, key=f"ed_rc_tp_{selected_store}_{target_rc_row}")
+                                with ec4:
+                                    edit_rc_unit = st.selectbox("단위 수정", options=REG_CHANGE_UNITS, index=def_unit_idx, key=f"ed_rc_un_{selected_store}_{target_rc_row}")
+
+                                edit_rc_memo = st.text_input(
+                                    "사유 및 정산 메모 수정",
+                                    value=str(target_rc.get("상세메모", "")),
+                                    key=f"ed_rc_mm_{selected_store}_{target_rc_row}",
+                                )
+
+                                b_save_rc, b_del_rc = st.columns(2)
+                                with b_save_rc:
+                                    if st.button("💾 수정 반영", type="primary", use_container_width=True, key=f"btn_save_rc_{selected_store}_{target_rc_row}"):
+                                        with st.spinner("수정 내용 반영 중..."):
+                                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                            upd_vals = [
+                                                edit_rc_date.strftime("%Y-%m-%d"),
+                                                edit_rc_emp,
+                                                edit_rc_type,
+                                                edit_rc_unit,
+                                                edit_rc_memo.strip(),
+                                                str(target_rc.get("정산반영여부", "대기")),
+                                                now_f,
+                                            ]
+                                            update_regular_change(store_cfg["db_id"], app_cfg, selected_store, target_rc_row, upd_vals)
+                                            load_regular_changes.clear(store_cfg["db_id"])
+                                            st.success("수정 내용이 반영되었습니다.")
+                                            st.rerun()
+                                with b_del_rc:
+                                    if st.button("🗑️ 내역 삭제", use_container_width=True, key=f"btn_del_rc_{selected_store}_{target_rc_row}"):
+                                        with st.spinner("내역 삭제 중..."):
+                                            delete_regular_change(
+                                                store_cfg["db_id"],
+                                                app_cfg,
+                                                selected_store,
+                                                target_rc_row,
+                                                rc_labels[sel_rc_idx],
+                                            )
+                                            load_regular_changes.clear(store_cfg["db_id"])
+                                            st.warning("선택한 내역이 삭제되었습니다.")
+                                            st.rerun()
 
         elif pin_input:
             st.error("비밀번호가 일치하지 않습니다.")
