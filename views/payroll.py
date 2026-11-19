@@ -30,6 +30,7 @@ from store_registry import (
     load_store_settings,
     get_secret,
     get_gspread_client,
+    dispatch_telegram_alert,
 )
 
 STORES = load_all_stores()
@@ -1269,7 +1270,6 @@ with tab_calc:
                         )
 
                     bot_token = app_cfg.get("telegram_bot_token", "").strip()
-                    admin_chat_id = app_cfg.get("telegram_chat_id", "").strip()
 
                     staff_sent_logs = []
                     if send_to_staff:
@@ -1305,34 +1305,33 @@ with tab_calc:
                                 if channels:
                                     staff_sent_logs.append(f"{emp_name}({', '.join(channels)})")
 
-                    if app_cfg.get("tg_alert_payroll", "TRUE").upper() == "TRUE":
-                        recipients_str = ", ".join(recipient_list)
-                        transfer_lines = [
-                            f"✅ {email_subject} 발송 완료",
-                            f"• 세무사/지정 수신처({len(recipient_list)}곳): {recipients_str}",
-                            f"• 총 이체합계: {total_payout:,}원\n",
-                        ]
-                        if not df_ins_edited.empty:
-                            for _, r in df_ins_edited.iterrows():
-                                var_val = clean_int(r.get("변동급여", 0))
-                                var_rsn = str(r.get("변동급여사유", "")).strip()
-                                var_note = f" [변동급여 {var_val:+,}원: {var_rsn}]" if var_val != 0 else ""
-                                transfer_lines.append(
-                                    f"- [정규직] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['입금급여']):,}원{var_note}"
-                                )
-                        if not df_part_edited.empty:
-                            for _, r in df_part_edited.iterrows():
-                                extra_val = clean_int(r.get("그외비용", 0))
-                                extra_rsn = str(r.get("그외비용사유", "")).strip()
-                                extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
-                                transfer_lines.append(
-                                    f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
-                                )
+                    recipients_str = ", ".join(recipient_list)
+                    transfer_lines = [
+                        f"✅ {email_subject} 발송 완료",
+                        f"• 세무사/지정 수신처({len(recipient_list)}곳): {recipients_str}",
+                        f"• 총 이체합계: {total_payout:,}원\n",
+                    ]
+                    if not df_ins_edited.empty:
+                        for _, r in df_ins_edited.iterrows():
+                            var_val = clean_int(r.get("변동급여", 0))
+                            var_rsn = str(r.get("변동급여사유", "")).strip()
+                            var_note = f" [변동급여 {var_val:+,}원: {var_rsn}]" if var_val != 0 else ""
+                            transfer_lines.append(
+                                f"- [정규직] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['입금급여']):,}원{var_note}"
+                            )
+                    if not df_part_edited.empty:
+                        for _, r in df_part_edited.iterrows():
+                            extra_val = clean_int(r.get("그외비용", 0))
+                            extra_rsn = str(r.get("그외비용사유", "")).strip()
+                            extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
+                            transfer_lines.append(
+                                f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
+                            )
 
-                        if staff_sent_logs:
-                            transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
+                    if staff_sent_logs:
+                        transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
 
-                        send_telegram_to_chat(bot_token, admin_chat_id, "\n".join(transfer_lines))
+                    dispatch_telegram_alert(app_cfg, "tg_target_payroll", "\n".join(transfer_lines), default_target="대표")
 
                 recipients_str = ", ".join(recipient_list)
                 msg_done = f"완료되었습니다! ({save_msg}) 및 `{recipients_str}` 발송이 끝났습니다."
