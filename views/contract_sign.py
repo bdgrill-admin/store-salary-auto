@@ -8,7 +8,7 @@
   3. 제1조 ~ 제17조 표준근로계약서 + 선택 시 '비밀유지 및 경업금지 서약서' 본문 출력
   4. 직원 명부에서 연동된 기본정보(주민번호, 은행명, 계좌번호, 이메일)를 입력란에 자동 채움
   5. 정자 성명 타이핑(자동 사인 이미지 변환) 또는 자필 서명 사진 업로드 지원
-  6. [중복 제출 방지] 제출 버튼 클릭 즉시 버튼 잠금 처리 및 완료 화면 고정
+  6. st.form 기반 제출 및 시트 상태 중복 체크로 무반응 버그 및 중복 제출 완벽 방지
 ================================================================================
 """
 
@@ -97,21 +97,23 @@ if not cid:
     st.error("잘못된 접근입니다. 매니저에게 전달받은 전용 계약서 링크로 접속해 주세요.")
     st.stop()
 
+# 방금 서명을 완료한 직후라면 완료 및 PDF 다운로드 화면 즉시 출력
 if "sign_done_data" in st.session_state and st.session_state["sign_done_data"] is not None:
     done = st.session_state["sign_done_data"]
-    st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
-    if done["email_ok"]:
-        st.info(f"📧 입력하신 이메일({done['email']})로 계약서 PDF 사본이 자동 발송되었습니다.")
-    else:
-        st.warning(f"⚠️ 계약서는 정상 저장되었으나 이메일 발송에 실패했습니다 ({done['email_msg']}). 아래 버튼으로 직접 다운로드해 보관해 주세요.")
-    st.download_button(
-        label="📄 내 근로계약서 PDF 바로 다운로드",
-        data=done["pdf_bytes"],
-        file_name=done["filename"],
-        mime="application/pdf",
-        use_container_width=True,
-    )
-    st.stop()
+    if done.get("cid") == cid:
+        st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
+        if done["email_ok"]:
+            st.info(f"📧 입력하신 이메일({done['email']})로 계약서 PDF 사본이 자동 발송되었습니다.")
+        else:
+            st.warning(f"⚠️ 계약서는 정상 저장되었으나 이메일 발송에 실패했습니다 ({done['email_msg']}). 아래 버튼으로 직접 다운로드해 보관해 주세요.")
+        st.download_button(
+            label="📄 내 근로계약서 PDF 바로 다운로드",
+            data=done["pdf_bytes"],
+            file_name=done["filename"],
+            mime="application/pdf",
+            use_container_width=True,
+        )
+        st.stop()
 
 contract = get_contract_by_id(st.secrets, cid)
 if not contract:
@@ -207,9 +209,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ------------------------------------------------------------------------------
-# 선택적 '비밀유지 및 경업금지 서약서' 본문 렌더링 (비밀유지서약 == 'Y'인 경우에만 출력)
-# ------------------------------------------------------------------------------
 if include_nda:
     st.markdown(f"""
     <div class="contract-box" style="border: 1.5px solid #334155; background-color: #F8FAFC;">
@@ -242,84 +241,67 @@ pre_phone = contract.get("연락처", "").strip()
 pre_email = contract.get("이메일", "").strip()
 pre_addr = contract.get("주소", "").strip()
 
-col1, col2 = st.columns(2)
-with col1:
-    rrn = st.text_input("주민등록번호 (급여·세무신고용)", value=pre_rrn, placeholder="앞 6자리 - 뒤 7자리 입력")
-    bank = st.selectbox("입금 은행명", BANK_OPTIONS, index=bank_idx)
-    account = st.text_input("계좌번호 (숫자만 또는 하이픈 포함)", value=pre_account, placeholder="예: 123456-01-123456")
-    health_date = st.date_input("보건증 제출(예정)일", value=datetime.date.today())
-
-with col2:
-    phone = st.text_input("연락처 (휴대폰)", value=pre_phone, placeholder="예: 010-1234-5678")
-    email = st.text_input("이메일 주소 (계약서 PDF 사본 수신용)", value=pre_email, placeholder="예: hong@naver.com")
-    addr = st.text_input("거주지 주소", value=pre_addr, placeholder="예: 경기도 성남시 분당구 ...")
-    cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
-
-st.divider()
 sign_method = st.radio(
     "전자서명 방식 선택",
     ["✍️ 정자 성명 입력 (자동 전자서명 이미지 생성)", "📷 자필 서명 사진/이미지 업로드"],
     horizontal=True,
 )
 
-sign_text_input = ""
-uploaded_sign_file = None
+with st.form("contract_sign_submit_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        rrn = st.text_input("주민등록번호 (급여·세무신고용)", value=pre_rrn, placeholder="앞 6자리 - 뒤 7자리 입력")
+        bank = st.selectbox("입금 은행명", BANK_OPTIONS, index=bank_idx)
+        account = st.text_input("계좌번호 (숫자만 또는 하이픈 포함)", value=pre_account, placeholder="예: 123456-01-123456")
+        health_date = st.date_input("보건증 제출(예정)일", value=datetime.date.today())
 
-if sign_method.startswith("✍️"):
-    sign_text_input = st.text_input(
-        f"전자서명란 — 아래 칸에 본인 성명('{emp_name}')을 정자로 직접 입력해 주세요",
-        placeholder=emp_name,
+    with col2:
+        phone = st.text_input("연락처 (휴대폰)", value=pre_phone, placeholder="예: 010-1234-5678")
+        email = st.text_input("이메일 주소 (계약서 PDF 사본 수신용)", value=pre_email, placeholder="예: hong@naver.com")
+        addr = st.text_input("거주지 주소", value=pre_addr, placeholder="예: 경기도 성남시 분당구 ...")
+        cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
+
+    st.divider()
+    sign_text_input = ""
+    uploaded_sign_file = None
+
+    if sign_method.startswith("✍️"):
+        sign_text_input = st.text_input(
+            f"전자서명란 — 아래 칸에 본인 성명('{emp_name}')을 정자로 직접 입력해 주세요",
+            placeholder=emp_name,
+        )
+    else:
+        uploaded_sign_file = st.file_uploader(
+            "흰 종이에 서명 후 촬영한 사진 또는 서명 이미지(PNG/JPG)를 올려주세요",
+            type=["png", "jpg", "jpeg"],
+        )
+
+    agree_label = (
+        f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지) 및 비밀유지·경업금지 서약서(제1조부터 제4조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
+        if include_nda
+        else f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
     )
-    if sign_text_input.strip():
-        preview = _create_text_signature_image(sign_text_input.strip())
-        st.image(preview, caption="계약서에 날인될 전자서명 미리보기", width=220)
-else:
-    uploaded_sign_file = st.file_uploader(
-        "흰 종이에 서명 후 촬영한 사진 또는 서명 이미지(PNG/JPG)를 올려주세요",
-        type=["png", "jpg", "jpeg"],
+    agree_confirm = st.checkbox(agree_label)
+
+    submitted = st.form_submit_button(
+        "✅ 계약 내용 확인 및 전자서명 최종 제출",
+        type="primary",
+        use_container_width=True,
     )
-    if uploaded_sign_file:
-        st.image(uploaded_sign_file, caption="업로드된 서명 미리보기", width=220)
 
-agree_label = (
-    f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지) 및 비밀유지·경업금지 서약서(제1조부터 제4조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
-    if include_nda
-    else f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
-)
-agree_confirm = st.checkbox(agree_label)
-
-if "submitting_lock" not in st.session_state:
-    st.session_state["submitting_lock"] = False
-
-
-def _lock_submit_btn():
-    st.session_state["submitting_lock"] = True
-
-
-if st.button(
-    "✅ 계약 내용 확인 및 전자서명 최종 제출",
-    type="primary",
-    use_container_width=True,
-    disabled=st.session_state["submitting_lock"],
-    on_click=_lock_submit_btn,
-):
+if submitted:
     if not rrn.strip() or not account.strip() or not phone.strip() or not addr.strip() or not email.strip():
-        st.session_state["submitting_lock"] = False
         st.error("주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
     elif not agree_confirm:
-        st.session_state["submitting_lock"] = False
         st.error("계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.")
     elif sign_method.startswith("✍️") and not sign_text_input.strip():
-        st.session_state["submitting_lock"] = False
         st.error("전자서명란에 본인 성명을 입력해 주세요.")
     elif not sign_method.startswith("✍️") and uploaded_sign_file is None:
-        st.session_state["submitting_lock"] = False
         st.error("서명 이미지 파일을 업로드해 주세요.")
     else:
-        with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요 (연타하지 마세요)..."):
+        with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
             latest_check = get_contract_by_id(st.secrets, cid)
             if latest_check and latest_check.get("상태") == "서명완료":
-                st.session_state["submitting_lock"] = False
                 st.rerun()
 
             if sign_method.startswith("✍️"):
@@ -341,6 +323,7 @@ if st.button(
                 st.secrets, contract, emp_inputs, sign_img
             )
             st.session_state["sign_done_data"] = {
+                "cid": cid,
                 "pdf_bytes": pdf_bytes,
                 "filename": filename,
                 "email": email.strip(),
