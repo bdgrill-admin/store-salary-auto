@@ -3,14 +3,13 @@
 [파일명] views/payroll.py
 [역할] 매장 통합 월별 급여 정산 · 명세서 일괄 발송 · 매출 대비 인건비 경영 분석 페이지
 [주요 기능]
-  1. '환경설정' 탭과 실시간 연동 (관리자 비밀번호, 정산 기준일, 세무사 이메일, 통장 표기, 텔레그램/웹앱 URL)
+  1. store_registry 및 '환경설정' 탭과 실시간 연동 (다매장 목록, 공제율, 목표 인건비율 경고선, 정산 기준일)
   2. 정규직 급여 계산 구조: 계산급여 = 계약급여 - 제세금 / 입금급여 = 계산급여 +/- 변동급여
   3. 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
   4. Apps Script 웹앱 연동 세무사(.txt) & 직원 개별 급여명세서 일괄 발송
 ================================================================================
 """
 
-import os
 import io
 import re
 import json
@@ -20,43 +19,19 @@ import smtplib
 import requests
 import pandas as pd
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from dotenv import load_dotenv
 
-load_dotenv()
+from store_registry import (
+    load_all_stores,
+    load_store_settings,
+    get_secret,
+    get_gspread_client,
+)
 
-
-def get_secret(key: str, default: str = ""):
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-    return os.getenv(key, default)
-
-
-STORES = {
-    "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
-        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),
-        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),
-        "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
-    },
-    # 향후 감동한점 오픈 시 주석 해제
-    # "감동한점": {
-    #     "db_id": "여기에_감동한점_통합근태DB_ID",
-    #     "hist_id": get_secret("HIST_SHEET_GAMDONG", ""),
-    #     "sales_id": get_secret("SALES_SHEET_GAMDONG", ""),
-    #     "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
-    # },
-}
-
-CREDENTIALS_FILE = "credentials.json"
+STORES = load_all_stores()
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
 
 
@@ -132,57 +107,15 @@ def apply_clean_style():
 apply_clean_style()
 
 
-def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    try:
-        if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            return gspread.authorize(creds)
-    except Exception:
-        pass
-
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
-    return gspread.authorize(creds)
-
-
-@st.cache_data(ttl=30, show_spinner="환경설정을 불러오는 중...")
-def load_payroll_settings(db_id: str) -> dict:
-    cfg = {
-        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-        "admin_password": get_secret("ADMIN_PASSWORD", "0524"),
-        "allow_mgr_payroll": "FALSE",
-        "payroll_start_day": "5",
-        "tax_accountant_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
-        "bank_transfer_prefix": "분당그릴",
-        "auto_send_payslip": "TRUE",
-        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
-        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
-        "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
-        "sender_email": get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com"),
-        "tg_alert_payroll": "TRUE",
-    }
-    try:
-        gc = get_gspread_client()
-        ss = gc.open_by_key(db_id)
-        titles = [ws.title.strip() for ws in ss.worksheets()]
-        if "환경설정" in titles:
-            ws = ss.worksheet("환경설정")
-            for r in ws.get_all_values()[1:]:
-                if len(r) >= 2 and r[0].strip() and r[1].strip():
-                    cfg[r[0].strip()] = r[1].strip()
-    except Exception:
-        pass
-    return cfg
-
-
 def get_settlement_period(base_date: datetime.date, start_day: int = 5):
     if base_date.day >= start_day:
-        end_date = base_date.replace(day=start_day - 1) if start_day > 1 else (
-            (base_date.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+        end_date = (
+            base_date.replace(day=start_day - 1)
+            if start_day > 1
+            else (
+                (base_date.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+                - datetime.timedelta(days=1)
+            )
         )
         if start_day > 1:
             first_of_this_month = base_date.replace(day=1)
@@ -279,8 +212,8 @@ def format_ssn(ssn_str):
 # =========================================================================
 # 1. 관리자 보안 로그인 잠금 ('환경설정' 비밀번호 및 매니저 허용 여부 연동)
 # =========================================================================
-default_db_id = STORES["분당그릴"]["db_id"]
-boot_cfg = load_payroll_settings(default_db_id)
+first_store_name = list(STORES.keys())[0]
+boot_cfg = load_store_settings(STORES[first_store_name]["db_id"], first_store_name)
 active_admin_pwd = boot_cfg.get("admin_password", "0524")
 active_mgr_pin = boot_cfg.get("manager_pin", "0524")
 allow_mgr = boot_cfg.get("allow_mgr_payroll", "FALSE").upper() == "TRUE"
@@ -299,7 +232,13 @@ def check_login():
         with st.container(border=True):
             st.markdown("#### 🔒 관리자 인증")
             st.caption("매장 급여 정산 시스템에 접속하려면 비밀번호를 입력하세요.")
-            pwd = st.text_input("접속 비밀번호", type="password", key="login_pwd", label_visibility="collapsed", placeholder="비밀번호 입력")
+            pwd = st.text_input(
+                "접속 비밀번호",
+                type="password",
+                key="login_pwd",
+                label_visibility="collapsed",
+                placeholder="비밀번호 입력",
+            )
             if st.button("로그인", type="primary", use_container_width=True):
                 if pwd == active_admin_pwd or (allow_mgr and pwd == active_mgr_pin):
                     st.session_state["authenticated"] = True
@@ -317,7 +256,14 @@ if not check_login():
 # 2. 통합근태DB · 파트타임 · 정규직 시트 로드 및 월 급여 자동 계산
 # =========================================================================
 @st.cache_data(ttl=30, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
-def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: datetime.date):
+def fetch_and_calculate_salary(
+    db_id: str,
+    start_date: datetime.date,
+    end_date: datetime.date,
+    base_tax_rate: float,
+    high_tax_rate: float,
+    high_tax_threshold: int,
+):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
 
@@ -418,7 +364,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
 
         wage = clean_int(rec.get("시급", 0))
         gross_pay = int(round(wage * (att["total_min"] / 60.0)))
-        rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
+        rate_float = high_tax_rate if gross_pay >= high_tax_threshold else base_tax_rate
         rate_str = f"{rate_float * 100:g}%"
         net_pay = int(round(gross_pay * (1.0 - rate_float)))
 
@@ -451,7 +397,7 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 "시급": 0,
                 "총시간": att["total_hhmm"],
                 "총급여": 0,
-                "공제율": "0.9%",
+                "공제율": f"{base_tax_rate * 100:g}%",
                 "그외비용": 0,
                 "그외비용사유": "",
                 "최종급여": 0,
@@ -592,7 +538,7 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
         ws = ss.add_worksheet(title=sheet_name, rows=max(len(grid_rows) + 10, 50), cols=20)
 
     if grid_rows:
-        ws.update(range_name="A1", values=grid_rows)
+        ws.update(range_name="A1", values=grid_rows, value_input_option="RAW")
 
     return f"구글 시트 탭 [{sheet_name}] 저장 완료", excel_bytes
 
@@ -711,7 +657,7 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 
 
 # =========================================================================
-# 4. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / Apps Script 이메일 발송
+# 4. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / 이메일 발송
 # =========================================================================
 def build_bulk_transfer_excel(prefix_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
     rows = []
@@ -924,8 +870,14 @@ with head_c2:
     selected_store = st.selectbox("정산 매장", list(STORES.keys()), index=0)
 
 store_cfg = STORES[selected_store]
-app_cfg = load_payroll_settings(store_cfg["db_id"])
+app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
 payroll_start_day = int(app_cfg.get("payroll_start_day", "5") or 5)
+
+# 환경설정 공제율 및 목표 인건비율 경고선 로드
+base_tax_rate = float(app_cfg.get("part_base_tax_rate", "0.9") or 0.9) / 100.0
+high_tax_rate = float(app_cfg.get("part_high_tax_rate", "3.3") or 3.3) / 100.0
+high_tax_threshold = int(float(app_cfg.get("part_high_tax_threshold", "1000000") or 1000000))
+target_labor_pct = float(app_cfg.get("target_labor_ratio", "28.0") or 28.0)
 
 tab_calc, tab_trend = st.tabs([
     f"💰 {selected_store} 월별 급여 정산",
@@ -954,7 +906,12 @@ with tab_calc:
 
     try:
         df_ins_raw, df_part_raw, warnings = fetch_and_calculate_salary(
-            store_cfg["db_id"], start_dt, end_dt
+            store_cfg["db_id"],
+            start_dt,
+            end_dt,
+            base_tax_rate,
+            high_tax_rate,
+            high_tax_threshold,
         )
 
         if warnings:
@@ -1056,6 +1013,9 @@ with tab_calc:
                 df_ins_edited.at[idx, "입금급여"] = in_pay
 
         st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
+        st.caption(
+            f"💡 적용 공제율 기준: 세전 **{high_tax_threshold:,}원** 미만 `{base_tax_rate*100:g}%` / 이상 `{high_tax_rate*100:g}%` (환경설정에서 변경 가능)"
+        )
         df_part_edited = st.data_editor(
             df_part_raw,
             num_rows="dynamic",
@@ -1085,7 +1045,7 @@ with tab_calc:
                 if orig_row is not None and str(row.get("공제율", "")).strip() != str(orig_row.get("공제율", "")).strip():
                     rate_float = parse_rate(row.get("공제율", 0))
                 else:
-                    rate_float = 0.033 if gross_pay >= 1_000_000 else 0.009
+                    rate_float = high_tax_rate if gross_pay >= high_tax_threshold else base_tax_rate
 
                 net_pay = int(round(gross_pay * (1.0 - rate_float)))
 
@@ -1114,6 +1074,16 @@ with tab_calc:
         yoy_sales_row = df_sales_all[df_sales_all["정산월"] == prev_yoy_ym] if not df_sales_all.empty else pd.DataFrame()
         cur_sales_val = int(cur_sales_row.iloc[0]["총매출"]) if not cur_sales_row.empty else 0
         yoy_sales_val = int(yoy_sales_row.iloc[0]["총매출"]) if not yoy_sales_row.empty else 0
+
+        # 귀속월 매출이 입력되어 있는 경우 당월 예상 인건비율 목표 경고선 체크
+        if cur_sales_val > 0 and total_payout > 0:
+            est_labor_pct = round((total_payout / cur_sales_val) * 100, 1)
+            diff_est = round(est_labor_pct - target_labor_pct, 1)
+            if diff_est > 0:
+                st.warning(
+                    f"🚨 **목표 인건비율({target_labor_pct:.1f}%) 초과 경고:** "
+                    f"귀속월({prev_ym}) 매출({cur_sales_val:,}원) 대비 이번 정산 인건비율이 **{est_labor_pct:.1f}%**로 목표 기준선보다 **+{diff_est:.1f}%p** 높습니다."
+                )
 
         st.write("")
         m1, m2, m3, m4, m5 = st.columns(5)
@@ -1184,7 +1154,7 @@ with tab_calc:
         bank_prefix = app_cfg.get("bank_transfer_prefix", selected_store).strip() or selected_store
         bulk_excel_bytes = build_bulk_transfer_excel(bank_prefix, df_ins_edited, df_part_edited, end_dt)
         bulk_filename = f"{selected_store}_{end_dt.strftime('%Y%m')}_은행대량이체.xlsx"
-        default_tax_mail = app_cfg.get("tax_accountant_email", "") or store_cfg["tax_email"]
+        default_tax_mail = app_cfg.get("tax_accountant_email", "") or store_cfg.get("tax_email", "")
         default_auto_slip = app_cfg.get("auto_send_payslip", "TRUE").upper() == "TRUE"
 
         panel_left, panel_right = st.columns([2.2, 1.1])
@@ -1350,6 +1320,20 @@ with tab_trend:
             else 0.0
         )
 
+        if has_sales:
+            avg_labor_ratio = valid_sales_df["총인건비"].sum() / valid_sales_df["총매출"].sum() * 100
+            diff_target = round(avg_labor_ratio - target_labor_pct, 1)
+            if diff_target > 0:
+                st.warning(
+                    f"🚨 **목표 인건비율({target_labor_pct:.1f}%) 초과 경고:** "
+                    f"현재 평균 매출 대비 인건비율이 **{avg_labor_ratio:.1f}%**로 목표 기준선보다 **+{diff_target:.1f}%p** 높습니다."
+                )
+            else:
+                st.success(
+                    f"✅ **목표 인건비율({target_labor_pct:.1f}%) 이내 양호:** "
+                    f"현재 평균 인건비율 **{avg_labor_ratio:.1f}%** (목표 대비 {diff_target:+.1f}%p)"
+                )
+
         k1, k2, k3, k4 = st.columns(4)
         k1.metric(f"월평균 총 인건비 ({len(df_monthly)}개월)", f"{avg_total:,}원")
 
@@ -1361,10 +1345,10 @@ with tab_trend:
 
             k2.metric(f"월평균 매출 ({len(valid_sales_df)}개월 기준)", f"{avg_sales:,}원")
             k3.metric(
-                "평균 매출 대비 인건비율",
+                f"평균 인건비율 (목표 {target_labor_pct:.1f}%)",
                 f"{avg_labor_ratio:.1f}%",
-                delta=f"상세집계 변동급 비중 {part_ratio:.1f}%" if part_ratio > 0 else "과거요약 포함",
-                delta_color="off",
+                delta=f"{avg_labor_ratio - target_labor_pct:+.1f}%p (목표 대비)",
+                delta_color="inverse",
             )
             k4.metric("파트타임 시간당 매출(SPLH)", f"{avg_splh:,}원/h" if avg_splh > 0 else "상세집계 후 표시")
         else:
