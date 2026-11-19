@@ -427,21 +427,23 @@ with top_left:
 with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
-        st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        p_lbl, p_inp = st.columns([0.75, 1.6], vertical_alignment="center")
-        with p_lbl:
-            st.markdown(
-                '<div style="font-size:0.88rem; font-weight:700; color:#78350F; line-height:1.25;">매니저확인<br>비밀번호</div>',
-                unsafe_allow_html=True,
-            )
-        with p_inp:
-            pin_input = st.text_input(
-                "매니저확인 비밀번호",
-                type="password",
-                placeholder="비밀번호 입력",
-                key="mgr_pin_top",
-                label_visibility="collapsed",
-            )
+        with st.form(key=f"mgr_pin_form_{selected_store}", border=False):
+            p_lbl, p_inp, p_btn = st.columns([0.85, 1.35, 0.65], vertical_alignment="center")
+            with p_lbl:
+                st.markdown(
+                    '<div style="font-size:0.88rem; font-weight:700; color:#78350F; line-height:1.25;">매니저확인<br>비밀번호</div>',
+                    unsafe_allow_html=True,
+                )
+            with p_inp:
+                pin_input = st.text_input(
+                    "매니저확인 비밀번호",
+                    type="password",
+                    placeholder="비밀번호 입력",
+                    key=f"mgr_pin_top_{selected_store}",
+                    label_visibility="collapsed",
+                )
+            with p_btn:
+                st.form_submit_button("확인", use_container_width=True)
 
         if pin_input == active_mgr_pin:
             t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정규직 특근/휴무"])
