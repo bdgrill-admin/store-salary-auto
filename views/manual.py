@@ -3,31 +3,18 @@
 [파일명] views/manual.py
 [역할] 아이폰(모바일) 및 매장 PC/태블릿 겸용 '매니저 실무 교육 매뉴얼' 전용 탭
 [주요 기능]
-1. 매니저 전용 비밀번호(PIN) 잠금 해제 (일반 직원 열람 차단, 직원 관리/급여 정산 로그인 연동)
-2. 아이폰 세로 화면에 최적화된 큰 글씨·카드형 레이아웃 및 핵심 요약 배너 제공
-3. 상단 탭(일일 출퇴근/승인 | 신규채용/계약서 | 퇴사/보건증 | 월말 급여정산)으로 빠른 이동
-4. 폴더 내 스크린샷 이미지(manual_att.png, manual_staff.png, manual_contract.png)가
-     있으면 자동으로 화면에 삽입하고, 없어도 시각적 UI 가이드 박스로 완벽히 대체 표시
+1. 다매장 선택 및 지점별 환경설정(manager_pin) 실시간 연동
+2. 매니저 전용 비밀번호(PIN) 잠금 해제 (일반 직원 열람 차단, 직원 관리/급여 정산 로그인 연동)
+3. 아이폰 세로 화면에 최적화된 큰 글씨·카드형 레이아웃 및 핵심 요약 배너 제공
+4. 상단 탭(일일 출퇴근/승인 | 신규채용/계약서 | 퇴사/보건증 | 월말 급여정산)으로 빠른 이동
 ================================================================================
 """
 
 import os
 import streamlit as st
-from dotenv import load_dotenv
+from store_registry import load_all_stores, load_store_settings
 
-load_dotenv()
-
-
-def get_secret(key: str, default: str = ""):
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-    return os.getenv(key, default)
-
-
-MANAGER_PIN = get_secret("MANAGER_PIN_BUNDANG", "0524")
+STORES = load_all_stores()
 
 st.markdown(
     """
@@ -158,36 +145,49 @@ def show_guide_image(file_candidates: list, caption: str):
 
 
 # ==============================================================================
-# 매니저 전용 비밀번호(PIN) 잠금 확인
-# (급여 정산 'authenticated' 또는 직원 관리 'staff_mgr_unlocked'와 세션 공유)
+# 매장 선택 및 지점별 환경설정(manager_pin) 실시간 로드
 # ==============================================================================
+h_left, _, h_right = st.columns([2.5, 1.2, 1.1], vertical_alignment="center")
+with h_left:
+    st.markdown('<div class="app-title">📖 매니저 업무 매뉴얼</div>', unsafe_allow_html=True)
+with h_right:
+    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed", key="manual_store_sel")
+
+store_cfg = STORES[selected_store]
+app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
+active_mgr_pin = str(app_cfg.get("manager_pin") or store_cfg.get("manager_pin") or "0524").strip()
+store_title = str(app_cfg.get("store_title") or selected_store).strip()
+
+# ==============================================================================
+# 매니저 전용 비밀번호(PIN) 잠금 확인
+# ==============================================================================
+unlocked_stores = st.session_state.setdefault("manual_unlocked_stores", set())
 is_unlocked = (
     st.session_state.get("authenticated", False)
     or st.session_state.get("staff_mgr_unlocked", False)
-    or st.session_state.get("manual_mgr_unlocked", False)
+    or (selected_store in unlocked_stores)
 )
 
 if not is_unlocked:
-    st.markdown('<div class="app-title">📖 매니저 업무 매뉴얼</div>', unsafe_allow_html=True)
     st.write("")
     _, c_mid, _ = st.columns([1.0, 1.4, 1.0])
     with c_mid:
         with st.container(border=True):
-            st.markdown("#### 🔐 매니저 / 관리자 전용")
-            st.caption("업무 매뉴얼 열람을 위해 매니저 비밀번호를 입력하세요.")
-            with st.form(key="manual_pin_form", border=False):
+            st.markdown(f"#### 🔐 [{store_title}] 매니저 전용")
+            st.caption("업무 매뉴얼 열람을 위해 해당 지점의 매니저 비밀번호를 입력하세요.")
+            with st.form(key=f"manual_pin_form_{selected_store}", border=False):
                 pin = st.text_input(
                     "비밀번호",
                     type="password",
                     placeholder="비밀번호 입력",
                     label_visibility="collapsed",
-                    key="manual_pin_input",
+                    key=f"manual_pin_input_{selected_store}",
                 )
                 submitted_pin = st.form_submit_button("확인", type="primary", use_container_width=True)
 
             if submitted_pin:
-                if pin == MANAGER_PIN:
-                    st.session_state["manual_mgr_unlocked"] = True
+                if pin == active_mgr_pin:
+                    unlocked_stores.add(selected_store)
                     st.session_state["staff_mgr_unlocked"] = True
                     st.rerun()
                 else:
@@ -196,33 +196,33 @@ if not is_unlocked:
 
 
 # ------------------------------------------------------------------------------
-# 상단 헤더 (잠금 버튼을 우측에 배치해 매니저가 본 뒤 다시 잠글 수 있도록 지원)
+# 상단 잠금 버튼
 # ------------------------------------------------------------------------------
-top_c1, top_c2 = st.columns([4.2, 1.0], vertical_alignment="center")
+_, top_c2 = st.columns([4.2, 1.0], vertical_alignment="center")
 with top_c2:
     if st.button("🔒 매뉴얼 잠금", use_container_width=True):
-        st.session_state["manual_mgr_unlocked"] = False
+        unlocked_stores.clear()
         st.session_state["staff_mgr_unlocked"] = False
         st.session_state["authenticated"] = False
         st.rerun()
 
 st.markdown(
-    """
+    f"""
     <div class="manual-header">
-        <h2>📖 [분당그릴] 매니저 업무 매뉴얼</h2>
+        <h2>📖 [{store_title}] 매니저 업무 매뉴얼</h2>
         <p>아이폰·태블릿·PC 어디서든 아래 탭을 눌러 업무 순서를 확인하세요.<br>
-        • <b>매니저 전용 비밀번호(PIN):</b> <code>0524</code></p>
+        • <b>현재 지점 매니저 전용 비밀번호(PIN):</b> <code>{active_mgr_pin}</code></p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 st.markdown(
-    """
+    f"""
     <div class="rule-card">
         <div class="rule-title">⭐ 매니저 핵심 체크리스트 4줄 요약</div>
         <div style="font-size:0.94rem; color:#78350F; line-height:1.68;">
-            <b>1. [매일 마감/오픈]</b> <code>⏱️ 출퇴근 기록부</code> 우측 상단에서 비밀번호(<code>0524</code>) 입력 후 <b>[확인]</b>을 눌러 <b>파트타임 미확인 근무 기록을 일괄 승인</b>합니다.<br>
+            <b>1. [매일 마감/오픈]</b> <code>⏱️ 출퇴근 기록부</code> 우측 상단에서 비밀번호(<code>{active_mgr_pin}</code>) 입력 후 <b>[확인]</b>을 눌러 <b>파트타임 미확인 근무 기록을 일괄 승인</b>합니다.<br>
             <b>2. [정규직 변동 발생 즉시]</b> 같은 박스 안의 <b><code>📝 정규직 특근/휴무</code></b> 탭에서 추가출근·기타휴무·대체휴무를 <b>발생 당일 바로 등록</b>합니다. (대표님 텔레그램 자동 전송)<br>
             <b>3. [신규 채용 시]</b> <code>👥 직원 관리</code>에서 <b>① 명부에 먼저 등록</b>한 뒤 → <b>② 아래 전자계약서에서 직원을 선택해 링크를 발급</b>합니다.<br>
             <b>4. [직원 퇴사 시]</b> 명부에서 줄을 절대 지우지 말고 <b><code>상태</code>만 <code>퇴사</code>로 바꾼 뒤 저장</b>합니다.
@@ -262,14 +262,14 @@ with tab1:
     )
 
     st.markdown(
-        """
+        f"""
         <div class="step-card">
             <span class="step-badge">STEP 2 · 매니저 필수 업무 ⭐</span>
             <div class="step-heading">🔐 파트타임 일일 근태 일괄 승인 및 해제</div>
             <div class="step-body">
                 • <b>중요:</b> 매니저가 승인(<code>✅ 확인완료</code>)하지 않은 파트타임 기록은 <b>월급날 급여 자동 계산에서 아예 제외</b>됩니다.<br>
                 • <b>일괄 승인 순서:</b><br>
-                  &nbsp;&nbsp;① 우측 상단 주황색 <b><code>🔐 매니저 전용 확인</code></b> 박스에 비밀번호(<code>0524</code>) 입력 후 우측 <b>[확인]</b> 버튼 클릭(또는 엔터)<br>
+                  &nbsp;&nbsp;① 우측 상단 주황색 <b><code>🔐 매니저 전용 확인</code></b> 박스에 비밀번호(<code>{active_mgr_pin}</code>) 입력 후 우측 <b>[확인]</b> 버튼 클릭(또는 엔터)<br>
                   &nbsp;&nbsp;② <b><code>⏳ 미확인 승인</code></b> 탭에서 출퇴근 시간 확인 후 <b>전체 선택</b> 또는 개별 체크박스 선택<br>
                   &nbsp;&nbsp;③ <b>[✅ 선택한 내역 일괄 확인 완료]</b> 버튼 클릭 시 한 번에 즉시 승인됩니다.<br>
                 • <b>일괄 승인 해제:</b> 이미 확인 완료된 건은 직원이 임의로 고칠 수 없도록 잠깁니다. 수정이 필요하면 <b><code>🔓 승인 해제</code></b> 탭에서 해제할 항목을 체크한 뒤 <b>[🔓 선택한 내역 승인 해제]</b>를 눌러 잠금을 풀어주세요.
@@ -280,7 +280,7 @@ with tab1:
     )
 
     st.markdown(
-        """
+        f"""
         <div class="step-card-amber">
             <span class="step-badge-amber">STEP 3 · 정규직 특근/휴무 즉시 기록 ⭐ (누락 방지)</span>
             <div class="step-heading">📝 정규직 추가출근 · 기타휴무 · 대체휴무 등록 및 수정/삭제</div>
@@ -296,7 +296,7 @@ with tab1:
                 • <b>잘못 입력했을 때(수정/삭제):</b> 탭 하단 이번 정산월 내역 표 아래의 <b><code>✏️ 등록 내역 수정 / 삭제</code></b>를 열어 해당 내역을 고른 뒤 내용을 수정하거나 삭제할 수 있습니다. (수정·삭제 시에도 텔레그램 알림 자동 발송)
             </div>
             <div class="ui-mock">
-                화면 위치: <b>⏱️ 출퇴근 기록부</b> ➔ 우측 상단 <b>[🔐 매니저 전용 확인]</b> ➔ <b>0524 [확인]</b> ➔ <b>[📝 정규직 특근/휴무]</b> 탭
+                화면 위치: <b>⏱️ 출퇴근 기록부</b> ➔ 우측 상단 <b>[🔐 매니저 전용 확인]</b> ➔ <b>{active_mgr_pin} [확인]</b> ➔ <b>[📝 정규직 특근/휴무]</b> 탭
             </div>
         </div>
         """,
@@ -313,12 +313,12 @@ with tab1:
 # ==============================================================================
 with tab2:
     st.markdown(
-        """
+        f"""
         <div class="step-card">
             <span class="step-badge">STEP 1 · 명부 먼저 등록</span>
             <div class="step-heading">➕ 신규 직원 등록하기 (파트타임 · 정규직)</div>
             <div class="step-body">
-                좌측 메뉴 <b><code>👥 직원 관리</code></b>(비밀번호 <code>0524</code>)에 접속한 뒤, 반드시 <b>직원 명부에 먼저 등록</b>해야 계약서에 정보가 연동됩니다.<br><br>
+                좌측 메뉴 <b><code>👥 직원 관리</code></b>(비밀번호 <code>{active_mgr_pin}</code>)에 접속한 뒤, 반드시 <b>직원 명부에 먼저 등록</b>해야 계약서에 정보가 연동됩니다.<br><br>
                 1. 상단 <b><code>➕ 신규 직원 등록하기 (파트타임 · 정규직)</code></b> 클릭<br>
                 2. <b>파트타임(시급제)</b> 또는 <b>정규직(월급제)</b> 선택<br>
                 3. 입사일자, 이름(예금주명), 시급(또는 계약급여/제세금), 은행명, 계좌번호, 이메일 입력 후 <b>[✅ 신규 직원 등록]</b> 클릭<br>
