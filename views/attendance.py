@@ -494,7 +494,7 @@ with top_right:
                             batch_payload = [
                                 {
                                     "range": f"H{r_num}:J{r_num}",
-                                    "values": [["TRUE", f"{old_n}\n[{now_s}] 매니저 확인 완료".strip(), now_f]],
+                                    "values": [["TRUE", f"{old_n}\n[{now_s}] 확인완료".strip(), now_f]],
                                 }
                                 for r_num, old_n in approve_targets
                             ]
