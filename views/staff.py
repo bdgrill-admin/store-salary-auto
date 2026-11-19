@@ -703,6 +703,11 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             default=default_ins,
             key=f"new_c_ins_{k_sfx}",
         )
+        c_include_nda = st.checkbox(
+            "🔒 비밀유지 및 경업금지 서약서 함께 받기 (레시피·숙성법·원가·거래처 보호 및 퇴직 후 2년 경업금지)",
+            value=(prefill.get("구분") == "정규직"),
+            key=f"new_c_nda_{k_sfx}",
+        )
 
         if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
             final_emp_name = default_name if default_name else c_emp_name.strip()
