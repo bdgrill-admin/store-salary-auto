@@ -1,84 +1,28 @@
 """
 ================================================================================
 [파일명] views/settings.py
-[역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 연동 상태 진단' 페이지
+[역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 다매장 관리' 페이지
 [주요 기능]
-  1. 관리자 비밀번호 보안 잠금
-  2. 구글 시트('환경설정' 탭)에 설정값 영구 저장 및 불러오기 (맨 앞 '0' 보존을 위해 RAW 모드 저장)
-     - 🔐 보안 및 권한: 매니저 PIN, 관리자 비밀번호, 매니저 급여정산 메뉴 열람 허용 여부
-     - ⏱️ 출퇴근 및 보건증 규칙: 시간 선택 단위(분), 보건증 만료 알림 기준일(D-Day)
-     - 📝 전자 근로계약서 기본값: 사업장명, 대표자명, 주소, 연락처, 기본 근무시간/휴게시간/업무내용
-     - 💰 급여 정산 및 발송 설정: 급여 정산 기준일, 세무사 수신 이메일, 통장 표기 문구
-     - 📲 텔레그램 & 이메일 발송 기본값: 봇 토큰, 채팅 ID, Apps Script 웹앱 URL, 테스트 메일 주소
-  3. 원클릭 시스템 연동 상태 진단 (구글 시트 · 텔레그램 · Apps Script 이메일 테스트)
+  1. 보안 · 권한: 매니저 PIN, 대표자 비밀번호, 매니저 급여정산 열람 허용 여부
+  2. 출퇴근 · 보건증: 시간 선택 단위(분), 보건증 만료 사전 경고일
+  3. 근로계약서 기본값: 사업체명, 대표자명, 매장 전화번호, 사업장 주소, 기본 근무조건
+  4. 급여 · 공제율 · 인건비 목표: 정산 기준일, 세무사 이메일, 파트타임 공제율/기준금액, 목표 인건비율(%)
+  5. 텔레그램 · 이메일 설정: 봇 토큰, 채팅 ID, Apps Script 웹앱 URL, 알림 ON/OFF
+  6. 다매장 · 지점 관리: 신규 지점(감동한점 등) 시트 ID 등록 및 수정, 외부 서비스 원클릭 진단
 ================================================================================
 """
 
-import os
 import json
-import datetime
 import requests
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-def get_secret(key: str, default: str = ""):
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-    return os.getenv(key, default)
-
-
-STORES = {
-    "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
-    },
-    # 향후 감동한점 오픈 시 주석 해제
-    # "감동한점": {
-    #     "db_id": "여기에_감동한점_통합근태DB_ID",
-    # },
-}
-
-CREDENTIALS_FILE = "credentials.json"
-ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
-
-DEFAULT_SETTINGS = {
-    # 1. 보안 및 권한
-    "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-    "admin_password": get_secret("ADMIN_PASSWORD", "0524"),
-    "allow_mgr_payroll": "FALSE",
-    # 2. 출퇴근 및 보건증 규칙
-    "att_time_step_min": "10",
-    "health_alert_days": "30",
-    # 3. 전자 근로계약서 기본 템플릿
-    "store_title": "분당그릴",
-    "owner_name": "이용석",
-    "store_phone": "031-713-0342",
-    "store_address": "경기도 성남시 분당구 미금일로 74번길 13-3 1층",
-    "default_work_start": "17:00",
-    "default_work_end": "22:00",
-    "default_break_min": "30",
-    "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
-    # 4. 급여 정산 및 발송 설정
-    "payroll_start_day": "5",
-    "tax_accountant_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
-    "bank_transfer_prefix": "분당그릴",
-    "auto_send_payslip": "TRUE",
-    # 5. 텔레그램 & 이메일 발송 기본값 및 알림 스위치
-    "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
-    "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
-    "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
-    "sender_email": get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com"),
-    "tg_alert_health": "TRUE",
-    "tg_alert_contract": "TRUE",
-    "tg_alert_payroll": "TRUE",
-}
+from store_registry import (
+    load_all_stores,
+    save_all_stores,
+    load_store_settings,
+    save_store_settings,
+    get_gspread_client,
+    DEFAULT_CONTRACT_FOLDER_ID,
+)
 
 st.markdown(
     """
@@ -116,77 +60,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+all_stores_map = load_all_stores(include_inactive=True)
+store_names = list(all_stores_map.keys())
 
-def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    try:
-        if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            return gspread.authorize(creds)
-    except Exception:
-        pass
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
-    return gspread.authorize(creds)
-
-
-@st.cache_data(ttl=30, show_spinner="환경설정 데이터를 불러오는 중...")
-def load_settings_from_sheet(db_id: str) -> dict:
-    """구글 시트 '환경설정' 탭에서 설정값을 로드합니다."""
-    cfg = dict(DEFAULT_SETTINGS)
-    try:
-        gc = get_gspread_client()
-        ss = gc.open_by_key(db_id)
-        titles = [ws.title.strip() for ws in ss.worksheets()]
-        if "환경설정" not in titles:
-            return cfg
-        ws = ss.worksheet("환경설정")
-        rows = ws.get_all_values()
-        for r in rows[1:]:
-            if len(r) >= 2 and r[0].strip():
-                val = r[1].strip()
-                if val != "":
-                    cfg[r[0].strip()] = val
-    except Exception:
-        pass
-    return cfg
-
-
-def save_settings_to_sheet(db_id: str, new_cfg: dict):
-    """구글 시트 '환경설정' 탭에 문자열 원본(RAW) 그대로 저장하여 맨 앞 '0'이 사라지지 않게 합니다."""
-    gc = get_gspread_client()
-    ss = gc.open_by_key(db_id)
-    titles = [ws.title.strip() for ws in ss.worksheets()]
-    if "환경설정" in titles:
-        ws = ss.worksheet("환경설정")
-        ws.clear()
-    else:
-        ws = ss.add_worksheet(title="환경설정", rows=100, cols=4)
-
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rows = [["설정키", "설정값", "최종수정일시"]]
-    for k, v in new_cfg.items():
-        rows.append([str(k), str(v), now_str])
-
-    # value_input_option="RAW" 사용: 0으로 시작하는 PIN 번호나 전화번호가 숫자로 변환되어 0이 잘리는 현상 방지
-    ws.update(range_name="A1", values=rows, value_input_option="RAW")
-
-
-# ==============================================================================
-# 1. 관리자 보안 로그인 확인
-# ==============================================================================
 h1, h2 = st.columns([3.2, 1.0], vertical_alignment="center")
 with h1:
     st.markdown('<div class="app-title">⚙️ 시스템 환경설정</div>', unsafe_allow_html=True)
 with h2:
-    selected_store = st.selectbox("설정 매장", list(STORES.keys()), index=0, label_visibility="collapsed")
+    selected_store = st.selectbox("설정 매장", store_names, index=0, label_visibility="collapsed")
 
-store_cfg = STORES[selected_store]
-current_cfg = load_settings_from_sheet(store_cfg["db_id"])
-active_admin_pwd = current_cfg.get("admin_password") or ADMIN_PASSWORD
+store_cfg = all_stores_map[selected_store]
+current_cfg = load_store_settings(store_cfg["db_id"], selected_store)
+active_admin_pwd = current_cfg.get("admin_password", "0524")
 
 if not st.session_state.get("authenticated", False):
     st.write("")
@@ -194,7 +79,7 @@ if not st.session_state.get("authenticated", False):
     with c_mid:
         with st.container(border=True):
             st.markdown("#### 🔒 대표자 / 관리자 전용")
-            st.caption("매장 환경설정 변경 및 연동 테스트를 위해 관리자 비밀번호를 입력하세요.")
+            st.caption("매장 환경설정 변경 및 다매장 관리를 위해 관리자 비밀번호를 입력하세요.")
             pwd = st.text_input("관리자 비밀번호", type="password", placeholder="비밀번호 입력", label_visibility="collapsed")
             if st.button("확인", type="primary", use_container_width=True):
                 if pwd == active_admin_pwd:
@@ -204,20 +89,21 @@ if not st.session_state.get("authenticated", False):
                     st.error("비밀번호가 일치하지 않습니다.")
     st.stop()
 
-st.caption("💡 여기서 변경한 설정은 구글 시트(`환경설정` 탭)에 영구 저장되며, 매장 PC·태블릿·아이폰에 즉시 동기화됩니다.")
+st.caption(f"💡 현재 선택된 **[{selected_store}]**의 설정은 구글 시트(`환경설정` 탭)에 영구 저장되며, 모든 화면에 즉시 반영됩니다.")
 
-# ==============================================================================
-# 2. 5개 카테고리 탭 UI
-# ==============================================================================
-t_sec, t_att, t_con, t_pay, t_diag = st.tabs([
+t_sec, t_att, t_con, t_pay, t_diag, t_stores = st.tabs([
     "🔐 보안 · 권한",
     "⏱️ 출퇴근 · 보건증",
     "📝 근로계약서 기본값",
-    "💰 급여 · 세무사 발송",
+    "💰 급여 · 공제율 · 인건비 목표",
     "📲 텔레그램 · 이메일 설정",
+    "🏪 다매장 · 지점 관리",
 ])
 
 with st.form("settings_main_form"):
+    # --------------------------------------------------------------------------
+    # [탭 1] 보안 및 권한 관리
+    # --------------------------------------------------------------------------
     with t_sec:
         st.markdown('<div class="section-title">비밀번호 및 매니저 접근 권한</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -237,6 +123,9 @@ with st.form("settings_main_form"):
                 value=(current_cfg.get("allow_mgr_payroll", "FALSE").upper() == "TRUE"),
             )
 
+    # --------------------------------------------------------------------------
+    # [탭 2] 출퇴근 및 보건증 규칙
+    # --------------------------------------------------------------------------
     with t_att:
         st.markdown('<div class="section-title">출퇴근 입력 및 보건증 만료 알림 기준</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -258,6 +147,9 @@ with st.form("settings_main_form"):
                 step=1,
             )
 
+    # --------------------------------------------------------------------------
+    # [탭 3] 전자 근로계약서 기본 템플릿
+    # --------------------------------------------------------------------------
     with t_con:
         st.markdown('<div class="section-title">사업장 정보 및 계약서 기본 근무조건</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -286,6 +178,9 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("default_job_desc", "홀 서빙 및 주방 보조 등 매장 운영 전반"),
             )
 
+    # --------------------------------------------------------------------------
+    # [탭 4] 급여 정산 · 공제율 · 인건비 목표 경고선 설정 (4번 기능)
+    # --------------------------------------------------------------------------
     with t_pay:
         st.markdown('<div class="section-title">월별 급여 정산일 · 세무사 수신처 · 통장 표기</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -311,6 +206,45 @@ with st.form("settings_main_form"):
                 value=(current_cfg.get("auto_send_payslip", "TRUE").upper() == "TRUE"),
             )
 
+        st.markdown('<div class="section-title">📊 파트타임 세금 공제율 및 인건비율 목표 경고선</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            r1, r2, r3 = st.columns(3)
+            in_base_rate = r1.number_input(
+                "파트타임 기본 공제율 (%)",
+                min_value=0.0,
+                max_value=20.0,
+                value=float(current_cfg.get("part_base_tax_rate", "0.9") or 0.9),
+                step=0.1,
+                format="%.1f",
+            )
+            in_high_rate = r2.number_input(
+                "기준금액 이상 상향 공제율 (%)",
+                min_value=0.0,
+                max_value=20.0,
+                value=float(current_cfg.get("part_high_tax_rate", "3.3") or 3.3),
+                step=0.1,
+                format="%.1f",
+            )
+            in_high_thresh = r3.number_input(
+                "상향 공제율 적용 기준금액 (세전 원)",
+                min_value=0,
+                max_value=10000000,
+                value=int(float(current_cfg.get("part_high_tax_threshold", "1000000") or 1000000)),
+                step=100000,
+            )
+
+            in_target_labor = st.number_input(
+                "매출 대비 목표 인건비율 경고 기준선 (%) — 초과 시 급여정산·경영분석 화면에 경고 표시",
+                min_value=5.0,
+                max_value=80.0,
+                value=float(current_cfg.get("target_labor_ratio", "28.0") or 28.0),
+                step=0.5,
+                format="%.1f",
+            )
+
+    # --------------------------------------------------------------------------
+    # [탭 5] 텔레그램 & 이메일 발송 기본값
+    # --------------------------------------------------------------------------
     with t_diag:
         st.markdown('<div class="section-title">📲 텔레그램 발송 기본값 (봇 토큰 · 채팅 ID)</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -319,18 +253,14 @@ with st.form("settings_main_form"):
                 "텔레그램 봇 토큰 (TELEGRAM_BOT_TOKEN)",
                 value=current_cfg.get("telegram_bot_token", ""),
                 type="password",
-                placeholder="예: 123456789:ABCdefGHIjklMNO...",
             )
             in_tg_chat_id = tg_c2.text_input(
                 "텔레그램 수신 채팅 ID (TELEGRAM_CHAT_ID)",
                 value=current_cfg.get("telegram_chat_id", ""),
-                placeholder="예: 7123456789 또는 -100123456789",
             )
-            st.caption("💡 텔레그램 수신 대상을 단톡방이나 매니저 계정으로 바꾸고 싶을 때 위 채팅 ID만 변경 후 저장하세요.")
-
             st.divider()
             in_tg_health = st.checkbox(
-                "🏥 일일 보건증 만료(D-30) 대상자 텔레그램 자동 브리핑 (하루 1회)",
+                "🏥 일일 보건증 만료 대상자 텔레그램 자동 브리핑 (하루 1회)",
                 value=(current_cfg.get("tg_alert_health", "TRUE").upper() == "TRUE"),
             )
             in_tg_contract = st.checkbox(
@@ -348,17 +278,14 @@ with st.form("settings_main_form"):
             in_webapp_url = em_c1.text_input(
                 "Apps Script 웹앱 URL (DRIVE_UPLOAD_WEBAPP_URL)",
                 value=current_cfg.get("drive_webapp_url", ""),
-                placeholder="https://script.google.com/macros/s/.../exec",
             )
             in_sender_email = em_c2.text_input(
                 "발신 대표 이메일 / 테스트 수신 주소",
                 value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
-                placeholder="bdgrill0524@gmail.com",
             )
-            st.caption("💡 Apps Script 새 배포로 웹앱 URL이 바뀌거나 발신 계정을 바꿀 때 여기서 바로 수정할 수 있습니다.")
 
     st.write("")
-    if st.form_submit_button("💾 모든 환경설정 구글 시트에 저장하기", type="primary", use_container_width=True):
+    if st.form_submit_button(f"💾 [{selected_store}] 환경설정 저장하기", type="primary", use_container_width=True):
         if not in_mgr_pin.strip() or not in_admin_pwd.strip():
             st.error("비밀번호는 비워둘 수 없습니다.")
         else:
@@ -380,6 +307,10 @@ with st.form("settings_main_form"):
                 "tax_accountant_email": in_tax_email.strip(),
                 "bank_transfer_prefix": in_bank_prefix.strip(),
                 "auto_send_payslip": "TRUE" if in_auto_payslip else "FALSE",
+                "part_base_tax_rate": f"{in_base_rate:g}",
+                "part_high_tax_rate": f"{in_high_rate:g}",
+                "part_high_tax_threshold": str(int(in_high_thresh)),
+                "target_labor_ratio": f"{in_target_labor:.1f}",
                 "telegram_bot_token": in_tg_token.strip(),
                 "telegram_chat_id": in_tg_chat_id.strip(),
                 "drive_webapp_url": in_webapp_url.strip(),
@@ -389,13 +320,84 @@ with st.form("settings_main_form"):
                 "tg_alert_payroll": "TRUE" if in_tg_payroll else "FALSE",
             }
             with st.spinner("구글 시트 '환경설정' 탭에 저장 중..."):
-                save_settings_to_sheet(store_cfg["db_id"], updated_cfg)
+                save_store_settings(store_cfg["db_id"], updated_cfg)
                 st.cache_data.clear()
-                st.success("✅ 모든 환경설정이 구글 시트(`환경설정` 탭)에 안전하게 저장되었습니다!")
+                st.success(f"✅ [{selected_store}] 환경설정이 저장되었습니다!")
                 st.rerun()
 
 # ==============================================================================
-# 3. 원클릭 외부 서비스(시트 · 텔레그램 · 이메일) 연동 상태 진단 패널
+# [탭 6] 다매장 · 지점 통합 관리 (3번 기능: 폼 바깥에 독립 배치하여 즉시 추가/수정 가능)
+# ==============================================================================
+with t_stores:
+    st.markdown('<div class="section-title">🏪 등록된 매장 목록 및 시트 ID 관리</div>', unsafe_allow_html=True)
+    st.caption("새로운 지점(예: 감동한점) 오픈 시 아래에서 시트 ID만 등록하면, 프로그램 전체 상단 '매장 선택' 메뉴에 즉시 추가됩니다.")
+
+    for s_name, s_info in all_stores_map.items():
+        with st.expander(f"🏢 {s_name} ({'운영중' if s_info.get('active', True) else '비활성'})", expanded=(s_name == selected_store)):
+            with st.form(f"edit_store_form_{s_name}"):
+                sc1, sc2 = st.columns([2.0, 1.0])
+                ed_db_id = sc1.text_input("통합근태DB 시트 ID (필수)", value=s_info.get("db_id", ""))
+                ed_pin = sc2.text_input("매니저 PIN", value=s_info.get("manager_pin", "0524"))
+
+                sc3, sc4, sc5 = st.columns(3)
+                ed_hist_id = sc3.text_input("급여히스토리 시트 ID", value=s_info.get("hist_id", ""))
+                ed_sales_id = sc4.text_input("매출관리 시트 ID", value=s_info.get("sales_id", ""))
+                ed_folder_id = sc5.text_input("계약서 드라이브 폴더 ID", value=s_info.get("folder_id", DEFAULT_CONTRACT_FOLDER_ID))
+
+                ed_active = st.checkbox("매장 선택 메뉴에 표시 (활성화)", value=s_info.get("active", True))
+
+                if st.form_submit_button(f"💾 [{s_name}] 지점 시트 정보 수정 저장", use_container_width=True):
+                    if not ed_db_id.strip():
+                        st.error("통합근태DB 시트 ID는 필수입니다.")
+                    else:
+                        all_stores_map[s_name] = {
+                            "db_id": ed_db_id.strip(),
+                            "hist_id": ed_hist_id.strip(),
+                            "sales_id": ed_sales_id.strip(),
+                            "folder_id": ed_folder_id.strip() or DEFAULT_CONTRACT_FOLDER_ID,
+                            "manager_pin": ed_pin.strip() or "0524",
+                            "active": ed_active,
+                        }
+                        save_all_stores(all_stores_map)
+                        st.cache_data.clear()
+                        st.success(f"✅ [{s_name}] 지점 정보가 저장되었습니다!")
+                        st.rerun()
+
+    st.markdown('<div class="section-title">➕ 신규 매장(2호점 등) 추가 등록</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        with st.form("add_new_store_form", clear_on_submit=True):
+            nc1, nc2, nc3 = st.columns([1.2, 2.0, 1.0])
+            new_s_name = nc1.text_input("신규 매장명*", placeholder="예: 감동한점")
+            new_s_db = nc2.text_input("통합근태DB 시트 ID*", placeholder="구글 시트 URL의 /d/ 뒤 문자열")
+            new_s_pin = nc3.text_input("초기 매니저 PIN", value="0524")
+
+            nc4, nc5, nc6 = st.columns(3)
+            new_s_hist = nc4.text_input("급여히스토리 시트 ID (선택)")
+            new_s_sales = nc5.text_input("매출관리 시트 ID (선택)")
+            new_s_folder = nc6.text_input("계약서 드라이브 폴더 ID", value=DEFAULT_CONTRACT_FOLDER_ID)
+
+            if st.form_submit_button("➕ 신규 매장 등록하기", type="primary", use_container_width=True):
+                clean_sn = new_s_name.strip()
+                if not clean_sn or not new_s_db.strip():
+                    st.error("신규 매장명과 통합근태DB 시트 ID를 입력해 주세요.")
+                elif clean_sn in all_stores_map:
+                    st.error("이미 등록된 매장명입니다.")
+                else:
+                    all_stores_map[clean_sn] = {
+                        "db_id": new_s_db.strip(),
+                        "hist_id": new_s_hist.strip(),
+                        "sales_id": new_s_sales.strip(),
+                        "folder_id": new_s_folder.strip() or DEFAULT_CONTRACT_FOLDER_ID,
+                        "manager_pin": new_s_pin.strip() or "0524",
+                        "active": True,
+                    }
+                    save_all_stores(all_stores_map)
+                    st.cache_data.clear()
+                    st.success(f"🎉 [{clean_sn}] 매장이 등록되었습니다! 상단 매장 선택 메뉴에서 바로 전환할 수 있습니다.")
+                    st.rerun()
+
+# ==============================================================================
+# 3. 원클릭 외부 서비스 연동 상태 진단 패널
 # ==============================================================================
 st.divider()
 st.markdown('<div class="section-title">📡 외부 연동 상태 실시간 점검 (원클릭 테스트)</div>', unsafe_allow_html=True)
@@ -405,7 +407,7 @@ d1, d2, d3 = st.columns(3)
 with d1:
     with st.container(border=True):
         st.markdown("**1. 구글 시트 DB 연결**")
-        st.caption("통합근태DB 및 시트 탭 읽기/쓰기 상태 확인")
+        st.caption(f"[{selected_store}] 통합근태DB 연결 상태 확인")
         if st.button("시트 연결 테스트", use_container_width=True):
             try:
                 gc = get_gspread_client()
