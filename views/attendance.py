@@ -640,39 +640,41 @@ with left_col:
         btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기"
 
         if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
-            now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            now_short = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-            gc = get_gspread_client()
-            ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+            with st.spinner("출퇴근 기록을 저장하는 중..."):
+                now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                now_short = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                gc = get_gspread_client()
+                ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
 
-            s_str = start_t.strftime("%H:%M")
-            e_str = end_t.strftime("%H:%M")
+                s_str = start_t.strftime("%H:%M")
+                e_str = end_t.strftime("%H:%M")
 
-            if mode == "기존 수정":
-                logs = []
-                if str(old_record.get("시작시간", "")) != s_str:
-                    logs.append(f"[{now_short}] 시작시간 변경: {old_record.get('시작시간')} → {s_str}")
-                if str(old_record.get("종료시간", "")) != e_str:
-                    logs.append(f"[{now_short}] 종료시간 변경: {old_record.get('종료시간')} → {e_str}")
-                logs.append(f"[{now_short}] 수정사유: {edit_reason.strip()}")
+                if mode == "기존 수정":
+                    logs = []
+                    if str(old_record.get("시작시간", "")) != s_str:
+                        logs.append(f"[{now_short}] 시작시간 변경: {old_record.get('시작시간')} → {s_str}")
+                    if str(old_record.get("종료시간", "")) != e_str:
+                        logs.append(f"[{now_short}] 종료시간 변경: {old_record.get('종료시간')} → {e_str}")
+                    logs.append(f"[{now_short}] 수정사유: {edit_reason.strip()}")
 
-                prev_note = memo_val.strip()
-                new_note = f"{prev_note}\n" + "\n".join(logs) if prev_note else "\n".join(logs)
+                    prev_note = memo_val.strip()
+                    new_note = f"{prev_note}\n" + "\n".join(logs) if prev_note else "\n".join(logs)
 
-                row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", new_note, now_full]
-                ws.update(range_name=f"A{target_sheet_row}:J{target_sheet_row}", values=[row_values], value_input_option="USER_ENTERED")
+                    row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", new_note, now_full]
+                    ws.update(range_name=f"A{target_sheet_row}:J{target_sheet_row}", values=[row_values], value_input_option="USER_ENTERED")
 
-                st.session_state["last_edited_sheet_row"] = target_sheet_row
-                st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str}) 수정이 완료되었습니다."
-            else:
-                row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", memo_val.strip(), now_full]
-                ws.append_row(row_values, value_input_option="USER_ENTERED")
-                st.session_state["last_edited_sheet_row"] = None
-                st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str})이 저장되었습니다."
+                    st.session_state["last_edited_sheet_row"] = target_sheet_row
+                    st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str}) 수정이 완료되었습니다."
+                else:
+                    row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", memo_val.strip(), now_full]
+                    ws.append_row(row_values, value_input_option="USER_ENTERED")
+                    st.session_state["last_edited_sheet_row"] = None
+                    st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str})이 저장되었습니다."
 
-            st.session_state["reset_emp_selector"] = True
-            st.cache_data.clear()
-            st.rerun()
+                st.session_state["reset_emp_selector"] = True
+                # 전체 캐시(st.cache_data.clear) 대신 현재 매장 근태 데이터 캐시만 정확히 초기화
+                load_db_sheets.clear(store_cfg["db_id"])
+                st.rerun()
 
 with right_col:
     if not is_emp_selected:
