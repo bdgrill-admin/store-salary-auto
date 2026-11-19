@@ -560,7 +560,7 @@ with top_right:
 
                         reg_memo = st.text_input(
                             "사유 및 정산 메모",
-                            placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
+                            placeholder="예: XX일대타출근 / 개인사정결근:사유 / 3시간 추가근무:사유",
                         )
                         submitted_reg = st.form_submit_button(
                             "📌 정규직 특근/휴무 기록 저장",
