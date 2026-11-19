@@ -5,7 +5,7 @@
 [주요 기능]
 1. store_registry 및 '환경설정' 탭과 실시간 연동 (다매장 목록, 공제율, 목표 인건비율 경고선, 정산 기준일)
 2. 정규직 급여 계산 구조: 계산급여 = 계약급여 - 제세금 / 입금급여 = 계산급여 +/- 변동급여
-3. 해당 정산 기간 내 '정규직근태변동' 내역 자동 조회 및 정규직 급여 표 상단 요약 표시
+3. 해당 정산 기간 내 '정규직근태변동' 내역 자동 조회 및 정규직 급여 표 상단 요약 표시, 정산 확정 시 '정산반영여부' 자동 '완료' 처리
 4. 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
 5. Apps Script 웹앱 연동 세무사(.txt) & 직원 개별 급여명세서 일괄 발송
 ================================================================================
@@ -463,6 +463,7 @@ def fetch_and_calculate_salary(
                     "구분": str(r.get("구분", "")).strip(),
                     "단위": str(r.get("일수_시간", "")).strip(),
                     "사유 및 정산 메모": str(r.get("상세메모", "")).strip(),
+                    "반영여부": str(r.get("정산반영여부", "대기") or "대기").strip(),
                     "등록일시": str(r.get("등록일시", "")).strip(),
                 })
     df_reg_changes = pd.DataFrame(reg_changes_list)
@@ -470,6 +471,57 @@ def fetch_and_calculate_salary(
         df_reg_changes = df_reg_changes.sort_values(["발생일", "이름"], ascending=[True, True]).reset_index(drop=True)
 
     return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings, df_reg_changes
+
+
+def mark_reg_changes_settled(db_id: str, start_date: datetime.date, end_date: datetime.date) -> int:
+    """정산 확정 시 해당 정산 기간 내 '정규직근태변동' 시트의 '정산반영여부'를 '완료'로 변경합니다."""
+    if not db_id:
+        return 0
+    gc = get_gspread_client()
+    ss = gc.open_by_key(db_id)
+    titles = [s.title.strip() for s in ss.worksheets()]
+    tab_name = (
+        "정규직근태변동"
+        if "정규직근태변동" in titles
+        else ("정직원근태변동" if "정직원근태변동" in titles else "")
+    )
+    if not tab_name:
+        return 0
+
+    ws = ss.worksheet(tab_name)
+    rows = ws.get_all_values()
+    if len(rows) < 2:
+        return 0
+
+    headers = [str(c).strip() for c in rows[0]]
+    date_col_idx = headers.index("발생일") if "발생일" in headers else 0
+    status_col_idx = headers.index("정산반영여부") if "정산반영여부" in headers else 5
+
+    # 0-based column index -> A1 column letter (A=1)
+    col_num = status_col_idx + 1
+    col_letters = ""
+    while col_num > 0:
+        col_num, rem = divmod(col_num - 1, 26)
+        col_letters = chr(65 + rem) + col_letters
+
+    batch_payload = []
+    for row_idx, r in enumerate(rows[1:], start=2):
+        raw_d = r[date_col_idx].strip() if len(r) > date_col_idx else ""
+        if not raw_d:
+            continue
+        d_obj = parse_sheet_date(raw_d)
+        if d_obj and start_date <= d_obj <= end_date:
+            cur_status = r[status_col_idx].strip() if len(r) > status_col_idx else ""
+            if cur_status != "완료":
+                batch_payload.append({
+                    "range": f"{col_letters}{row_idx}",
+                    "values": [["완료"]],
+                })
+
+    if batch_payload:
+        ws.batch_update(batch_payload, value_input_option="RAW")
+
+    return len(batch_payload)
 
 
 # =========================================================================
@@ -1256,6 +1308,7 @@ with tab_calc:
             else:
                 with st.spinner("구글 시트 히스토리 저장, 세무사 보고 및 직원 개별 명세서 발송 중..."):
                     save_msg, _ = save_history_to_gsheet(store_cfg["hist_id"], df_ins_edited, df_part_edited, end_dt)
+                    settled_cnt = mark_reg_changes_settled(store_cfg["db_id"], start_dt, end_dt)
                     st.cache_data.clear()
 
                     intro = f"안녕하세요, {selected_store}입니다.\n{email_subject} 전달드립니다.\n\n========================================\n\n"
@@ -1328,6 +1381,8 @@ with tab_calc:
                                 f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
                             )
 
+                    if settled_cnt > 0:
+                        transfer_lines.append(f"\n📌 정규직근태변동 {settled_cnt}건 '완료' 처리")
                     if staff_sent_logs:
                         transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
 
@@ -1335,6 +1390,8 @@ with tab_calc:
 
                 recipients_str = ", ".join(recipient_list)
                 msg_done = f"완료되었습니다! ({save_msg}) 및 `{recipients_str}` 발송이 끝났습니다."
+                if settled_cnt > 0:
+                    msg_done += f" (정규직근태변동 {settled_cnt}건 '완료' 반영)"
                 if staff_sent_logs:
                     msg_done += f" (직원 명세서 발송: {', '.join(staff_sent_logs)})"
                 st.success(msg_done)
