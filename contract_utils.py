@@ -1,17 +1,18 @@
 """
 ================================================================================
 [파일명] contract_utils.py
-[역할] 전자 근로계약서 시스템의 백엔드 핵심 유틸리티 모듈 ('환경설정' 탭 실시간 연동)
+[역할] 전자 근로계약서 및 선택적 비밀유지 서약서 시스템의 백엔드 핵심 유틸리티 모듈
 [주요 기능]
   1. 구글 시트('환경설정')에서 사업체명·대표자·주소·연락처·텔레그램·이메일 설정 로드
   2. 구글 시트('근로계약서', '파트타임', '정규직') 데이터 조회, 동기화 및 미서명 건 삭제
-  3. 서명 완료 시 보건증 제출일 기준 +1년 만료일 자동 산출 후 직원 명부('보건증만료일') 동기화
-  4. ReportLab을 이용한 A4 2페이지 표준근로계약서 PDF 생성 (환경설정 사업장 정보 반영)
+  3. 선택적 '비밀유지 서약서' 포함 여부('비밀유지서약') 저장 및 A4 3페이지 PDF 합본 생성
+  4. 서명 완료 시 보건증 제출일 기준 +1년 만료일 자동 산출 후 직원 명부('보건증만료일') 동기화
   5. Google Apps Script 웹앱과 통신하여 구글 드라이브 PDF 자동 저장 및 이메일 발송
 ================================================================================
 """
 
 import os
+import re
 import json
 import io
 import base64
@@ -37,7 +38,7 @@ CONTRACT_HEADERS = [
     "임금구분", "금액", "상여금", "기타급여", "사회보험",
     "상태", "생성일시", "서명일시",
     "주민번호", "은행명", "계좌번호", "주소", "연락처", "이메일",
-    "CCTV동의", "보건증제출일", "드라이브PDF링크"
+    "CCTV동의", "보건증제출일", "드라이브PDF링크", "비밀유지서약"
 ]
 
 
@@ -92,6 +93,7 @@ def load_runtime_settings(secrets_dict, ss=None) -> dict:
         "default_work_end": "22:00",
         "default_break_min": "30",
         "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
+        "payroll_start_day": "5",
         "drive_webapp_url": str(secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "")).strip(),
         "telegram_bot_token": str(secrets_dict.get("TELEGRAM_BOT_TOKEN", "")).strip(),
         "telegram_chat_id": str(secrets_dict.get("TELEGRAM_CHAT_ID", "")).strip(),
@@ -119,9 +121,13 @@ def get_contract_worksheet(secrets_dict):
     ss = gc.open_by_key(DB_SPREADSHEET_ID)
     try:
         ws = ss.worksheet("근로계약서")
+        # 기존 시트에 29번째 컬럼('비밀유지서약') 헤더가 없으면 AC1에 자동 추가
+        first_row = ws.row_values(1)
+        if len(first_row) < len(CONTRACT_HEADERS):
+            ws.update("A1:AC1", [CONTRACT_HEADERS], value_input_option="RAW")
     except gspread.WorksheetNotFound:
         ws = ss.add_worksheet(title="근로계약서", rows=500, cols=len(CONTRACT_HEADERS))
-        ws.append_row(CONTRACT_HEADERS, value_input_option="USER_ENTERED")
+        ws.append_row(CONTRACT_HEADERS, value_input_option="RAW")
     return ws, ss
 
 
@@ -188,10 +194,31 @@ def create_new_contract(secrets_dict, data: dict) -> str:
         data.get("주소", ""),
         data.get("연락처", ""),
         data.get("이메일", ""),
-        "", "", ""
+        "",
+        "",
+        "",
+        "Y" if data.get("비밀유지서약") in ("Y", "TRUE", True) else "N",
     ]
-    ws.append_row(row, value_input_option="USER_ENTERED")
+    ws.append_row(row, value_input_option="RAW")
     return cid
+
+
+def _extract_birth_from_rrn(rrn_str: str) -> str:
+    """주민번호 앞 6자리에서 생년월일(YYYY.MM.DD)을 자동 추출"""
+    digits = re.sub(r"\D", "", str(rrn_str))
+    if len(digits) < 6:
+        return ""
+    yy = int(digits[:2])
+    mm = digits[2:4]
+    dd = digits[4:6]
+    gender_digit = digits[6] if len(digits) >= 7 else ""
+    if gender_digit in ("3", "4", "7", "8"):
+        year = 2000 + yy
+    elif gender_digit in ("1", "2", "5", "6"):
+        year = 1900 + yy
+    else:
+        year = (2000 + yy) if yy <= 26 else (1900 + yy)
+    return f"{year}.{mm}.{dd}"
 
 
 def _draw_wrapped(c, text, x, y, max_width, line_height, font_name, font_size):
@@ -213,7 +240,7 @@ def _draw_wrapped(c, text, x, y, max_width, line_height, font_name, font_size):
 
 
 def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg: dict = None) -> bytes:
-    """환경설정(사업체명·대표자·주소·연락처)이 반영된 표준근로계약서 PDF 생성"""
+    """표준근로계약서(1~2페이지) 및 선택 시 비밀유지 서약서(3페이지) PDF 생성"""
     cfg = runtime_cfg or {}
     store_title = cfg.get("store_title", "분당그릴").strip() or "분당그릴"
     spaced_store = " ".join(list(store_title)) if len(store_title) <= 5 else store_title
@@ -221,6 +248,10 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg
     spaced_owner = "   ".join(list(owner_name)) if len(owner_name) <= 4 else owner_name
     store_phone = cfg.get("store_phone", "031-713-0342").strip() or "031-713-0342"
     store_address = cfg.get("store_address", "경기도 성남시 분당구 미금일로 74번길 13-3 1층").strip()
+    pay_day = cfg.get("payroll_start_day", "5").strip() or "5"
+
+    include_nda = str(contract.get("비밀유지서약", "N")).strip().upper() in ("Y", "TRUE", "1")
+    total_pages = 3 if include_nda else 2
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -243,6 +274,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg
     other_pay = contract.get("기타급여", "없음")
     insurances = contract.get("사회보험", "")
 
+    rrn = contract.get("주민번호", "")
     bank = contract.get("은행명", "")
     account = contract.get("계좌번호", "")
     addr = contract.get("주소", "")
@@ -285,7 +317,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg
         f"6. 임  금 [입금은행명: {bank}  /  계좌번호: {account}]",
         f"   - {pay_type} :  {pay_amt} 원",
         f"   - 상여금 : {bonus}    /    기타급여(제수당 등) : {other_pay}",
-        "   - 임금지급일 : 매월(매주 또는 매일)  5 일(휴일의 경우는 휴일 지급)",
+        f"   - 임금지급일 : 매월(매주 또는 매일)  {pay_day} 일(휴일의 경우는 휴일 지급)",
         "   - 지급방법 : 근로자 명의 예금통장에 입금( O )",
         "7. 연차유급휴가 : 연차유급휴가는 근로기준법에서 정하는 바에 따라 부여함",
         f"8. 사회보험 적용여부 : [ {insurances} ]",
@@ -305,7 +337,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg
         y -= 6 if is_head else 3
 
     c.setFont(reg_f, 9)
-    c.drawCentredString(w / 2, 46, "- 1 / 2 -")
+    c.drawCentredString(w / 2, 46, f"- 1 / {total_pages} -")
     c.showPage()
 
     # === 2페이지 ===
@@ -377,7 +409,101 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg
             pass
 
     c.setFont(reg_f, 9)
-    c.drawCentredString(w / 2, 46, "- 2 / 2 -")
+    c.drawCentredString(w / 2, 46, f"- 2 / {total_pages} -")
+
+    # === 3페이지 (선택적 비밀유지 및 경업금지 서약서) ===
+    if include_nda:
+        c.showPage()
+        c.setLineWidth(1.2)
+        c.rect(36, 36, w - 72, h - 72)
+
+        nda_title = "서   약   서 (비밀유지 및 경업금지)"
+        c.setFont(bold_f, 18)
+        ntw = c.stringWidth(nda_title, bold_f, 18)
+        c.drawString((w - ntw) / 2, h - 78, nda_title)
+
+        birth_str = _extract_birth_from_rrn(rrn)
+
+        # 우측 상단 서약자 / 귀중 정보 블록
+        y = h - 116
+        rx = 310
+        c.setFont(bold_f, 10.5)
+        c.drawString(rx, y, "서약자 (근로자)")
+        y -= 18
+        c.setFont(reg_f, 10)
+        c.drawString(rx + 6, y, f"• 성명: {emp_name}")
+        y -= 17
+        c.drawString(rx + 6, y, f"• 생년월일: {birth_str}")
+        y -= 17
+        y = _draw_wrapped(c, f"• 주소: {addr}", rx + 6, y, w - rx - 46, 15, reg_f, 9.5)
+
+        y -= 8
+        c.setFont(bold_f, 10.5)
+        c.drawString(rx, y, "귀중")
+        y -= 18
+        c.setFont(reg_f, 10)
+        c.drawString(rx + 6, y, f"• 상호명: {store_title}")
+        y -= 17
+        c.drawString(rx + 6, y, f"• 대표자: {spaced_owner}")
+
+        y -= 28
+        y = _draw_wrapped(
+            c,
+            f"본인은 {store_title}(이하 '당사'라 함)에 채용되어 근무함에 있어, 당사의 영업비밀 및 업무상 알게 된 제반 지식과 정보를 보호하기 위해 아래의 사항을 준수할 것을 엄숙히 서약합니다.",
+            50, y, w - 100, 17, reg_f, 10.3,
+        )
+        y -= 12
+
+        nda_clauses = [
+            ("제1조 (비밀유지의 의무)", [
+                "1. 본인은 직무 수행 여부를 막론하고 재직 중은 물론 퇴직 후 2년 동안 당사의 사전 서면 승인 없이 다음 각 호에 해당하는 정보를 외부에 유출, 공개, 누설하거나 개인적인 목적으로 사용하지 않는다.",
+                "2. 당사 고유의 고기 숙성법, 소스 및 양념(갈비 등) 배합 비율, 조리 레시피 및 주방 운영 매뉴얼 및 당사의 원부재료 매입 원가, 거래처 정보(육류 및 식자재 공급업체 목록) 및 거래 조건, 당사의 매출 정보, 마진율, 주방 내부 설비 및 기기 배치 도면, 기타 당사가 보안을 요청하거나 객관적으로 비밀로 유지되어야 할 영업 및 기술상의 정보",
+            ]),
+            ("제2조 (정보 및 자료의 반환)", [
+                "본인은 퇴직 시 또는 당사의 요청이 있을 때에는 당사의 영업비밀이 포함된 서류, 메모, 데이터(주방 매뉴얼, 조리법 기록 등) 및 관련 물품 일체를 즉시 당사에 반환하며, 어떠한 형태로도 복사본이나 사본을 보유하지 않는다.",
+            ]),
+            ("제3조 (경업금지 의무)", [
+                "본인은 당사의 핵심 기술 및 레시피 보호를 위하여, 퇴직 후 2년 동안 당사의 주요 상권(분당구 및 인근 지역) 내에서 경쟁 관계에 있는 동일 업종(육류 구이 전문점)을 창업하거나, 해당 업체에 취업(동업 포함)하여 당사의 영업비밀을 부당하게 활용하지 않는다.",
+            ]),
+            ("제4조 (서약 위반 시의 책임)", [
+                "본인이 본 서약서의 의무를 위반하여 당사에 손해를 입힌 경우, 본인은 관련 법령(부정경쟁방지 및 영업비밀보호에 관한 법률 등)에 따른 민·형사상의 책임을 전적으로 지며, 당사가 입은 실질적 손해액 전액을 배상할 것을 서약합니다.",
+            ]),
+        ]
+
+        for head_txt, body_list in nda_clauses:
+            c.setFont(bold_f, 10.5)
+            c.drawString(50, y, head_txt)
+            y -= 18
+            for b_txt in body_list:
+                y = _draw_wrapped(c, b_txt, 54, y, w - 104, 16.5, reg_f, 10.0)
+                y -= 4
+            y -= 8
+
+        y -= 14
+        c.setFont(bold_f, 13)
+        c.drawCentredString(w / 2, y, f"{sy} 년    {sm} 월    {sd} 일")
+
+        y -= 42
+        c.setFont(bold_f, 10.5)
+        c.drawString(215, y, f"서약자 (근로자) :   {emp_name}        (서명 또는 인)")
+        if emp_sign_img is not None:
+            try:
+                c.drawImage(ImageReader(emp_sign_img), 385, y - 14, width=68, height=34, mask="auto")
+            except Exception:
+                pass
+
+        y -= 34
+        c.drawString(215, y, f"{store_title} 대표 :   {spaced_owner}        (서명 또는 인)")
+        if os.path.exists(OWNER_SIGN_PATH):
+            try:
+                owner_img = Image.open(OWNER_SIGN_PATH).convert("RGBA")
+                c.drawImage(ImageReader(owner_img), 385, y - 14, width=68, height=35, mask="auto")
+            except Exception:
+                pass
+
+        c.setFont(reg_f, 9)
+        c.drawCentredString(w / 2, 46, f"- 3 / {total_pages} -")
+
     c.save()
     return buf.getvalue()
 
@@ -484,7 +610,7 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     rows = ws.get_all_values()
     headers = [c.strip() for c in rows[0]] if rows else default_headers
     if not rows:
-        ws.append_row(headers, value_input_option="USER_ENTERED")
+        ws.append_row(headers, value_input_option="RAW")
 
     name_idx = headers.index("이름") if "이름" in headers else (1 if "입사일자" in headers else 0)
     found_idx = None
@@ -524,9 +650,9 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     end_col_letter = chr(ord("A") + len(headers) - 1)
 
     if found_idx:
-        ws.update(f"A{found_idx}:{end_col_letter}{found_idx}", [new_row], value_input_option="USER_ENTERED")
+        ws.update(f"A{found_idx}:{end_col_letter}{found_idx}", [new_row], value_input_option="RAW")
     else:
-        ws.append_row(new_row, value_input_option="USER_ENTERED")
+        ws.append_row(new_row, value_input_option="RAW")
 
 
 def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, emp_sign_img: Image.Image):
@@ -544,13 +670,14 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
 
     pdf_bytes = generate_contract_pdf(merged, emp_sign_img, runtime_cfg)
     emp_name = merged.get("직원명", "직원").strip()
-    filename = f"{date_tag}_{emp_name}_근로계약서.pdf"
+    include_nda = str(merged.get("비밀유지서약", "N")).strip().upper() in ("Y", "TRUE", "1")
+    filename = f"{date_tag}_{emp_name}_근로계약서{'_비밀유지서약포함' if include_nda else ''}.pdf"
 
     drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes, runtime_cfg)
     merged["드라이브PDF링크"] = drive_link
 
     updated_row = [merged.get(h, "") for h in CONTRACT_HEADERS]
-    ws.update(f"A{row_idx}:AB{row_idx}", [updated_row], value_input_option="USER_ENTERED")
+    ws.update(f"A{row_idx}:AC{row_idx}", [updated_row], value_input_option="RAW")
 
     try:
         _sync_employee_sheet(ss, merged, emp_inputs)
@@ -565,9 +692,10 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
         bot_token = runtime_cfg.get("telegram_bot_token", "")
         chat_id = runtime_cfg.get("telegram_chat_id", "")
         store_title = runtime_cfg.get("store_title", "분당그릴")
+        nda_tag = " + 비밀유지서약서" if include_nda else ""
         if bot_token and chat_id:
             tele_text = (
-                f"📝 [{store_title} 전자 근로계약서 서명 완료]\n"
+                f"📝 [{store_title} 전자 근로계약서{nda_tag} 서명 완료]\n"
                 f"• 직원명: {emp_name} ({merged.get('계약유형')})\n"
                 f"• 근무조건: {merged.get('임금구분')} {merged.get('금액')}원 / {merged.get('근로개시일')} 입사\n"
                 f"• 이메일 교부: {email_msg}\n"
