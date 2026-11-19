@@ -171,6 +171,7 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
         "tg_alert_contract": "TRUE",
         "tg_alert_payroll": "TRUE",
         "tg_alert_reg_change": "TRUE",
+        "tg_alert_wage_change": "TRUE",
     }
 
 
