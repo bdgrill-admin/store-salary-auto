@@ -2,49 +2,21 @@
 ================================================================================
 [파일명] views/attendance.py
 [역할] 매장 직원 및 매니저 공용 '일일 출퇴근기록부 및 월별 근무시간 조회' 페이지
-[주요 기능]
-  1. '환경설정' 탭과 실시간 연동 (매니저 PIN, 시간 선택 단위, 보건증 만료 기준일, 정산 기준일, 텔레그램 설정)
-  2. 재직 직원 보건증 만료 3중 자동 알림 (상단 배너 + 당사자 이름 선택 시 경고 + 일일 1회 텔레그램 발송)
-  3. 날짜별 일 근무현황 실시간 표 조회 및 매니저 전용 확인(승인/해제)
-  4. 직원 출퇴근 시간 신규 입력 및 기존 내역 선택 수정
 ================================================================================
 """
 
-import os
 import re
 import datetime
 import requests
 import pandas as pd
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-from dotenv import load_dotenv
+from store_registry import (
+    load_all_stores,
+    load_store_settings,
+    get_gspread_client,
+)
 
-load_dotenv()
-
-
-def get_secret(key: str, default: str = ""):
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-    return os.getenv(key, default)
-
-
-STORES = {
-    "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
-        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-    },
-    # 향후 감동한점 오픈 시 주석 해제 후 ID 입력
-    # "감동한점": {
-    #     "db_id": "여기에_감동한점_통합근태DB_ID",
-    #     "manager_pin": get_secret("MANAGER_PIN_GAMDONG", "0524"),
-    # },
-}
-
-CREDENTIALS_FILE = "credentials.json"
+STORES = load_all_stores()
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
 
@@ -132,22 +104,6 @@ def apply_clean_style():
 apply_clean_style()
 
 
-def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    try:
-        if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-            return gspread.authorize(creds)
-    except Exception:
-        pass
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
-    return gspread.authorize(creds)
-
-
 def get_payroll_period(ref_date: datetime.date, start_day: int = 5):
     if ref_date.day >= start_day:
         m_start = ref_date.replace(day=start_day)
@@ -194,27 +150,11 @@ def format_date_with_weekday(d_str: str) -> str:
         return str(d_str)[5:] if len(str(d_str)) >= 10 else str(d_str)
 
 
-@st.cache_data(ttl=20, show_spinner="근태 및 설정 데이터를 불러오는 중...")
+@st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
 def load_db_sheets(db_id: str):
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-
-    cfg = {
-        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
-        "att_time_step_min": "10",
-        "health_alert_days": "30",
-        "payroll_start_day": "5",
-        "store_title": "분당그릴",
-        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
-        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
-        "tg_alert_health": "TRUE",
-    }
-    if "환경설정" in titles:
-        ws_cfg = ss.worksheet("환경설정")
-        for r in ws_cfg.get_all_values()[1:]:
-            if len(r) >= 2 and r[0].strip() and r[1].strip():
-                cfg[r[0].strip()] = r[1].strip()
 
     def read_sheet(tab_name: str, with_row_num: bool = False):
         if tab_name not in titles:
@@ -238,25 +178,25 @@ def load_db_sheets(db_id: str):
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
 
-    return df_emp, df_reg, df_att, cfg
+    return df_emp, df_reg, df_att
 
 
 @st.cache_resource
 def _daily_health_telegram_tracker():
-    return {"last_sent_date": ""}
+    return {}
 
 
-def auto_send_daily_health_telegram(app_cfg: dict, alert_lines: list):
+def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: list):
     if not alert_lines or app_cfg.get("tg_alert_health", "TRUE").upper() != "TRUE":
         return
     tracker = _daily_health_telegram_tracker()
     today_s = datetime.date.today().strftime("%Y-%m-%d")
-    if tracker.get("last_sent_date") == today_s:
+    if tracker.get(store_key) == today_s:
         return
 
     bot_token = app_cfg.get("telegram_bot_token", "").strip()
     chat_id = app_cfg.get("telegram_chat_id", "").strip()
-    store_title = app_cfg.get("store_title", "분당그릴").strip() or "분당그릴"
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
     if bot_token and chat_id:
         clean_lines = [re.sub(r"[*`]", "", x) for x in alert_lines]
         msg = f"🏥 [{store_title} 일일 보건증 갱신 알림 ({today_s})]\n\n" + "\n".join(clean_lines)
@@ -267,14 +207,11 @@ def auto_send_daily_health_telegram(app_cfg: dict, alert_lines: list):
                 timeout=5,
             )
             if resp.status_code == 200:
-                tracker["last_sent_date"] = today_s
+                tracker[store_key] = today_s
         except Exception:
             pass
 
 
-# ==============================================================================
-# 상단 타이틀, 새로고침 버튼, 매장 선택 및 조회 날짜 선택기
-# ==============================================================================
 h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
 with h_col1:
     st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
@@ -286,9 +223,10 @@ with h_col4:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 
 store_cfg = STORES[selected_store]
+app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
 
 try:
-    df_emp, df_reg, df_att, app_cfg = load_db_sheets(store_cfg["db_id"])
+    df_emp, df_reg, df_att = load_db_sheets(store_cfg["db_id"])
 except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
@@ -298,9 +236,6 @@ payroll_start_day = int(app_cfg.get("payroll_start_day", "5") or 5)
 time_step_sec = int(app_cfg.get("att_time_step_min", "10") or 10) * 60
 health_alert_days = int(app_cfg.get("health_alert_days", "30") or 30)
 
-# ==============================================================================
-# 보건증 만료 3중 체크 (환경설정 기준일 적용)
-# ==============================================================================
 today_dt = datetime.date.today()
 health_alerts = []
 emp_health_warning_map = {}
@@ -331,7 +266,7 @@ for gubun_label, df_chk in [("파트타임", df_emp), ("정규직", df_reg)]:
             pass
 
 if health_alerts:
-    auto_send_daily_health_telegram(app_cfg, health_alerts)
+    auto_send_daily_health_telegram(selected_store, app_cfg, health_alerts)
     with st.expander(f"🏥 [필독] 보건증 갱신/만료 대상 직원이 {len(health_alerts)}명 있습니다 (클릭하여 명단 확인)", expanded=True):
         for ha in health_alerts:
             st.markdown(f"- {ha}")
@@ -396,7 +331,7 @@ with top_left:
             valid_cols = [c for c in show_cols if c in day_df.columns]
 
             prev_sel_rows = []
-            grid_state_key = f"att_grid_{date_str}"
+            grid_state_key = f"att_grid_{selected_store}_{date_str}"
             if grid_state_key in st.session_state:
                 prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
 
@@ -465,7 +400,7 @@ with top_right:
                     approve_targets = []
                     for _, r in pending_df.iterrows():
                         chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
-                        if st.checkbox(chk_label, value=False, key=f"chk_app_{r['_sheet_row']}"):
+                        if st.checkbox(chk_label, value=False, key=f"chk_app_{selected_store}_{r['_sheet_row']}"):
                             approve_targets.append((int(r["_sheet_row"]), str(r.get("비고", ""))))
 
                     if st.button(
@@ -480,7 +415,7 @@ with top_right:
                         now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for r_num, old_n in approve_targets:
                             new_n = f"{old_n}\n[{now_s}] 매니저 확인 완료".strip()
-                            ws.update(range_name=f"H{r_num}:J{r_num}", values=[["TRUE", new_n, now_f]])
+                            ws.update(range_name=f"H{r_num}:J{r_num}", values=[["TRUE", new_n, now_f]], value_input_option="RAW")
                         st.success(f"{len(approve_targets)}건 확인 완료!")
                         st.cache_data.clear()
                         st.rerun()
@@ -497,7 +432,7 @@ with top_right:
                         for _, r in approved_day.iterrows():
                             ca, cb = st.columns([2.5, 1], vertical_alignment="center")
                             ca.write(f"**{r['이름']}** {r['시작시간']}~{r['종료시간']}")
-                            if cb.button("해제", key=f"btn_unapp_{r['_sheet_row']}", use_container_width=True):
+                            if cb.button("해제", key=f"btn_unapp_{selected_store}_{r['_sheet_row']}", use_container_width=True):
                                 gc = get_gspread_client()
                                 ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
                                 now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
@@ -506,6 +441,7 @@ with top_right:
                                 ws.update(
                                     range_name=f"H{int(r['_sheet_row'])}:J{int(r['_sheet_row'])}",
                                     values=[["FALSE", new_n, now_f]],
+                                    value_input_option="RAW",
                                 )
                                 st.warning("승인이 해제되었습니다.")
                                 st.cache_data.clear()
@@ -595,7 +531,7 @@ with left_col:
             st.error(emp_health_warning_map[real_emp_name])
 
         inputs_disabled = is_locked or (not is_emp_selected)
-        w_key_sfx = f"{mode}_{target_sheet_row}_{st.session_state['form_reset_ver']}"
+        w_key_sfx = f"{selected_store}_{mode}_{target_sheet_row}_{st.session_state['form_reset_ver']}"
 
         with c1:
             shift_type = st.selectbox(
@@ -692,7 +628,7 @@ with left_col:
                 new_note = f"{prev_note}\n" + "\n".join(logs) if prev_note else "\n".join(logs)
 
                 row_values = [date_str, real_emp_name, shift_type, s_str, e_str, hm_str, dec_hours, "FALSE", new_note, now_full]
-                ws.update(range_name=f"A{target_sheet_row}:J{target_sheet_row}", values=[row_values])
+                ws.update(range_name=f"A{target_sheet_row}:J{target_sheet_row}", values=[row_values], value_input_option="USER_ENTERED")
 
                 st.session_state["last_edited_sheet_row"] = target_sheet_row
                 st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str}) 수정이 완료되었습니다."
