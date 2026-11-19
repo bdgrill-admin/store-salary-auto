@@ -15,6 +15,7 @@ from store_registry import (
     load_all_stores,
     load_store_settings,
     get_gspread_client,
+    dispatch_telegram_alert,
 )
 
 STORES = load_all_stores()
@@ -152,25 +153,8 @@ def load_staff_sheets(db_id: str):
     return df_part, df_reg
 
 
-def _send_telegram_msg(app_cfg: dict, text: str):
-    bot_token = app_cfg.get("telegram_bot_token", "").strip()
-    chat_id = app_cfg.get("telegram_chat_id", "").strip()
-    if bot_token and chat_id:
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": text},
-                timeout=4,
-            )
-        except Exception:
-            pass
-
-
 def notify_new_part_staff(emp_name: str, join_date_str: str, wage: int, memo: str, app_cfg: dict, store_key: str):
-    """신규 파트타임 직원 등록 시 대표님 텔레그램으로 입사 및 시급 알림을 전송합니다."""
-    if app_cfg.get("tg_alert_wage_change", "TRUE").upper() != "TRUE":
-        return
-
+    """신규 파트타임 직원 등록 시 설정된 수신 대상(대표/매니저/모두)에게 텔레그램 알림을 전송합니다."""
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     memo_line = f"\n• 메모/실근무자: {memo}" if memo else ""
     msg = (
@@ -179,14 +163,11 @@ def notify_new_part_staff(emp_name: str, join_date_str: str, wage: int, memo: st
         f"• 입사일자: {join_date_str}\n"
         f"• 책정 시급: {wage:,}원{memo_line}"
     )
-    _send_telegram_msg(app_cfg, msg)
+    dispatch_telegram_alert(app_cfg, "tg_target_wage_change", msg, default_target="대표")
 
 
 def notify_part_wage_changes(df_old: pd.DataFrame, df_new: pd.DataFrame, app_cfg: dict, store_key: str):
-    """파트타임 명부 저장 시 시급이 변경된 직원이 있으면 대표님 텔레그램으로 즉시 알림을 전송합니다."""
-    if app_cfg.get("tg_alert_wage_change", "TRUE").upper() != "TRUE":
-        return
-
+    """파트타임 명부 저장 시 시급이 변경된 직원이 있으면 설정된 수신 대상에게 텔레그램 알림을 전송합니다."""
     old_wage_map = {}
     for _, r in df_old.iterrows():
         nm = str(r.get("이름", "")).strip()
@@ -209,7 +190,7 @@ def notify_part_wage_changes(df_old: pd.DataFrame, df_new: pd.DataFrame, app_cfg
 
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     msg = f"💵 [{store_title} 파트타임 시급 변경 알림]\n" + "\n".join(changes)
-    _send_telegram_msg(app_cfg, msg)
+    dispatch_telegram_alert(app_cfg, "tg_target_wage_change", msg, default_target="대표")
 
 
 def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str, app_cfg: dict):
@@ -351,17 +332,14 @@ if health_alerts:
         with al_c2:
             if st.button("📲 텔레그램으로 갱신 명단 알림 전송", use_container_width=True):
                 bot_token = app_cfg.get("telegram_bot_token", "").strip()
-                chat_id = app_cfg.get("telegram_chat_id", "").strip()
+                owner_id = app_cfg.get("telegram_chat_id", "").strip()
+                mgr_id = app_cfg.get("manager_telegram_chat_id", "").strip()
                 store_title = app_cfg.get("store_title", selected_store)
-                if bot_token and chat_id:
+                if bot_token and (owner_id or mgr_id):
                     clean_lines = [re.sub(r"[*`]", "", x) for x in health_alerts]
                     msg = f"🏥 [{store_title} 보건증 갱신 알림]\n\n" + "\n".join(clean_lines)
-                    requests.post(
-                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                        json={"chat_id": chat_id, "text": msg},
-                        timeout=5,
-                    )
-                    st.toast("텔레그램으로 보건증 갱신 알림을 전송했습니다!")
+                    dispatch_telegram_alert(app_cfg, "tg_target_health", msg, default_target="모두")
+                    st.toast("설정된 수신 대상에게 보건증 갱신 알림을 전송했습니다!")
                 else:
                     st.warning("환경설정에서 텔레그램 토큰과 채팅 ID를 확인해 주세요.")
 
