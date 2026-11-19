@@ -3,13 +3,10 @@
 [파일명] views/payroll.py
 [역할] 매장 통합 월별 급여 정산 · 명세서 일괄 발송 · 매출 대비 인건비 경영 분석 페이지
 [주요 기능]
-  1. 관리자 비밀번호(ADMIN_PASSWORD) 보안 로그인 잠금
-  2. 정규직 급여 계산 구조 개편:
-     - 계산급여 = 계약급여 - 제세금 (4대보험·세금 공제액)
-     - 입금급여 = 계산급여 +/- 변동급여 (추가근무·휴무차감 등)
-     - 세무사 .txt 전달 시: *총급여 -> 계약급여, *최종급여 -> 입금급여 자동 매핑
-  3. 정규직 중도 입·퇴사자 일할 계산기 (변동급여 차감액으로 원클릭 자동 반영)
-  4. 정산 확정 및 원클릭 자동화 (Apps Script 이메일 발송, 대량이체 엑셀, 히스토리 백업)
+  1. '환경설정' 탭과 실시간 연동 (관리자 비밀번호, 정산 기준일, 세무사 이메일, 통장 표기, 텔레그램/웹앱 URL)
+  2. 정규직 급여 계산 구조: 계산급여 = 계약급여 - 제세금 / 입금급여 = 계산급여 +/- 변동급여
+  3. 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
+  4. Apps Script 웹앱 연동 세무사(.txt) & 직원 개별 급여명세서 일괄 발송
 ================================================================================
 """
 
@@ -45,12 +42,12 @@ def get_secret(key: str, default: str = ""):
 
 STORES = {
     "분당그릴": {
-        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",      # 통합근태DB · 파트타임 · 정규직 통합 시트
-        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),              # 분당그릴_급여히스토리 시트 ID
-        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),            # 분당그릴_매출관리 시트 ID
-        "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),          # 세무사 수신 이메일 주소
+        "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
+        "hist_id": get_secret("HIST_SHEET_BUNDANG", ""),
+        "sales_id": get_secret("SALES_SHEET_BUNDANG", ""),
+        "tax_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
     },
-    # 향후 감동한점 오픈 시 주석(#)을 풀고 시트 ID만 채우면 즉시 활성화됩니다.
+    # 향후 감동한점 오픈 시 주석 해제
     # "감동한점": {
     #     "db_id": "여기에_감동한점_통합근태DB_ID",
     #     "hist_id": get_secret("HIST_SHEET_GAMDONG", ""),
@@ -60,13 +57,7 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
-
-SENDER_EMAIL = get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com")
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
-DRIVE_UPLOAD_WEBAPP_URL = get_secret("DRIVE_UPLOAD_WEBAPP_URL", "")
-TELEGRAM_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
-ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
 
 def apply_clean_style():
@@ -141,37 +132,6 @@ def apply_clean_style():
 apply_clean_style()
 
 
-# =========================================================================
-# 1. 관리자 보안 로그인 잠금
-# =========================================================================
-def check_login():
-    if st.session_state.get("authenticated", False):
-        return True
-
-    st.write("")
-    st.write("")
-    _, col_center, _ = st.columns([1.2, 1.3, 1.2])
-    with col_center:
-        with st.container(border=True):
-            st.markdown("#### 🔒 관리자 인증")
-            st.caption("매장 급여 정산 시스템에 접속하려면 비밀번호를 입력하세요.")
-            pwd = st.text_input("접속 비밀번호", type="password", key="login_pwd", label_visibility="collapsed", placeholder="비밀번호 입력")
-            if st.button("로그인", type="primary", use_container_width=True):
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state["authenticated"] = True
-                    st.rerun()
-                else:
-                    st.error("비밀번호가 일치하지 않습니다.")
-    return False
-
-
-if not check_login():
-    st.stop()
-
-
-# =========================================================================
-# 2. 구글 API 인증 및 날짜·시간·금액 정제 유틸리티 함수들
-# =========================================================================
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -189,18 +149,53 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def get_settlement_period(base_date: datetime.date):
-    if base_date.day >= 5:
-        end_date = base_date.replace(day=4)
-        first_of_this_month = base_date.replace(day=1)
-        prev_month_last = first_of_this_month - datetime.timedelta(days=1)
-        start_date = prev_month_last.replace(day=5)
+@st.cache_data(ttl=30, show_spinner="환경설정을 불러오는 중...")
+def load_payroll_settings(db_id: str) -> dict:
+    cfg = {
+        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
+        "admin_password": get_secret("ADMIN_PASSWORD", "0524"),
+        "allow_mgr_payroll": "FALSE",
+        "payroll_start_day": "5",
+        "tax_accountant_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
+        "bank_transfer_prefix": "분당그릴",
+        "auto_send_payslip": "TRUE",
+        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
+        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
+        "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
+        "sender_email": get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com"),
+        "tg_alert_payroll": "TRUE",
+    }
+    try:
+        gc = get_gspread_client()
+        ss = gc.open_by_key(db_id)
+        titles = [ws.title.strip() for ws in ss.worksheets()]
+        if "환경설정" in titles:
+            ws = ss.worksheet("환경설정")
+            for r in ws.get_all_values()[1:]:
+                if len(r) >= 2 and r[0].strip() and r[1].strip():
+                    cfg[r[0].strip()] = r[1].strip()
+    except Exception:
+        pass
+    return cfg
+
+
+def get_settlement_period(base_date: datetime.date, start_day: int = 5):
+    if base_date.day >= start_day:
+        end_date = base_date.replace(day=start_day - 1) if start_day > 1 else (
+            (base_date.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+        )
+        if start_day > 1:
+            first_of_this_month = base_date.replace(day=1)
+            prev_month_last = first_of_this_month - datetime.timedelta(days=1)
+            start_date = prev_month_last.replace(day=start_day)
+        else:
+            start_date = base_date.replace(day=1)
     else:
         first_of_this_month = base_date.replace(day=1)
         prev_month_last = first_of_this_month - datetime.timedelta(days=1)
-        end_date = prev_month_last.replace(day=4)
+        end_date = prev_month_last.replace(day=start_day - 1)
         prev_prev_last = prev_month_last.replace(day=1) - datetime.timedelta(days=1)
-        start_date = prev_prev_last.replace(day=5)
+        start_date = prev_prev_last.replace(day=start_day)
     return start_date, end_date
 
 
@@ -252,7 +247,6 @@ def minutes_to_hhmm(total_min: int):
 
 
 def clean_int(val):
-    """'+100,000'이나 '-100,000'처럼 부호와 콤마가 섞인 문자열도 정수로 정확히 변환"""
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0
     digits = re.sub(r"[^\d.+-]", "", str(val).strip())
@@ -283,7 +277,44 @@ def format_ssn(ssn_str):
 
 
 # =========================================================================
-# 3. 통합근태DB · 파트타임 · 정규직 시트 로드 및 월 급여 자동 계산
+# 1. 관리자 보안 로그인 잠금 ('환경설정' 비밀번호 및 매니저 허용 여부 연동)
+# =========================================================================
+default_db_id = STORES["분당그릴"]["db_id"]
+boot_cfg = load_payroll_settings(default_db_id)
+active_admin_pwd = boot_cfg.get("admin_password", "0524")
+active_mgr_pin = boot_cfg.get("manager_pin", "0524")
+allow_mgr = boot_cfg.get("allow_mgr_payroll", "FALSE").upper() == "TRUE"
+
+
+def check_login():
+    if st.session_state.get("authenticated", False):
+        return True
+    if allow_mgr and st.session_state.get("staff_mgr_unlocked", False):
+        return True
+
+    st.write("")
+    st.write("")
+    _, col_center, _ = st.columns([1.2, 1.3, 1.2])
+    with col_center:
+        with st.container(border=True):
+            st.markdown("#### 🔒 관리자 인증")
+            st.caption("매장 급여 정산 시스템에 접속하려면 비밀번호를 입력하세요.")
+            pwd = st.text_input("접속 비밀번호", type="password", key="login_pwd", label_visibility="collapsed", placeholder="비밀번호 입력")
+            if st.button("로그인", type="primary", use_container_width=True):
+                if pwd == active_admin_pwd or (allow_mgr and pwd == active_mgr_pin):
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 일치하지 않습니다.")
+    return False
+
+
+if not check_login():
+    st.stop()
+
+
+# =========================================================================
+# 2. 통합근태DB · 파트타임 · 정규직 시트 로드 및 월 급여 자동 계산
 # =========================================================================
 @st.cache_data(ttl=30, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
 def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: datetime.date):
@@ -293,7 +324,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
     warnings = []
     attendance_map = {}
 
-    # 1) '통합근태DB' 탭 집계 (매니저확인 == TRUE 만 합산)
     att_ws = db_ss.worksheet("통합근태DB")
     att_rows = att_ws.get_all_values()
 
@@ -367,7 +397,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 records.append(row_dict)
         return records
 
-    # 2) '파트타임' 탭 로드
     part_records = read_tab_records("파트타임")
     part_list = []
     processed_lookup_names = set()
@@ -432,7 +461,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
                 "이메일": "",
             })
 
-    # 3) '정규직' 탭 로드 (계산급여 = 계약급여 - 제세금, 입금급여 = 계산급여 +/- 변동급여)
     ins_records = read_tab_records("정규직")
     ins_list = []
     for rec in ins_records:
@@ -444,7 +472,6 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
         contract_pay = clean_int(rec.get("계약급여", 0))
         old_net = clean_int(rec.get("계산급여", 0)) or clean_int(rec.get("최종급여", 0))
         tax_val = clean_int(rec.get("제세금", 0))
-        # 기존 시트에 '최종급여'만 있고 '제세금'이 0인 경우 자동으로 차액을 제세금으로 산출
         if tax_val == 0 and contract_pay > 0 and 0 < old_net < contract_pay:
             tax_val = contract_pay - old_net
         calc_pay = max(0, contract_pay - tax_val) if contract_pay > 0 else old_net
@@ -469,10 +496,9 @@ def fetch_and_calculate_salary(db_id: str, start_date: datetime.date, end_date: 
 
 
 # =========================================================================
-# 4. 구글 시트 기반 급여 히스토리 저장 및 매출 연동 경영 분석 함수
+# 3. 급여 히스토리 저장 및 매출 연동 경영 분석 함수
 # =========================================================================
 def _parse_grid_values(all_rows: list):
-    """급여히스토리 시트 파싱 (과거 '최종급여' 탭과 신규 '입금급여' 탭 모두 완벽 호환)"""
     ins_sum, part_sum = 0, 0
     total_part_mins = 0
     staff_items = []
@@ -685,12 +711,11 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 
 
 # =========================================================================
-# 5. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / Apps Script 이메일 발송
+# 4. 은행 대량이체 엑셀 / 세무사 양식 텍스트 / 개별 급여명세서 / Apps Script 이메일 발송
 # =========================================================================
-def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
-    """은행 대량이체 엑셀 생성 (정규직은 '입금급여', 파트타임은 '최종급여' 기준)"""
+def build_bulk_transfer_excel(prefix_name: str, df_ins: pd.DataFrame, df_part: pd.DataFrame, end_date: datetime.date):
     rows = []
-    memo = f"{store_name}{end_date.month}월급여"
+    memo = f"{prefix_name}{end_date.month}월급여"
 
     for df_tmp, pay_col in [(df_ins, "입금급여"), (df_part, "최종급여")]:
         if df_tmp.empty:
@@ -717,7 +742,6 @@ def build_bulk_transfer_excel(store_name: str, df_ins: pd.DataFrame, df_part: pd
 
 
 def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
-    """세무사 전달용 .txt 생성 (정규직: *총급여 -> 계약급여, *최종급여 -> 입금급여)"""
     output_lines = []
 
     if not df_ins.empty:
@@ -770,7 +794,6 @@ def build_tax_accountant_text(df_ins: pd.DataFrame, df_part: pd.DataFrame):
 
 
 def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time: bool, start_dt: datetime.date, end_dt: datetime.date):
-    """직원 개별 급여명세서 생성 (정규직은 계약급여, 제세금, 계산급여, 변동급여, 입금급여 상세 표기)"""
     name = str(row.get("이름", "")).strip()
     period_str = f"{start_dt.strftime('%Y.%m.%d')} ~ {end_dt.strftime('%Y.%m.%d')}"
     bank_info = f"{row.get('은행명', '')} {row.get('계좌번호', '')}".strip()
@@ -821,11 +844,11 @@ def build_individual_payslip_text(store_name: str, row: pd.Series, is_part_time:
         )
 
 
-def send_email_simple(to_email: str, subject: str, body_text: str, attachment_bytes=None, attachment_name=None):
+def send_email_simple(to_email: str, subject: str, body_text: str, app_cfg: dict, attachment_bytes=None, attachment_name=None):
     if not to_email or "@" not in to_email:
         raise ValueError("유효한 수신자 이메일 주소가 없습니다.")
 
-    webapp_url = DRIVE_UPLOAD_WEBAPP_URL.strip()
+    webapp_url = app_cfg.get("drive_webapp_url", "").strip()
     if webapp_url:
         payload = {
             "action": "send_email",
@@ -850,11 +873,12 @@ def send_email_simple(to_email: str, subject: str, body_text: str, attachment_by
             raise RuntimeError(f"Apps Script 메일 발송 실패: {res_json.get('error')}")
         return
 
+    sender_email = app_cfg.get("sender_email", "bdgrill0524@gmail.com")
     if not SENDER_APP_PASSWORD:
         raise ValueError("DRIVE_UPLOAD_WEBAPP_URL 또는 SENDER_APP_PASSWORD가 설정되지 않았습니다.")
 
     msg = MIMEMultipart()
-    msg["From"] = SENDER_EMAIL
+    msg["From"] = sender_email
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
@@ -867,14 +891,14 @@ def send_email_simple(to_email: str, subject: str, body_text: str, attachment_by
         msg.attach(part)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+        server.login(sender_email, SENDER_APP_PASSWORD)
         server.send_message(msg)
 
 
-def send_telegram_to_chat(chat_id: str, message: str):
-    if not TELEGRAM_TOKEN or not chat_id:
+def send_telegram_to_chat(bot_token: str, chat_id: str, message: str):
+    if not bot_token or not chat_id:
         return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
         resp = requests.post(url, json={"chat_id": str(chat_id).strip(), "text": message}, timeout=5)
         return resp.status_code == 200
@@ -883,7 +907,7 @@ def send_telegram_to_chat(chat_id: str, message: str):
 
 
 # =========================================================================
-# 6. Streamlit 메인 대시보드 UI
+# 5. Streamlit 메인 대시보드 UI
 # =========================================================================
 head_c1, head_c2 = st.columns([3.2, 1], vertical_alignment="center")
 with head_c1:
@@ -900,6 +924,8 @@ with head_c2:
     selected_store = st.selectbox("정산 매장", list(STORES.keys()), index=0)
 
 store_cfg = STORES[selected_store]
+app_cfg = load_payroll_settings(store_cfg["db_id"])
+payroll_start_day = int(app_cfg.get("payroll_start_day", "5") or 5)
 
 tab_calc, tab_trend = st.tabs([
     f"💰 {selected_store} 월별 급여 정산",
@@ -910,8 +936,8 @@ with tab_calc:
     with st.container(border=True):
         ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
         with ctrl_1:
-            base_date = st.date_input("정산 기준일 (매월 5일 기준)", value=datetime.date.today())
-        start_dt, end_dt = get_settlement_period(base_date)
+            base_date = st.date_input(f"정산 기준일 (매월 {payroll_start_day}일 기준)", value=datetime.date.today())
+        start_dt, end_dt = get_settlement_period(base_date, start_day=payroll_start_day)
         with ctrl_2:
             st.markdown(
                 f"""
@@ -940,9 +966,6 @@ with tab_calc:
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         st.caption("💡 **계산급여** = `계약급여 - 제세금`  |  **입금급여(실이체액)** = `계산급여 ± 변동급여` (추가근무는 양수 `100000`, 휴무 차감은 음수 `-100000` 입력)")
 
-        # ---------------------------------------------------------------------
-        # 정규직 중도 입·퇴사자 일할 계산기 (변동급여 차감액으로 자동 반영)
-        # ---------------------------------------------------------------------
         if "prorated_overrides" not in st.session_state:
             st.session_state["prorated_overrides"] = {}
         if "ins_editor_ver" not in st.session_state:
@@ -1022,7 +1045,6 @@ with tab_calc:
                     "입금급여": st.column_config.NumberColumn("입금급여 (실이체액)", format="%,d", disabled=True),
                 },
             )
-            # 실시간 자동 계산: 계산급여 = 계약급여 - 제세금  |  입금급여 = 계산급여 + 변동급여
             for idx, row in df_ins_edited.iterrows():
                 c_pay = clean_int(row.get("계약급여", 0))
                 tax_pay = clean_int(row.get("제세금", 0))
@@ -1159,8 +1181,11 @@ with tab_calc:
         today_str = datetime.datetime.now().strftime("%Y%m%d")
         txt_filename = f"{selected_store}_급여내역_{today_str}.txt"
         default_subject = f"[{selected_store}] {end_dt.year}년 {end_dt.month}월분 인건비 급여 내역"
-        bulk_excel_bytes = build_bulk_transfer_excel(selected_store, df_ins_edited, df_part_edited, end_dt)
+        bank_prefix = app_cfg.get("bank_transfer_prefix", selected_store).strip() or selected_store
+        bulk_excel_bytes = build_bulk_transfer_excel(bank_prefix, df_ins_edited, df_part_edited, end_dt)
         bulk_filename = f"{selected_store}_{end_dt.strftime('%Y%m')}_은행대량이체.xlsx"
+        default_tax_mail = app_cfg.get("tax_accountant_email", "") or store_cfg["tax_email"]
+        default_auto_slip = app_cfg.get("auto_send_payslip", "TRUE").upper() == "TRUE"
 
         panel_left, panel_right = st.columns([2.2, 1.1])
 
@@ -1169,7 +1194,7 @@ with tab_calc:
                 email_subject = st.text_input("이메일 제목", value=default_subject)
                 raw_emails = st.text_input(
                     "수신자 이메일 (여러 곳일 경우 쉼표 , 로 구분)",
-                    value=store_cfg["tax_email"],
+                    value=default_tax_mail,
                     placeholder="예: tax@example.com, bdgrill0524@gmail.com",
                 )
                 edited_txt = st.text_area(
@@ -1200,7 +1225,7 @@ with tab_calc:
                 st.markdown("**🚀 일괄 정산 확정 (Apps Script 메일 연동)**")
                 send_to_staff = st.checkbox(
                     "직원 개별 급여명세서 동시 발송 (이메일/텔레그램)",
-                    value=True,
+                    value=default_auto_slip,
                 )
                 if warnings:
                     st.caption(f"⚠️ 미확인/확인필요 알림 {len(warnings)}건 있음")
@@ -1226,9 +1251,13 @@ with tab_calc:
                             to_email=recipient,
                             subject=email_subject,
                             body_text=intro + edited_txt,
+                            app_cfg=app_cfg,
                             attachment_bytes=edited_txt.encode("utf-8"),
                             attachment_name=txt_filename,
                         )
+
+                    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+                    admin_chat_id = app_cfg.get("telegram_chat_id", "").strip()
 
                     staff_sent_logs = []
                     if send_to_staff:
@@ -1251,46 +1280,49 @@ with tab_calc:
                                             to_email=emp_email,
                                             subject=f"[{selected_store}] {end_dt.year}년 {end_dt.month}월분 급여명세서 ({emp_name} 님)",
                                             body_text=slip_text,
+                                            app_cfg=app_cfg,
                                         )
                                         channels.append("이메일")
                                     except Exception as mail_err:
                                         channels.append(f"이메일실패({mail_err})")
 
                                 if emp_tg:
-                                    ok = send_telegram_to_chat(emp_tg, slip_text)
+                                    ok = send_telegram_to_chat(bot_token, emp_tg, slip_text)
                                     channels.append("텔레그램" if ok else "텔레그램실패")
 
                                 if channels:
                                     staff_sent_logs.append(f"{emp_name}({', '.join(channels)})")
 
-                    recipients_str = ", ".join(recipient_list)
-                    transfer_lines = [
-                        f"✅ {email_subject} 발송 완료",
-                        f"• 세무사/지정 수신처({len(recipient_list)}곳): {recipients_str}",
-                        f"• 총 이체합계: {total_payout:,}원\n",
-                    ]
-                    if not df_ins_edited.empty:
-                        for _, r in df_ins_edited.iterrows():
-                            var_val = clean_int(r.get("변동급여", 0))
-                            var_rsn = str(r.get("변동급여사유", "")).strip()
-                            var_note = f" [변동급여 {var_val:+,}원: {var_rsn}]" if var_val != 0 else ""
-                            transfer_lines.append(
-                                f"- [정규직] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['입금급여']):,}원{var_note}"
-                            )
-                    if not df_part_edited.empty:
-                        for _, r in df_part_edited.iterrows():
-                            extra_val = clean_int(r.get("그외비용", 0))
-                            extra_rsn = str(r.get("그외비용사유", "")).strip()
-                            extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
-                            transfer_lines.append(
-                                f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
-                            )
+                    if app_cfg.get("tg_alert_payroll", "TRUE").upper() == "TRUE":
+                        recipients_str = ", ".join(recipient_list)
+                        transfer_lines = [
+                            f"✅ {email_subject} 발송 완료",
+                            f"• 세무사/지정 수신처({len(recipient_list)}곳): {recipients_str}",
+                            f"• 총 이체합계: {total_payout:,}원\n",
+                        ]
+                        if not df_ins_edited.empty:
+                            for _, r in df_ins_edited.iterrows():
+                                var_val = clean_int(r.get("변동급여", 0))
+                                var_rsn = str(r.get("변동급여사유", "")).strip()
+                                var_note = f" [변동급여 {var_val:+,}원: {var_rsn}]" if var_val != 0 else ""
+                                transfer_lines.append(
+                                    f"- [정규직] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['입금급여']):,}원{var_note}"
+                                )
+                        if not df_part_edited.empty:
+                            for _, r in df_part_edited.iterrows():
+                                extra_val = clean_int(r.get("그외비용", 0))
+                                extra_rsn = str(r.get("그외비용사유", "")).strip()
+                                extra_note = f" [그외비용 {extra_val:+,}원: {extra_rsn}]" if extra_val != 0 else ""
+                                transfer_lines.append(
+                                    f"- [파트] {r['이름']} ({r['은행명']} {r['계좌번호']}): {clean_int(r['최종급여']):,}원{extra_note}"
+                                )
 
-                    if staff_sent_logs:
-                        transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
+                        if staff_sent_logs:
+                            transfer_lines.append(f"\n📨 직원 개별 명세서 발송: {', '.join(staff_sent_logs)}")
 
-                    send_telegram_to_chat(TELEGRAM_CHAT_ID, "\n".join(transfer_lines))
+                        send_telegram_to_chat(bot_token, admin_chat_id, "\n".join(transfer_lines))
 
+                recipients_str = ", ".join(recipient_list)
                 msg_done = f"완료되었습니다! ({save_msg}) 및 `{recipients_str}` 발송이 끝났습니다."
                 if staff_sent_logs:
                     msg_done += f" (직원 명세서 발송: {', '.join(staff_sent_logs)})"
