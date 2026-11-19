@@ -3,14 +3,10 @@
 [파일명] views/attendance.py
 [역할] 매장 직원 및 매니저 공용 '일일 출퇴근기록부 및 월별 근무시간 조회' 페이지
 [주요 기능]
-  1. [신규] 재직 직원(파트타임·정규직) 보건증 만료 D-30 3중 자동 알림:
-     - ① 출퇴근기록부 최상단 경고 배너 상시 표시
-     - ② 직원이 출퇴근 입력 시 본인 이름을 선택하면 당사자에게 직접 갱신 안내 표시
-     - ③ 만료 대상자 발생 시 당일 최초 접속 시점에 대표님 텔레그램으로 자동 브리핑 (1일 1회)
-  2. 날짜별 일 근무현황 실시간 표 조회 (선택된 행 파란색 / 방금 수정된 행 초록색 하이라이트)
-  3. 매니저 전용 확인(PIN 번호 입력): 미확인 근태 일괄 승인 및 승인 완료 건 잠금 해제
-  4. 직원 출퇴근 시간 신규 입력 및 기존 내역 선택 수정 (이름 선택 전 입력칸 잠금 및 저장 후 리셋)
-  5. 선택한 직원의 정산월 기준(매월 5일 ~ 익월 4일) 누적 출근일수 및 총 근무시간 실시간 집계
+  1. '환경설정' 탭과 실시간 연동 (매니저 PIN, 시간 선택 단위, 보건증 만료 기준일, 정산 기준일, 텔레그램 설정)
+  2. 재직 직원 보건증 만료 3중 자동 알림 (상단 배너 + 당사자 이름 선택 시 경고 + 일일 1회 텔레그램 발송)
+  3. 날짜별 일 근무현황 실시간 표 조회 및 매니저 전용 확인(승인/해제)
+  4. 직원 출퇴근 시간 신규 입력 및 기존 내역 선택 수정
 ================================================================================
 """
 
@@ -27,9 +23,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# ------------------------------------------------------------------------------
-# 환경변수 및 Streamlit Secrets 조회 함수
-# ------------------------------------------------------------------------------
 def get_secret(key: str, default: str = ""):
     try:
         if key in st.secrets:
@@ -39,9 +32,6 @@ def get_secret(key: str, default: str = ""):
     return os.getenv(key, default)
 
 
-# ------------------------------------------------------------------------------
-# 매장별 통합근태DB 시트 ID, 매니저 PIN, 급여 정산 기준일(매월 5일) 설정
-# ------------------------------------------------------------------------------
 STORES = {
     "분당그릴": {
         "db_id": "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8",
@@ -55,14 +45,10 @@ STORES = {
 }
 
 CREDENTIALS_FILE = "credentials.json"
-PAYROLL_START_DAY = 5  # 급여 정산 시작일 (매월 5일 ~ 다음 달 4일)
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
 
 
-# ------------------------------------------------------------------------------
-# 화면 UI 스타일(Pretendard 폰트, 매니저 박스 강조 색상, 여백 등) 설정
-# ------------------------------------------------------------------------------
 def apply_clean_style():
     st.markdown(
         """
@@ -146,9 +132,6 @@ def apply_clean_style():
 apply_clean_style()
 
 
-# ------------------------------------------------------------------------------
-# 구글 시트 API 클라이언트 인증 및 정산 기간/시간 포맷 변환 보조 함수들
-# ------------------------------------------------------------------------------
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -166,7 +149,6 @@ def get_gspread_client():
 
 
 def get_payroll_period(ref_date: datetime.date, start_day: int = 5):
-    """기준 날짜가 속한 정산월의 시작일(5일)과 종료일(익월 4일)을 계산"""
     if ref_date.day >= start_day:
         m_start = ref_date.replace(day=start_day)
         if ref_date.month == 12:
@@ -183,16 +165,15 @@ def get_payroll_period(ref_date: datetime.date, start_day: int = 5):
     return m_start, m_end
 
 
-def get_recent_payroll_months(base_date: datetime.date, count: int = 6):
-    """최근 6개월치 정산월 드롭다운 선택지 생성"""
+def get_recent_payroll_months(base_date: datetime.date, start_day: int = 5, count: int = 6):
     options = {}
-    cur_start, cur_end = get_payroll_period(base_date, PAYROLL_START_DAY)
+    cur_start, cur_end = get_payroll_period(base_date, start_day)
     for i in range(count):
         tag = "이번 정산월" if i == 0 else f"{i}개월 전"
         label = f"{cur_start.strftime('%Y년 %m월분')} ({cur_start.strftime('%m/%d')}~{cur_end.strftime('%m/%d')}) · {tag}"
         options[label] = (cur_start, cur_end)
         prev_ref = cur_start - datetime.timedelta(days=1)
-        cur_start, cur_end = get_payroll_period(prev_ref, PAYROLL_START_DAY)
+        cur_start, cur_end = get_payroll_period(prev_ref, start_day)
     return options
 
 
@@ -213,14 +194,27 @@ def format_date_with_weekday(d_str: str) -> str:
         return str(d_str)[5:] if len(str(d_str)) >= 10 else str(d_str)
 
 
-# ------------------------------------------------------------------------------
-# 구글 시트에서 '파트타임', '정규직'(보건증 체크용) 및 '통합근태DB'(출퇴근기록) 로드
-# ------------------------------------------------------------------------------
-@st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
+@st.cache_data(ttl=20, show_spinner="근태 및 설정 데이터를 불러오는 중...")
 def load_db_sheets(db_id: str):
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
+
+    cfg = {
+        "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
+        "att_time_step_min": "10",
+        "health_alert_days": "30",
+        "payroll_start_day": "5",
+        "store_title": "분당그릴",
+        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
+        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
+        "tg_alert_health": "TRUE",
+    }
+    if "환경설정" in titles:
+        ws_cfg = ss.worksheet("환경설정")
+        for r in ws_cfg.get_all_values()[1:]:
+            if len(r) >= 2 and r[0].strip() and r[1].strip():
+                cfg[r[0].strip()] = r[1].strip()
 
     def read_sheet(tab_name: str, with_row_num: bool = False):
         if tab_name not in titles:
@@ -244,30 +238,28 @@ def load_db_sheets(db_id: str):
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
 
-    return df_emp, df_reg, df_att
+    return df_emp, df_reg, df_att, cfg
 
 
-# ------------------------------------------------------------------------------
-# [하루 1회 캐시] 당일 최초 접속 시 보건증 만료 임박자가 있으면 텔레그램 자동 발송
-# ------------------------------------------------------------------------------
 @st.cache_resource
 def _daily_health_telegram_tracker():
     return {"last_sent_date": ""}
 
 
-def auto_send_daily_health_telegram(store_name: str, alert_lines: list):
-    if not alert_lines:
+def auto_send_daily_health_telegram(app_cfg: dict, alert_lines: list):
+    if not alert_lines or app_cfg.get("tg_alert_health", "TRUE").upper() != "TRUE":
         return
     tracker = _daily_health_telegram_tracker()
     today_s = datetime.date.today().strftime("%Y-%m-%d")
     if tracker.get("last_sent_date") == today_s:
         return
 
-    bot_token = get_secret("TELEGRAM_BOT_TOKEN", "")
-    chat_id = get_secret("TELEGRAM_CHAT_ID", "")
+    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+    chat_id = app_cfg.get("telegram_chat_id", "").strip()
+    store_title = app_cfg.get("store_title", "분당그릴").strip() or "분당그릴"
     if bot_token and chat_id:
         clean_lines = [re.sub(r"[*`]", "", x) for x in alert_lines]
-        msg = f"🏥 [{store_name} 일일 보건증 갱신 알림 ({today_s})]\n\n" + "\n".join(clean_lines)
+        msg = f"🏥 [{store_title} 일일 보건증 갱신 알림 ({today_s})]\n\n" + "\n".join(clean_lines)
         try:
             resp = requests.post(
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
@@ -296,17 +288,22 @@ with h_col4:
 store_cfg = STORES[selected_store]
 
 try:
-    df_emp, df_reg, df_att = load_db_sheets(store_cfg["db_id"])
+    df_emp, df_reg, df_att, app_cfg = load_db_sheets(store_cfg["db_id"])
 except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
 
+active_mgr_pin = app_cfg.get("manager_pin") or store_cfg["manager_pin"]
+payroll_start_day = int(app_cfg.get("payroll_start_day", "5") or 5)
+time_step_sec = int(app_cfg.get("att_time_step_min", "10") or 10) * 60
+health_alert_days = int(app_cfg.get("health_alert_days", "30") or 30)
+
 # ==============================================================================
-# [보건증 만료 D-30 3중 체크] 파트타임 + 정규직 전체 재직자 검사
+# 보건증 만료 3중 체크 (환경설정 기준일 적용)
 # ==============================================================================
 today_dt = datetime.date.today()
 health_alerts = []
-emp_health_warning_map = {}  # {실근무자명 또는 본명: 경고문구}
+emp_health_warning_map = {}
 
 for gubun_label, df_chk in [("파트타임", df_emp), ("정규직", df_reg)]:
     if df_chk is None or df_chk.empty or "보건증만료일" not in df_chk.columns:
@@ -326,23 +323,21 @@ for gubun_label, df_chk in [("파트타임", df_emp), ("정규직", df_reg)]:
                 msg = f"🚨 **[{gubun_label}] {disp_nm}** 님: 보건증 유효기간 **{abs(d_left)}일 경과** (만료일: `{exp_str}`)"
                 health_alerts.append(msg)
                 emp_health_warning_map[disp_nm] = f"🚨 **{disp_nm}** 님, 보건증 유효기간({exp_str})이 지났습니다! 즉시 재발급 후 매니저에게 제출해 주세요."
-            elif d_left <= 30:
+            elif d_left <= health_alert_days:
                 msg = f"⚠️ **[{gubun_label}] {disp_nm}** 님: 보건증 만료 **D-{d_left}** (만료일: `{exp_str}`)"
                 health_alerts.append(msg)
                 emp_health_warning_map[disp_nm] = f"⚠️ **{disp_nm}** 님, 보건증 만료일이 **{d_left}일** 남았습니다({exp_str}). 미리 보건소에서 갱신해 주세요!"
         except Exception:
             pass
 
-# ① 출퇴근기록부 최상단 배너 표시 & ③ 당일 최초 1회 텔레그램 자동 발송
 if health_alerts:
-    auto_send_daily_health_telegram(selected_store, health_alerts)
+    auto_send_daily_health_telegram(app_cfg, health_alerts)
     with st.expander(f"🏥 [필독] 보건증 갱신/만료 대상 직원이 {len(health_alerts)}명 있습니다 (클릭하여 명단 확인)", expanded=True):
         for ha in health_alerts:
             st.markdown(f"- {ha}")
 
 st.markdown('<div class="app-subtitle">📅 조회 및 입력 날짜</div>', unsafe_allow_html=True)
 
-# 재직 중인 파트타임 직원 이름 목록 추출
 active_emp_names = []
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
@@ -384,9 +379,6 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
-# ==============================================================================
-# 상단 좌/우 영역: [좌] 1. 일 근무현황 표  |  [우] 매니저 전용 확인(승인/해제)
-# ==============================================================================
 top_left, top_right = st.columns([1.68, 1.07])
 
 selected_grid_record = None
@@ -458,7 +450,7 @@ with top_right:
                 label_visibility="collapsed",
             )
 
-        if pin_input == store_cfg["manager_pin"]:
+        if pin_input == active_mgr_pin:
             t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
 
             with t_app:
@@ -523,9 +515,6 @@ with top_right:
         else:
             st.caption("매니저 확인 전까지는 위의 표에서 행을 체크해 수정할 수 있습니다.")
 
-# ==============================================================================
-# 하단 좌/우 영역: [좌] 2. 출퇴근 시간 입력/수정  |  [우] 3. 개인별 월 누적 근무시간 조회
-# ==============================================================================
 if "form_reset_ver" not in st.session_state:
     st.session_state["form_reset_ver"] = 0
 
@@ -602,7 +591,6 @@ with left_col:
                     real_emp_name = ""
                     is_emp_selected = False
 
-        # ② 직원이 본인 이름을 선택했을 때 본인이 보건증 갱신 대상자면 즉시 개인 맞춤 경고 출력
         if is_emp_selected and real_emp_name in emp_health_warning_map:
             st.error(emp_health_warning_map[real_emp_name])
 
@@ -621,7 +609,7 @@ with left_col:
             start_t = st.time_input(
                 "시작시간",
                 value=def_s,
-                step=600,
+                step=time_step_sec,
                 disabled=inputs_disabled,
                 key=f"start_{w_key_sfx}",
             )
@@ -629,7 +617,7 @@ with left_col:
             end_t = st.time_input(
                 "종료시간",
                 value=def_e,
-                step=600,
+                step=time_step_sec,
                 disabled=inputs_disabled,
                 key=f"end_{w_key_sfx}",
             )
@@ -726,7 +714,7 @@ with right_col:
     else:
         st.markdown(f'<div class="section-title">3. {real_emp_name} 님 월별 근무시간 조회</div>', unsafe_allow_html=True)
 
-        month_options = get_recent_payroll_months(datetime.date.today(), count=6)
+        month_options = get_recent_payroll_months(datetime.date.today(), start_day=payroll_start_day, count=6)
         sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)
         m_start, m_end = month_options[sel_month_label]
 
