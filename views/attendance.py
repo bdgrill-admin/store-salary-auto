@@ -188,9 +188,9 @@ def load_regular_changes(db_id: str) -> pd.DataFrame:
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정직원근태변동" not in titles:
+    if "정규직근태변동" not in titles:
         return pd.DataFrame()
-    ws = ss.worksheet("정직원근태변동")
+    ws = ss.worksheet("정규직근태변동")
     rows = ws.get_all_values()
     if len(rows) < 2:
         return pd.DataFrame()
@@ -207,14 +207,14 @@ def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values:
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정직원근태변동" not in titles:
-        ws = ss.add_worksheet(title="정직원근태변동", rows=500, cols=8)
+    if "정규직근태변동" not in titles:
+        ws = ss.add_worksheet(title="정규직근태변동", rows=500, cols=8)
         ws.append_row(
             ["발생일", "이름", "구분", "일수_시간", "상세메모", "정산반영여부", "등록일시"],
             value_input_option="RAW",
         )
     else:
-        ws = ss.worksheet("정직원근태변동")
+        ws = ss.worksheet("정규직근태변동")
 
     ws.append_row(row_values, value_input_option="USER_ENTERED")
 
@@ -224,7 +224,7 @@ def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values:
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     if bot_token and chat_id:
         msg = (
-            f"📌 [{store_title} 정직원 근태변동 등록]\n"
+            f"📌 [{store_title} 정규직 근태변동 등록]\n"
             f"• 발생일: {row_values[0]}\n"
             f"• 이름: {row_values[1]}\n"
             f"• 구분: {row_values[2]} ({row_values[3]})\n"
@@ -444,7 +444,7 @@ with top_right:
             )
 
         if pin_input == active_mgr_pin:
-            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정직원 특근/휴무"])
+            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정규직 특근/휴무"])
 
             with t_app:
                 pending_df = (
@@ -544,7 +544,7 @@ with top_right:
                         with rc1:
                             reg_date = st.date_input("발생 날짜", value=sel_date)
                         with rc2:
-                            reg_emp = st.selectbox("정직원 선택", options=reg_names)
+                            reg_emp = st.selectbox("정규직 선택", options=reg_names)
 
                         rc3, rc4 = st.columns(2)
                         with rc3:
@@ -563,7 +563,7 @@ with top_right:
                             placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
                         )
                         submitted_reg = st.form_submit_button(
-                            "📌 정직원 특근/휴무 기록 저장",
+                            "📌 정규직 특근/휴무 기록 저장",
                             type="primary",
                             use_container_width=True,
                         )
