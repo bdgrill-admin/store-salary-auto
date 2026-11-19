@@ -156,11 +156,14 @@ def load_db_sheets(db_id: str):
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
 
-    def read_sheet(tab_name: str, with_row_num: bool = False):
-        if tab_name not in titles:
-            return pd.DataFrame()
-        ws = ss.worksheet(tab_name)
-        rows = ws.get_all_values()
+    target_tabs = [t for t in ["파트타임", "정규직", "통합근태DB"] if t in titles]
+    values_map = {}
+    if target_tabs:
+        res = ss.values_batch_get([f"'{t}'!A:Z" for t in target_tabs])
+        for tab_name, vr in zip(target_tabs, res.get("valueRanges", [])):
+            values_map[tab_name] = vr.get("values", [])
+
+    def parse_rows(rows: list, with_row_num: bool = False):
         out = []
         if len(rows) >= 2:
             headers = [c.strip() for c in rows[0]]
@@ -172,9 +175,9 @@ def load_db_sheets(db_id: str):
                     out.append(row_d)
         return pd.DataFrame(out)
 
-    df_emp = read_sheet("파트타임")
-    df_reg = read_sheet("정규직")
-    df_att = read_sheet("통합근태DB", with_row_num=True)
+    df_emp = parse_rows(values_map.get("파트타임", []))
+    df_reg = parse_rows(values_map.get("정규직", []))
+    df_att = parse_rows(values_map.get("통합근태DB", []), with_row_num=True)
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
 
