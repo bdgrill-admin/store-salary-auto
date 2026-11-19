@@ -20,7 +20,7 @@ STORES = load_all_stores()
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
 REG_CHANGE_TYPES = ["➕ 추가출근", "➖ 기타휴무", "🔄 대체휴무"]
-REG_CHANGE_UNITS = ["1일", "0.5일 (반차)", "시간 단위 (사유란 기재)"]
+REG_CHANGE_UNITS = ["1일", "시간단위(사유란 기재)"]
 
 
 def apply_clean_style():
@@ -618,7 +618,7 @@ with top_right:
 
                         reg_memo = st.text_input(
                             "사유 및 정산 메모",
-                            placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
+                            placeholder="예: 추가출근:사유 / 개인사정결근:사유 / OO시간추가근무:사유",
                         )
                         submitted_reg = st.form_submit_button(
                             "📌 정규직 특근/휴무 기록 저장",
