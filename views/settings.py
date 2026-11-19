@@ -4,7 +4,7 @@
 [역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 다매장 관리' 페이지
 [주요 기능]
   1. 보안 · 권한: 매니저 PIN, 대표자 비밀번호, 매니저 급여정산 열람 허용 여부
-  2. 출퇴근 · 보건증: 시간 선택 단위(분), 보건증 만료 사전 경고일
+  2. 보건증 알림: 보건증 만료 사전 경고일(D-Day)
   3. 근로계약서 기본값: 사업체명, 대표자명, 매장 전화번호, 사업장 주소, 기본 근무조건
   4. 급여 · 공제율 · 인건비 목표: 정산 기준일, 세무사 이메일, 파트타임 공제율/기준금액, 목표 인건비율(%)
   5. 텔레그램 · 이메일 설정: 봇 토큰, 채팅 ID, Apps Script 웹앱 URL, 알림 ON/OFF
@@ -93,7 +93,7 @@ st.caption(f"💡 현재 선택된 **[{selected_store}]**의 설정은 구글 �
 
 t_sec, t_att, t_con, t_pay, t_diag, t_stores = st.tabs([
     "🔐 보안 · 권한",
-    "⏱️ 출퇴근 · 보건증",
+    "🏥 보건증 알림 기준",
     "📝 근로계약서 기본값",
     "💰 급여 · 공제율 · 인건비 목표",
     "📲 텔레그램 · 이메일 설정",
@@ -124,23 +124,13 @@ with st.form("settings_main_form"):
             )
 
     # --------------------------------------------------------------------------
-    # [탭 2] 출퇴근 및 보건증 규칙
+    # [탭 2] 보건증 만료 알림 기준
     # --------------------------------------------------------------------------
     with t_att:
-        st.markdown('<div class="section-title">출퇴근 입력 및 보건증 만료 알림 기준</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">보건증 만료 사전 경고 기준일</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            a1, a2 = st.columns(2)
-            step_options = ["5", "10", "15", "30"]
-            cur_step = current_cfg.get("att_time_step_min", "10")
-            step_idx = step_options.index(cur_step) if cur_step in step_options else 1
-            in_time_step = a1.selectbox(
-                "출퇴근 시간 선택 단위 (분)",
-                options=step_options,
-                index=step_idx,
-                format_func=lambda x: f"{x}분 단위",
-            )
-            in_health_days = a2.number_input(
-                "보건증 만료 사전 경고 기준일 (만료 며칠 전부터 알림)",
+            in_health_days = st.number_input(
+                "보건증 만료 사전 경고 기준일 (만료 며칠 전부터 출퇴근기록부·직원관리 화면 및 텔레그램 알림 표시)",
                 min_value=7,
                 max_value=90,
                 value=int(current_cfg.get("health_alert_days", "30") or 30),
@@ -179,7 +169,7 @@ with st.form("settings_main_form"):
             )
 
     # --------------------------------------------------------------------------
-    # [탭 4] 급여 정산 · 공제율 · 인건비 목표 경고선 설정 (4번 기능)
+    # [탭 4] 급여 정산 · 공제율 · 인건비 목표 경고선 설정
     # --------------------------------------------------------------------------
     with t_pay:
         st.markdown('<div class="section-title">월별 급여 정산일 · 세무사 수신처 · 통장 표기</div>', unsafe_allow_html=True)
@@ -293,7 +283,6 @@ with st.form("settings_main_form"):
                 "manager_pin": in_mgr_pin.strip(),
                 "admin_password": in_admin_pwd.strip(),
                 "allow_mgr_payroll": "TRUE" if in_allow_mgr_payroll else "FALSE",
-                "att_time_step_min": str(in_time_step),
                 "health_alert_days": str(int(in_health_days)),
                 "store_title": in_store_title.strip(),
                 "owner_name": in_owner_name.strip(),
@@ -326,7 +315,7 @@ with st.form("settings_main_form"):
                 st.rerun()
 
 # ==============================================================================
-# [탭 6] 다매장 · 지점 통합 관리 (3번 기능: 폼 바깥에 독립 배치하여 즉시 추가/수정 가능)
+# [탭 6] 다매장 · 지점 통합 관리
 # ==============================================================================
 with t_stores:
     st.markdown('<div class="section-title">🏪 등록된 매장 목록 및 시트 ID 관리</div>', unsafe_allow_html=True)
