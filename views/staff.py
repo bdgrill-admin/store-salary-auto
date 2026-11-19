@@ -152,6 +152,46 @@ def load_staff_sheets(db_id: str):
     return df_part, df_reg
 
 
+def notify_part_wage_changes(df_old: pd.DataFrame, df_new: pd.DataFrame, app_cfg: dict, store_key: str):
+    """파트타임 명부 저장 시 시급이 변경된 직원이 있으면 대표님 텔레그램으로 즉시 알림을 전송합니다."""
+    if app_cfg.get("tg_alert_wage_change", "TRUE").upper() != "TRUE":
+        return
+
+    old_wage_map = {}
+    for _, r in df_old.iterrows():
+        nm = str(r.get("이름", "")).strip()
+        if nm:
+            old_wage_map[nm] = clean_int(r.get("시급", 0))
+
+    changes = []
+    for _, r in df_new.iterrows():
+        nm = str(r.get("이름", "")).strip()
+        if not nm or nm not in old_wage_map:
+            continue
+        new_w = clean_int(r.get("시급", 0))
+        old_w = old_wage_map[nm]
+        if new_w != old_w and new_w > 0:
+            diff = new_w - old_w
+            changes.append(f"• {nm}: {old_w:,}원 ➔ {new_w:,}원 ({diff:+,}원)")
+
+    if not changes:
+        return
+
+    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+    chat_id = app_cfg.get("telegram_chat_id", "").strip()
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    if bot_token and chat_id:
+        msg = f"💵 [{store_title} 파트타임 시급 변경 알림]\n" + "\n".join(changes)
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg},
+                timeout=4,
+            )
+        except Exception:
+            pass
+
+
 def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str, app_cfg: dict):
     webapp_url = app_cfg.get("drive_webapp_url", "").strip()
     store_title = app_cfg.get("store_title", "분당그릴").strip() or "분당그릴"
@@ -441,6 +481,7 @@ edited_reg = st.data_editor(
 if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 저장하기", type="primary", use_container_width=True):
     with st.spinner("통합근태DB 시트에 저장 중..."):
         save_staff_tabs(store_cfg["db_id"], edited_part, edited_reg)
+        notify_part_wage_changes(df_part, edited_part, app_cfg, selected_store)
         st.success("✅ 파트타임 및 정규직 직원 명부가 모두 저장되었습니다!")
         st.cache_data.clear()
         st.rerun()
