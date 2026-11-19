@@ -390,35 +390,67 @@ with top_right:
 
             with t_app:
                 pending_df = (
-                    df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"]
+                    df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"].copy()
                     if not df_att.empty
                     else pd.DataFrame()
                 )
                 if pending_df.empty:
                     st.success("🎉 모든 근태 기록이 확인 완료되었습니다.")
                 else:
-                    approve_targets = []
-                    for _, r in pending_df.iterrows():
-                        chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
-                        if st.checkbox(chk_label, value=False, key=f"chk_app_{selected_store}_{r['_sheet_row']}"):
-                            approve_targets.append((int(r["_sheet_row"]), str(r.get("비고", ""))))
+                    # 1. 체크박스 클릭 시마다 앱이 재실행되지 않도록 form으로 묶음
+                    with st.form(key=f"mgr_approve_form_{selected_store}", border=False):
+                        select_all = st.checkbox(
+                            f"전체 선택 (총 {len(pending_df)}건)",
+                            value=True,
+                            key=f"chk_all_{selected_store}",
+                        )
+                        st.divider()
 
-                    if st.button(
-                        f"✅ 선택한 {len(approve_targets)}건 확인 완료",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=len(approve_targets) == 0,
-                    ):
-                        gc = get_gspread_client()
-                        ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                        now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                        now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        for r_num, old_n in approve_targets:
-                            new_n = f"{old_n}\n[{now_s}] 매니저 확인 완료".strip()
-                            ws.update(range_name=f"H{r_num}:J{r_num}", values=[["TRUE", new_n, now_f]], value_input_option="RAW")
-                        st.success(f"{len(approve_targets)}건 확인 완료!")
-                        st.cache_data.clear()
-                        st.rerun()
+                        row_checks = []
+                        for _, r in pending_df.iterrows():
+                            chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
+                            checked = st.checkbox(
+                                chk_label,
+                                value=True,
+                                key=f"chk_app_{selected_store}_{r['_sheet_row']}",
+                            )
+                            row_checks.append((checked, int(r["_sheet_row"]), str(r.get("비고", ""))))
+
+                        submitted_approve = st.form_submit_button(
+                            "✅ 선택한 내역 일괄 확인 완료",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                    if submitted_approve:
+                        # '전체 선택' 해제 시 개별 체크된 항목만, 체크 시 전체 항목 반영
+                        approve_targets = [
+                            (r_num, old_n)
+                            for checked, r_num, old_n in row_checks
+                            if (select_all or checked)
+                        ]
+                        if not approve_targets:
+                            st.warning("승인할 항목을 1개 이상 선택해 주세요.")
+                        else:
+                            gc = get_gspread_client()
+                            ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                            now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                            # 2. 건수만큼 반복 호출하지 않고 batch_update로 단 1회 일괄 업데이트
+                            batch_payload = []
+                            for r_num, old_n in approve_targets:
+                                new_n = f"{old_n}\n[{now_s}] 매니저 확인 완료".strip()
+                                batch_payload.append({
+                                    "range": f"H{r_num}:J{r_num}",
+                                    "values": [["TRUE", new_n, now_f]],
+                                })
+
+                            ws.batch_update(batch_payload, value_input_option="RAW")
+                            st.success(f"✅ {len(approve_targets)}건 확인 완료!")
+                            # 3. 전체 캐시 대신 근태 시트 캐시만 핀포인트 초기화
+                            load_db_sheets.clear(store_cfg["db_id"])
+                            st.rerun()
 
             with t_unapp:
                 if not df_att.empty:
