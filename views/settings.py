@@ -4,12 +4,12 @@
 [역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 연동 상태 진단' 페이지
 [주요 기능]
   1. 관리자 비밀번호 보안 잠금
-  2. 구글 시트('환경설정' 탭)에 설정값 영구 저장 및 불러오기 (서버 재시작 시에도 유지)
+  2. 구글 시트('환경설정' 탭)에 설정값 영구 저장 및 불러오기 (Secrets보다 우선 적용)
      - 🔐 보안 및 권한: 매니저 PIN, 관리자 비밀번호, 매니저 급여정산 메뉴 열람 허용 여부
      - ⏱️ 출퇴근 및 보건증 규칙: 시간 선택 단위(분), 보건증 만료 알림 기준일(D-Day)
      - 📝 전자 근로계약서 기본값: 사업장명, 대표자명, 주소, 연락처, 기본 근무시간/휴게시간/업무내용
      - 💰 급여 정산 및 발송 설정: 급여 정산 기준일, 세무사 수신 이메일, 통장 표기 문구
-     - 📲 텔레그램 알림 설정: 보건증 일일 브리핑 / 계약서 서명 완료 / 급여 정산 보고 ON·OFF
+     - 📲 텔레그램 & 이메일 발송 기본값: 봇 토큰, 채팅 ID, Apps Script 웹앱 URL, 테스트 메일 주소
   3. 원클릭 시스템 연동 상태 진단 (구글 시트 · 텔레그램 · Apps Script 이메일 테스트)
 ================================================================================
 """
@@ -48,7 +48,7 @@ STORES = {
 CREDENTIALS_FILE = "credentials.json"
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
-# 환경설정 기본값 정의
+# 환경설정 기본값 정의 (시트에 저장된 값이 있으면 시트 값을 1순위로 우선 적용)
 DEFAULT_SETTINGS = {
     # 1. 보안 및 권한
     "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
@@ -71,7 +71,11 @@ DEFAULT_SETTINGS = {
     "tax_accountant_email": get_secret("TAX_ACCOUNTANT_EMAIL", ""),
     "bank_transfer_prefix": "분당그릴",
     "auto_send_payslip": "TRUE",
-    # 5. 텔레그램 알림 ON/OFF
+    # 5. 텔레그램 & 이메일 발송 기본값 및 알림 스위치
+    "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
+    "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
+    "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
+    "sender_email": get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com"),
     "tg_alert_health": "TRUE",
     "tg_alert_contract": "TRUE",
     "tg_alert_payroll": "TRUE",
@@ -144,7 +148,9 @@ def load_settings_from_sheet(db_id: str) -> dict:
         rows = ws.get_all_values()
         for r in rows[1:]:
             if len(r) >= 2 and r[0].strip():
-                cfg[r[0].strip()] = r[1].strip()
+                val = r[1].strip()
+                if val != "":
+                    cfg[r[0].strip()] = val
     except Exception:
         pass
     return cfg
@@ -208,7 +214,7 @@ t_sec, t_att, t_con, t_pay, t_diag = st.tabs([
     "⏱️ 출퇴근 · 보건증",
     "📝 근로계약서 기본값",
     "💰 급여 · 세무사 발송",
-    "📡 알림 · 연동 진단",
+    "📲 텔레그램 · 이메일 설정",
 ])
 
 with st.form("settings_main_form"):
@@ -318,11 +324,26 @@ with st.form("settings_main_form"):
             )
 
     # --------------------------------------------------------------------------
-    # [탭 5] 텔레그램 알림 스위치
+    # [탭 5] 텔레그램 & 이메일 발송 기본값 및 알림 스위치
     # --------------------------------------------------------------------------
     with t_diag:
-        st.markdown('<div class="section-title">텔레그램 자동 알림 수신 설정</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📲 텔레그램 발송 기본값 (봇 토큰 · 채팅 ID)</div>', unsafe_allow_html=True)
         with st.container(border=True):
+            tg_c1, tg_c2 = st.columns([1.6, 1.0])
+            in_tg_token = tg_c1.text_input(
+                "텔레그램 봇 토큰 (TELEGRAM_BOT_TOKEN)",
+                value=current_cfg.get("telegram_bot_token", ""),
+                type="password",
+                placeholder="예: 123456789:ABCdefGHIjklMNO...",
+            )
+            in_tg_chat_id = tg_c2.text_input(
+                "텔레그램 수신 채팅 ID (TELEGRAM_CHAT_ID)",
+                value=current_cfg.get("telegram_chat_id", ""),
+                placeholder="예: 7123456789 또는 -100123456789",
+            )
+            st.caption("💡 텔레그램 수신 대상을 단톡방이나 매니저 계정으로 바꾸고 싶을 때 위 채팅 ID만 변경 후 저장하세요.")
+
+            st.divider()
             in_tg_health = st.checkbox(
                 "🏥 일일 보건증 만료(D-30) 대상자 텔레그램 자동 브리핑 (하루 1회)",
                 value=(current_cfg.get("tg_alert_health", "TRUE").upper() == "TRUE"),
@@ -335,6 +356,21 @@ with st.form("settings_main_form"):
                 "💰 월별 급여 정산 확정 및 총 이체내역 텔레그램 보고",
                 value=(current_cfg.get("tg_alert_payroll", "TRUE").upper() == "TRUE"),
             )
+
+        st.markdown('<div class="section-title">📧 이메일 & 구글 드라이브 웹앱 발송 기본값</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            em_c1, em_c2 = st.columns([1.8, 1.2])
+            in_webapp_url = em_c1.text_input(
+                "Apps Script 웹앱 URL (DRIVE_UPLOAD_WEBAPP_URL)",
+                value=current_cfg.get("drive_webapp_url", ""),
+                placeholder="https://script.google.com/macros/s/.../exec",
+            )
+            in_sender_email = em_c2.text_input(
+                "발신 대표 이메일 / 테스트 수신 주소",
+                value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
+                placeholder="bdgrill0524@gmail.com",
+            )
+            st.caption("💡 Apps Script 새 배포로 웹앱 URL이 바뀌거나 발신 계정을 바꿀 때 여기서 바로 수정할 수 있습니다.")
 
     st.write("")
     if st.form_submit_button("💾 모든 환경설정 구글 시트에 저장하기", type="primary", use_container_width=True):
@@ -359,6 +395,10 @@ with st.form("settings_main_form"):
                 "tax_accountant_email": in_tax_email.strip(),
                 "bank_transfer_prefix": in_bank_prefix.strip(),
                 "auto_send_payslip": "TRUE" if in_auto_payslip else "FALSE",
+                "telegram_bot_token": in_tg_token.strip(),
+                "telegram_chat_id": in_tg_chat_id.strip(),
+                "drive_webapp_url": in_webapp_url.strip(),
+                "sender_email": in_sender_email.strip(),
                 "tg_alert_health": "TRUE" if in_tg_health else "FALSE",
                 "tg_alert_contract": "TRUE" if in_tg_contract else "FALSE",
                 "tg_alert_payroll": "TRUE" if in_tg_payroll else "FALSE",
@@ -371,6 +411,7 @@ with st.form("settings_main_form"):
 
 # ==============================================================================
 # 3. 원클릭 외부 서비스(시트 · 텔레그램 · 이메일) 연동 상태 진단 패널
+#    (저장된 최신 환경설정 값을 사용하여 즉시 테스트 발송)
 # ==============================================================================
 st.divider()
 st.markdown('<div class="section-title">📡 외부 연동 상태 실시간 점검 (원클릭 테스트)</div>', unsafe_allow_html=True)
@@ -393,12 +434,12 @@ with d1:
 with d2:
     with st.container(border=True):
         st.markdown("**2. 텔레그램 봇 알림**")
-        st.caption("대표님 텔레그램으로 테스트 메시지 즉시 전송")
+        st.caption("설정된 봇 토큰·채팅 ID로 테스트 메시지 전송")
         if st.button("텔레그램 테스트 발송", use_container_width=True):
-            bot_token = get_secret("TELEGRAM_BOT_TOKEN", "")
-            chat_id = get_secret("TELEGRAM_CHAT_ID", "")
+            bot_token = current_cfg.get("telegram_bot_token", "").strip()
+            chat_id = current_cfg.get("telegram_chat_id", "").strip()
             if not bot_token or not chat_id:
-                st.warning("Secrets에 텔레그램 토큰/ID가 없습니다.")
+                st.warning("텔레그램 봇 토큰 또는 채팅 ID가 비어 있습니다.")
             else:
                 try:
                     r = requests.post(
@@ -407,7 +448,7 @@ with d2:
                         timeout=6,
                     )
                     if r.status_code == 200:
-                        st.success("텔레그램 발송 성공!")
+                        st.success(f"발송 성공! (ID: {chat_id})")
                     else:
                         st.error(f"발송 오류 (HTTP {r.status_code})")
                 except Exception as e:
@@ -416,12 +457,12 @@ with d2:
 with d3:
     with st.container(border=True):
         st.markdown("**3. Apps Script 이메일**")
-        st.caption("웹앱 서버를 통한 Gmail 발송 정상 작동 확인")
+        st.caption("설정된 웹앱 URL·발신 이메일로 테스트 메일 발송")
         if st.button("이메일 테스트 발송", use_container_width=True):
-            webapp_url = get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
-            test_to = get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com")
-            if not webapp_url:
-                st.warning("Secrets에 DRIVE_UPLOAD_WEBAPP_URL이 없습니다.")
+            webapp_url = current_cfg.get("drive_webapp_url", "").strip()
+            test_to = current_cfg.get("sender_email", "").strip()
+            if not webapp_url or not test_to:
+                st.warning("웹앱 URL 또는 이메일 주소가 비어 있습니다.")
             else:
                 try:
                     payload = {
