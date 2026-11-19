@@ -3,15 +3,16 @@
 [파일명] views/settings.py
 [역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 다매장 관리' 페이지
 [주요 기능]
-  1. 보안 · 권한: 매니저 PIN, 대표자 비밀번호, 매니저 급여정산 열람 허용 여부
-  2. 보건증 알림: 보건증 만료 사전 경고일(D-Day)
-  3. 근로계약서 기본값: 사업체명, 대표자명, 매장 전화번호, 사업장 주소, 기본 근무조건
-  4. 급여 · 공제율 · 인건비 목표: 정산 기준일, 세무사 이메일, 파트타임 공제율/기준금액, 목표 인건비율(%)
-  5. 텔레그램 · 이메일 설정: 봇 토큰, 채팅 ID, Apps Script 웹앱 URL, 알림 ON/OFF
-  6. 다매장 · 지점 관리: 신규 지점(감동한점 등) 시트 ID 등록 및 수정, 외부 서비스 원클릭 진단
+1. 보안 · 권한: 매니저 PIN, 대표자 비밀번호, 매니저 급여정산 열람 허용 여부
+2. 보건증 알림: 보건증 만료 사전 경고일(D-Day)
+3. 근로계약서 기본값: 사업체명, 대표자명, 매장 전화번호, 사업장 주소, 기본 근무조건
+4. 급여 · 공제율 · 인건비 목표: 정산 기준일, 세무사 이메일, 파트타임 공제율/기준금액, 목표 인건비율(%)
+5. 텔레그램 · 이메일 설정: 봇 토큰, 공동대표/매니저 채팅 ID(복수), 알림별 수신 대상 분기(대표/매니저/모두/끄기)
+6. 다매장 · 지점 관리: 신규 지점(감동한점 등) 시트 ID 등록 및 수정, 외부 서비스 원클릭 진단
 ================================================================================
 """
 
+import re
 import json
 import requests
 import streamlit as st
@@ -23,6 +24,24 @@ from store_registry import (
     get_gspread_client,
     DEFAULT_CONTRACT_FOLDER_ID,
 )
+
+TG_TARGET_OPTIONS = ["대표", "매니저", "모두", "끄기"]
+
+
+def normalize_tg_target(val: str, default: str = "대표") -> str:
+    v = str(val).strip()
+    if v.upper() == "FALSE" or v == "끄기":
+        return "끄기"
+    if v.upper() == "TRUE":
+        return default
+    if v in ("대표", "대표만"):
+        return "대표"
+    if v in ("매니저", "매니저만"):
+        return "매니저"
+    if v in ("모두", "둘 다"):
+        return "모두"
+    return default
+
 
 st.markdown(
     """
@@ -233,41 +252,80 @@ with st.form("settings_main_form"):
             )
 
     # --------------------------------------------------------------------------
-    # [탭 5] 텔레그램 & 이메일 발송 기본값
+    # [탭 5] 텔레그램 & 이메일 발송 기본값 (공동대표 · 매니저 수신 분기)
     # --------------------------------------------------------------------------
     with t_diag:
-        st.markdown('<div class="section-title">📲 텔레그램 발송 기본값 (봇 토큰 · 채팅 ID)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📲 텔레그램 봇 토큰 및 수신자(공동대표 · 매니저) 채팅 ID</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            tg_c1, tg_c2 = st.columns([1.6, 1.0])
-            in_tg_token = tg_c1.text_input(
+            in_tg_token = st.text_input(
                 "텔레그램 봇 토큰 (TELEGRAM_BOT_TOKEN)",
                 value=current_cfg.get("telegram_bot_token", ""),
                 type="password",
             )
-            in_tg_chat_id = tg_c2.text_input(
-                "텔레그램 수신 채팅 ID (TELEGRAM_CHAT_ID)",
+            id_c1, id_c2 = st.columns(2)
+            in_tg_chat_id = id_c1.text_input(
+                "대표 텔레그램 채팅 ID (공동대표 여러 명일 경우 쉼표 , 로 구분)",
                 value=current_cfg.get("telegram_chat_id", ""),
+                placeholder="예: 123456789, 987654321",
             )
+            in_mgr_tg_chat_id = id_c2.text_input(
+                "매니저 텔레그램 채팅 ID (여러 명일 경우 쉼표 , 로 구분)",
+                value=current_cfg.get("manager_telegram_chat_id", ""),
+                placeholder="예: 555666777",
+            )
+            st.caption("💡 각 수신자가 봇에게 먼저 `/start` 메시지를 보낸 뒤 발급된 숫자 채팅 ID를 입력하세요.")
+
             st.divider()
-            in_tg_health = st.checkbox(
-                "🏥 일일 보건증 만료 대상자 텔레그램 자동 브리핑 (하루 1회)",
-                value=(current_cfg.get("tg_alert_health", "TRUE").upper() == "TRUE"),
+            st.markdown("**🔔 업무별 텔레그램 알림 수신 대상 지정** (`대표` / `매니저` / `모두` / `끄기`)")
+
+            cur_t_health = normalize_tg_target(
+                current_cfg.get("tg_target_health") or current_cfg.get("tg_alert_health", "모두"),
+                default="모두",
             )
-            in_tg_contract = st.checkbox(
-                "📝 직원 전자 근로계약서 서명 완료 즉시 텔레그램 알림",
-                value=(current_cfg.get("tg_alert_contract", "TRUE").upper() == "TRUE"),
+            cur_t_contract = normalize_tg_target(
+                current_cfg.get("tg_target_contract") or current_cfg.get("tg_alert_contract", "모두"),
+                default="모두",
             )
-            in_tg_payroll = st.checkbox(
-                "💰 월별 급여 정산 확정 및 총 이체내역 텔레그램 보고",
-                value=(current_cfg.get("tg_alert_payroll", "TRUE").upper() == "TRUE"),
+            cur_t_reg = normalize_tg_target(
+                current_cfg.get("tg_target_reg_change") or current_cfg.get("tg_alert_reg_change", "대표"),
+                default="대표",
             )
-            in_tg_reg_change = st.checkbox(
-                "📌 정규직 특근·휴무(근태변동) 등록·수정·삭제 시 텔레그램 즉시 알림",
-                value=(current_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE"),
+            cur_t_wage = normalize_tg_target(
+                current_cfg.get("tg_target_wage_change") or current_cfg.get("tg_alert_wage_change", "대표"),
+                default="대표",
             )
-            in_tg_wage_change = st.checkbox(
-                "💵 파트타임 시급 변경 저장 시 텔레그램 즉시 알림",
-                value=(current_cfg.get("tg_alert_wage_change", "TRUE").upper() == "TRUE"),
+            cur_t_payroll = normalize_tg_target(
+                current_cfg.get("tg_target_payroll") or current_cfg.get("tg_alert_payroll", "대표"),
+                default="대표",
+            )
+
+            al1, al2, al3 = st.columns(3)
+            in_target_health = al1.selectbox(
+                "🏥 보건증 만료 대상자 알림",
+                options=TG_TARGET_OPTIONS,
+                index=TG_TARGET_OPTIONS.index(cur_t_health),
+            )
+            in_target_contract = al2.selectbox(
+                "📝 전자 근로계약서 서명 완료",
+                options=TG_TARGET_OPTIONS,
+                index=TG_TARGET_OPTIONS.index(cur_t_contract),
+            )
+            in_target_payroll = al3.selectbox(
+                "💰 월별 급여 정산 확정 보고",
+                options=TG_TARGET_OPTIONS,
+                index=TG_TARGET_OPTIONS.index(cur_t_payroll),
+            )
+
+            al4, al5, _ = st.columns(3)
+            in_target_reg_change = al4.selectbox(
+                "📌 정규직 특근·휴무 등록/수정/삭제",
+                options=TG_TARGET_OPTIONS,
+                index=TG_TARGET_OPTIONS.index(cur_t_reg),
+            )
+            in_target_wage_change = al5.selectbox(
+                "💵 신규 파트타임 등록 · 시급 변경",
+                options=TG_TARGET_OPTIONS,
+                index=TG_TARGET_OPTIONS.index(cur_t_wage),
             )
 
         st.markdown('<div class="section-title">📧 이메일 & 구글 드라이브 웹앱 발송 기본값</div>', unsafe_allow_html=True)
@@ -310,13 +368,20 @@ with st.form("settings_main_form"):
                 "target_labor_ratio": f"{in_target_labor:.1f}",
                 "telegram_bot_token": in_tg_token.strip(),
                 "telegram_chat_id": in_tg_chat_id.strip(),
+                "manager_telegram_chat_id": in_mgr_tg_chat_id.strip(),
                 "drive_webapp_url": in_webapp_url.strip(),
                 "sender_email": in_sender_email.strip(),
-                "tg_alert_health": "TRUE" if in_tg_health else "FALSE",
-                "tg_alert_contract": "TRUE" if in_tg_contract else "FALSE",
-                "tg_alert_payroll": "TRUE" if in_tg_payroll else "FALSE",
-                "tg_alert_reg_change": "TRUE" if in_tg_reg_change else "FALSE",
-                "tg_alert_wage_change": "TRUE" if in_tg_wage_change else "FALSE",
+                "tg_target_health": in_target_health,
+                "tg_target_contract": in_target_contract,
+                "tg_target_payroll": in_target_payroll,
+                "tg_target_reg_change": in_target_reg_change,
+                "tg_target_wage_change": in_target_wage_change,
+                # 기존 모듈 하위 호환 키 동기화
+                "tg_alert_health": "FALSE" if in_target_health == "끄기" else "TRUE",
+                "tg_alert_contract": "FALSE" if in_target_contract == "끄기" else "TRUE",
+                "tg_alert_payroll": "FALSE" if in_target_payroll == "끄기" else "TRUE",
+                "tg_alert_reg_change": "FALSE" if in_target_reg_change == "끄기" else "TRUE",
+                "tg_alert_wage_change": "FALSE" if in_target_wage_change == "끄기" else "TRUE",
             }
             with st.spinner("구글 시트 '환경설정' 탭에 저장 중..."):
                 save_store_settings(store_cfg["db_id"], updated_cfg)
@@ -419,25 +484,27 @@ with d1:
 with d2:
     with st.container(border=True):
         st.markdown("**2. 텔레그램 봇 알림**")
-        st.caption("설정된 봇 토큰·채팅 ID로 테스트 메시지 전송")
+        st.caption("등록된 대표·매니저 채팅 ID로 테스트 전송")
         if st.button("텔레그램 테스트 발송", use_container_width=True):
             bot_token = current_cfg.get("telegram_bot_token", "").strip()
-            chat_id = current_cfg.get("telegram_chat_id", "").strip()
-            if not bot_token or not chat_id:
-                st.warning("텔레그램 봇 토큰 또는 채팅 ID가 비어 있습니다.")
+            owner_ids = [x.strip() for x in re.split(r"[,;\s]+", str(current_cfg.get("telegram_chat_id", ""))) if x.strip()]
+            mgr_ids = [x.strip() for x in re.split(r"[,;\s]+", str(current_cfg.get("manager_telegram_chat_id", ""))) if x.strip()]
+            if not bot_token or (not owner_ids and not mgr_ids):
+                st.warning("텔레그램 봇 토큰 또는 수신 채팅 ID가 비어 있습니다.")
             else:
-                try:
-                    r = requests.post(
-                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                        json={"chat_id": chat_id, "text": f"✅ [{selected_store}] 환경설정 연동 테스트 메시지입니다."},
-                        timeout=6,
-                    )
-                    if r.status_code == 200:
-                        st.success(f"발송 성공! (ID: {chat_id})")
-                    else:
-                        st.error(f"발송 오류 (HTTP {r.status_code})")
-                except Exception as e:
-                    st.error(f"오류: {e}")
+                sent_logs = []
+                for role_label, id_list in [("대표", owner_ids), ("매니저", mgr_ids)]:
+                    for cid in dict.fromkeys(id_list):
+                        try:
+                            r = requests.post(
+                                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                                json={"chat_id": cid, "text": f"✅ [{selected_store}] 환경설정 연동 테스트 메시지입니다. ({role_label} 수신)"},
+                                timeout=6,
+                            )
+                            sent_logs.append(f"{role_label}({cid}): {'성공' if r.status_code == 200 else f'오류({r.status_code})'}")
+                        except Exception as e:
+                            sent_logs.append(f"{role_label}({cid}): 실패({e})")
+                st.success(" / ".join(sent_logs))
 
 with d3:
     with st.container(border=True):
