@@ -265,6 +265,10 @@ with st.form("settings_main_form"):
                 "📌 정규직 특근·휴무(근태변동) 등록·수정·삭제 시 텔레그램 즉시 알림",
                 value=(current_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE"),
             )
+            in_tg_wage_change = st.checkbox(
+                "💵 파트타임 시급 변경 저장 시 텔레그램 즉시 알림",
+                value=(current_cfg.get("tg_alert_wage_change", "TRUE").upper() == "TRUE"),
+            )
 
         st.markdown('<div class="section-title">📧 이메일 & 구글 드라이브 웹앱 발송 기본값</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -312,6 +316,7 @@ with st.form("settings_main_form"):
                 "tg_alert_contract": "TRUE" if in_tg_contract else "FALSE",
                 "tg_alert_payroll": "TRUE" if in_tg_payroll else "FALSE",
                 "tg_alert_reg_change": "TRUE" if in_tg_reg_change else "FALSE",
+                "tg_alert_wage_change": "TRUE" if in_tg_wage_change else "FALSE",
             }
             with st.spinner("구글 시트 '환경설정' 탭에 저장 중..."):
                 save_store_settings(store_cfg["db_id"], updated_cfg)
