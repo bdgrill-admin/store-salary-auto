@@ -90,7 +90,7 @@ def apply_clean_style():
             border-radius: 10px;
             padding: 0.75rem 1rem;
         }
-        .stButton > button {
+        .stButton > button, .stFormSubmitButton > button {
             border-radius: 8px;
             font-weight: 600;
             min-height: 2.45rem;
@@ -182,15 +182,16 @@ def load_db_sheets(db_id: str):
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
 
     return df_emp, df_reg, df_att
-    
+
+
 @st.cache_data(ttl=20, show_spinner=False)
 def load_regular_changes(db_id: str) -> pd.DataFrame:
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정규직근태변동" not in titles:
+    if "정직원근태변동" not in titles:
         return pd.DataFrame()
-    ws = ss.worksheet("정규직근태변동")
+    ws = ss.worksheet("정직원근태변동")
     rows = ws.get_all_values()
     if len(rows) < 2:
         return pd.DataFrame()
@@ -203,28 +204,28 @@ def load_regular_changes(db_id: str) -> pd.DataFrame:
             out.append(row_d)
     return pd.DataFrame(out)
 
+
 def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values: list):
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
-    if "정규직근태변동" not in titles:
-        ws = ss.add_worksheet(title="정규직근태변동", rows=500, cols=8)
+    if "정직원근태변동" not in titles:
+        ws = ss.add_worksheet(title="정직원근태변동", rows=500, cols=8)
         ws.append_row(
             ["발생일", "이름", "구분", "일수_시간", "상세메모", "정산반영여부", "등록일시"],
             value_input_option="RAW",
         )
     else:
-        ws = ss.worksheet("정규직근태변동")
+        ws = ss.worksheet("정직원근태변동")
 
     ws.append_row(row_values, value_input_option="USER_ENTERED")
 
-    # 대표님 텔레그램으로 즉시 알림 발송 (누락 방지용)
     bot_token = app_cfg.get("telegram_bot_token", "").strip()
     chat_id = app_cfg.get("telegram_chat_id", "").strip()
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     if bot_token and chat_id:
         msg = (
-            f"📌 [{store_title} 정규직 근태변동 등록]\n"
+            f"📌 [{store_title} 정직원 근태변동 등록]\n"
             f"• 발생일: {row_values[0]}\n"
             f"• 이름: {row_values[1]}\n"
             f"• 구분: {row_values[2]} ({row_values[3]})\n"
@@ -238,6 +239,7 @@ def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values:
             )
         except Exception:
             pass
+
 
 @st.cache_resource
 def _daily_health_telegram_tracker():
@@ -427,6 +429,7 @@ with top_left:
 with top_right:
     st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
     with st.container(border=True):
+        st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
         with st.form(key=f"mgr_pin_form_{selected_store}", border=False):
             p_lbl, p_inp, p_btn = st.columns([0.85, 1.35, 0.65], vertical_alignment="center")
             with p_lbl:
@@ -446,7 +449,7 @@ with top_right:
                 st.form_submit_button("확인", use_container_width=True)
 
         if pin_input == active_mgr_pin:
-            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정규직 특근/휴무"])
+            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정직원 특근/휴무"])
 
             with t_app:
                 pending_df = (
@@ -489,21 +492,22 @@ with top_right:
                         if not approve_targets:
                             st.warning("승인할 항목을 1개 이상 선택해 주세요.")
                         else:
-                            gc = get_gspread_client()
-                            ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                            now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            batch_payload = [
-                                {
-                                    "range": f"H{r_num}:J{r_num}",
-                                    "values": [["TRUE", f"{old_n}\n[{now_s}] 확인완료".strip(), now_f]],
-                                }
-                                for r_num, old_n in approve_targets
-                            ]
-                            ws.batch_update(batch_payload, value_input_option="RAW")
-                            st.success(f"✅ {len(approve_targets)}건 확인 완료!")
-                            load_db_sheets.clear(store_cfg["db_id"])
-                            st.rerun()
+                            with st.spinner("일괄 승인 처리 중..."):
+                                gc = get_gspread_client()
+                                ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                                now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                                now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                batch_payload = [
+                                    {
+                                        "range": f"H{r_num}:J{r_num}",
+                                        "values": [["TRUE", f"{old_n}\n[{now_s}] 매니저 확인 완료".strip(), now_f]],
+                                    }
+                                    for r_num, old_n in approve_targets
+                                ]
+                                ws.batch_update(batch_payload, value_input_option="RAW")
+                                st.success(f"✅ {len(approve_targets)}건 확인 완료!")
+                                load_db_sheets.clear(store_cfg["db_id"])
+                                st.rerun()
 
             with t_unapp:
                 if not df_att.empty:
@@ -514,23 +518,43 @@ with top_right:
                     if approved_day.empty:
                         st.caption(f"{date_str}에 승인 완료된 기록이 없습니다.")
                     else:
-                        for _, r in approved_day.iterrows():
-                            ca, cb = st.columns([2.5, 1], vertical_alignment="center")
-                            ca.write(f"**{r['이름']}** {r['시작시간']}~{r['종료시간']}")
-                            if cb.button("해제", key=f"btn_unapp_{selected_store}_{r['_sheet_row']}", use_container_width=True):
-                                gc = get_gspread_client()
-                                ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                                now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                                now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                new_n = f"{r.get('비고', '')}\n[{now_s}] 매니저 확인 해제".strip()
-                                ws.update(
-                                    range_name=f"H{int(r['_sheet_row'])}:J{int(r['_sheet_row'])}",
-                                    values=[["FALSE", new_n, now_f]],
-                                    value_input_option="RAW",
+                        with st.form(key=f"mgr_unapprove_form_{selected_store}", border=False):
+                            unapp_checks = []
+                            for _, r in approved_day.iterrows():
+                                lbl = f"**{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}`"
+                                chk = st.checkbox(
+                                    lbl,
+                                    value=False,
+                                    key=f"chk_unapp_{selected_store}_{r['_sheet_row']}",
                                 )
-                                st.warning("승인이 해제되었습니다.")
-                                load_db_sheets.clear(store_cfg["db_id"])
-                                st.rerun()
+                                unapp_checks.append((chk, int(r["_sheet_row"]), str(r.get("비고", ""))))
+
+                            submitted_unapp = st.form_submit_button(
+                                "🔓 선택한 내역 승인 해제",
+                                use_container_width=True,
+                            )
+
+                        if submitted_unapp:
+                            unapp_targets = [(r_num, old_n) for chk, r_num, old_n in unapp_checks if chk]
+                            if not unapp_targets:
+                                st.warning("승인 해제할 항목을 선택해 주세요.")
+                            else:
+                                with st.spinner("승인 해제 처리 중..."):
+                                    gc = get_gspread_client()
+                                    ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                                    now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                                    now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    batch_payload = [
+                                        {
+                                            "range": f"H{r_num}:J{r_num}",
+                                            "values": [["FALSE", f"{old_n}\n[{now_s}] 매니저 확인 해제".strip(), now_f]],
+                                        }
+                                        for r_num, old_n in unapp_targets
+                                    ]
+                                    ws.batch_update(batch_payload, value_input_option="RAW")
+                                    st.warning(f"🔓 {len(unapp_targets)}건 승인이 해제되었습니다.")
+                                    load_db_sheets.clear(store_cfg["db_id"])
+                                    st.rerun()
 
             with t_reg:
                 reg_names = []
@@ -546,13 +570,13 @@ with top_right:
                         with rc1:
                             reg_date = st.date_input("발생 날짜", value=sel_date)
                         with rc2:
-                            reg_emp = st.selectbox("정규직 선택", options=reg_names)
+                            reg_emp = st.selectbox("정직원 선택", options=reg_names)
 
                         rc3, rc4 = st.columns(2)
                         with rc3:
                             reg_type = st.selectbox(
                                 "변동 구분",
-                                options=["➕ 추가출근", "➖ 기타휴무", "🔄 대체휴무"],
+                                options=["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"],
                             )
                         with rc4:
                             reg_unit = st.selectbox(
@@ -562,10 +586,10 @@ with top_right:
 
                         reg_memo = st.text_input(
                             "사유 및 정산 메모",
-                            placeholder="예: XX일대타출근 / 개인사정결근:사유 / 3시간 추가근무:사유",
+                            placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
                         )
                         submitted_reg = st.form_submit_button(
-                            "📌 정규직 특근/휴무 기록 저장",
+                            "📌 정직원 특근/휴무 기록 저장",
                             type="primary",
                             use_container_width=True,
                         )
@@ -587,7 +611,6 @@ with top_right:
                             st.success(f"✅ [{reg_emp}] {reg_date.strftime('%m/%d')} {reg_type} 기록 완료!")
                             st.rerun()
 
-                    # 이번 정산월 기준 등록 내역 요약 확인 (매월 5일 수기 정산 시 참고용)
                     df_rc = load_regular_changes(store_cfg["db_id"])
                     if not df_rc.empty and "발생일" in df_rc.columns:
                         cur_s, cur_e = get_payroll_period(datetime.date.today(), start_day=payroll_start_day)
@@ -600,6 +623,7 @@ with top_right:
                             disp_rc = cur_rc[["발생일", "이름", "구분", "일수_시간", "상세메모"]].copy()
                             disp_rc["발생일"] = disp_rc["발생일"].str[5:]
                             st.dataframe(disp_rc, use_container_width=True, hide_index=True, row_height=26)
+
         elif pin_input:
             st.error("비밀번호가 일치하지 않습니다.")
         else:
@@ -794,7 +818,6 @@ with left_col:
                     st.session_state["edited_banner"] = f"✅ [{real_emp_name}] 님의 근무 기록({s_str}~{e_str})이 저장되었습니다."
 
                 st.session_state["reset_emp_selector"] = True
-                # 전체 캐시(st.cache_data.clear) 대신 현재 매장 근태 데이터 캐시만 정확히 초기화
                 load_db_sheets.clear(store_cfg["db_id"])
                 st.rerun()
 
