@@ -1,13 +1,13 @@
 """
 ================================================================================
 [파일명] contract_utils.py
-[역할] 전자 근로계약서 시스템의 백엔드 핵심 유틸리티 모듈
+[역할] 전자 근로계약서 시스템의 백엔드 핵심 유틸리티 모듈 ('환경설정' 탭 실시간 연동)
 [주요 기능]
-  1. 구글 시트('근로계약서', '파트타임', '정규직') 데이터 조회, 동기화 및 미서명 건 삭제
-     - 정규직 [계약급여, 제세금, 계산급여] 컬럼 구조 호환
-  2. 서명 완료 시 보건증 제출일 기준 +1년 만료일 자동 산출 후 직원 명부('보건증만료일') 동기화
-  3. ReportLab을 이용한 A4 2페이지 표준근로계약서 PDF 생성 (대표자/근로자 서명 합성)
-  4. Google Apps Script 웹앱과 통신하여 구글 드라이브 PDF 자동 저장 및 이메일 발송
+  1. 구글 시트('환경설정')에서 사업체명·대표자·주소·연락처·텔레그램·이메일 설정 로드
+  2. 구글 시트('근로계약서', '파트타임', '정규직') 데이터 조회, 동기화 및 미서명 건 삭제
+  3. 서명 완료 시 보건증 제출일 기준 +1년 만료일 자동 산출 후 직원 명부('보건증만료일') 동기화
+  4. ReportLab을 이용한 A4 2페이지 표준근로계약서 PDF 생성 (환경설정 사업장 정보 반영)
+  5. Google Apps Script 웹앱과 통신하여 구글 드라이브 PDF 자동 저장 및 이메일 발송
 ================================================================================
 """
 
@@ -81,6 +81,38 @@ def get_google_creds(secrets_dict):
     return Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
 
+def load_runtime_settings(secrets_dict, ss=None) -> dict:
+    """구글 시트 '환경설정' 탭과 Secrets를 통합해 최신 설정값을 반환합니다."""
+    cfg = {
+        "store_title": "분당그릴",
+        "owner_name": "이용석",
+        "store_phone": "031-713-0342",
+        "store_address": "경기도 성남시 분당구 미금일로 74번길 13-3 1층",
+        "default_work_start": "17:00",
+        "default_work_end": "22:00",
+        "default_break_min": "30",
+        "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
+        "drive_webapp_url": str(secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "")).strip(),
+        "telegram_bot_token": str(secrets_dict.get("TELEGRAM_BOT_TOKEN", "")).strip(),
+        "telegram_chat_id": str(secrets_dict.get("TELEGRAM_CHAT_ID", "")).strip(),
+        "tg_alert_contract": "TRUE",
+    }
+    try:
+        if ss is None:
+            creds = get_google_creds(secrets_dict)
+            gc = gspread.authorize(creds)
+            ss = gc.open_by_key(DB_SPREADSHEET_ID)
+        titles = [ws.title.strip() for ws in ss.worksheets()]
+        if "환경설정" in titles:
+            ws = ss.worksheet("환경설정")
+            for r in ws.get_all_values()[1:]:
+                if len(r) >= 2 and r[0].strip() and r[1].strip():
+                    cfg[r[0].strip()] = r[1].strip()
+    except Exception:
+        pass
+    return cfg
+
+
 def get_contract_worksheet(secrets_dict):
     creds = get_google_creds(secrets_dict)
     gc = gspread.authorize(creds)
@@ -117,7 +149,6 @@ def get_contract_by_id(secrets_dict, contract_id: str):
 
 
 def delete_contract_by_id(secrets_dict, contract_id: str) -> bool:
-    """서명 대기 중인 근로계약서 행을 시트에서 삭제합니다."""
     ws, _ = get_contract_worksheet(secrets_dict)
     rows = ws.get_all_values()
     for idx, r in enumerate(rows[1:], start=2):
@@ -181,7 +212,16 @@ def _draw_wrapped(c, text, x, y, max_width, line_height, font_name, font_size):
     return y
 
 
-def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
+def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image, runtime_cfg: dict = None) -> bytes:
+    """환경설정(사업체명·대표자·주소·연락처)이 반영된 표준근로계약서 PDF 생성"""
+    cfg = runtime_cfg or {}
+    store_title = cfg.get("store_title", "분당그릴").strip() or "분당그릴"
+    spaced_store = " ".join(list(store_title)) if len(store_title) <= 5 else store_title
+    owner_name = cfg.get("owner_name", "이용석").strip() or "이용석"
+    spaced_owner = "   ".join(list(owner_name)) if len(owner_name) <= 4 else owner_name
+    store_phone = cfg.get("store_phone", "031-713-0342").strip() or "031-713-0342"
+    store_address = cfg.get("store_address", "경기도 성남시 분당구 미금일로 74번길 13-3 1층").strip()
+
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
@@ -226,7 +266,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     y = h - 114
     y = _draw_wrapped(
         c,
-        f'분 당 그 릴 (이하 "사업주"라 함)과(와)  {emp_name} (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.',
+        f'{spaced_store} (이하 "사업주"라 함)과(와)  {emp_name} (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.',
         50, y, w - 100, 17, bold_f, 10.5
     )
     y -= 10
@@ -238,7 +278,7 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
     lines_p1 = [
         c1,
-        "2. 근 무 장 소 : 경기도 성남시 분당구 미금일로 74번길 13-3 1층",
+        f"2. 근 무 장 소 : {store_address}",
         f"3. 업무의 내용 : {job_desc}",
         f"4. 소정근로시간(변동있음) : {w_start} 부터  {w_end} 까지 (휴게시간 : {break_m}분)",
         f"5. 근무일/휴일 : 매주 {work_days}일(또는 매일단위)근무, 주휴일 매주 {rest_day}요일",
@@ -306,12 +346,12 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
 
     y -= 42
     c.setFont(bold_f, 10.5)
-    c.drawString(52, y, "(사업주)  사업체명 :  분 당 그 릴        (전화 : 031-713-0342 )")
+    c.drawString(52, y, f"(사업주)  사업체명 :  {spaced_store}        (전화 : {store_phone} )")
     y -= 21
     c.setFont(reg_f, 10)
-    c.drawString(102, y, "주    소 :  경기도 성남시 분당구 미금일로 74번길 13-3 1층")
+    c.drawString(102, y, f"주    소 :  {store_address}")
     y -= 23
-    c.drawString(102, y, "대 표 자 :  이   용   석      (서명)")
+    c.drawString(102, y, f"대 표 자 :  {spaced_owner}      (서명)")
 
     if os.path.exists(OWNER_SIGN_PATH):
         try:
@@ -342,8 +382,9 @@ def generate_contract_pdf(contract: dict, emp_sign_img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
-    webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
+def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes, runtime_cfg: dict = None) -> str:
+    cfg = runtime_cfg or load_runtime_settings(secrets_dict)
+    webapp_url = cfg.get("drive_webapp_url", "").strip()
     if not webapp_url:
         return ""
 
@@ -371,23 +412,25 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes) -> str:
     return res_json.get("url", "")
 
 
-def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes):
+def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes, runtime_cfg: dict = None):
     if not to_email or "@" not in to_email:
         return False, "이메일 주소 없음"
 
-    webapp_url = secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "").strip()
+    cfg = runtime_cfg or load_runtime_settings(secrets_dict)
+    webapp_url = cfg.get("drive_webapp_url", "").strip()
+    store_title = cfg.get("store_title", "분당그릴").strip() or "분당그릴"
     if not webapp_url:
         return False, "웹앱 URL 미설정"
 
     payload = {
         "action": "send_email",
         "toEmail": to_email.strip(),
-        "subject": f"[분당그릴] {emp_name}님 전자 근로계약서 사본 교부",
+        "subject": f"[{store_title}] {emp_name}님 전자 근로계약서 사본 교부",
         "body": (
             f"안녕하세요, {emp_name}님.\n\n"
-            f"분당그릴과 체결하신 표준근로계약서(전자서명 완료본) 사본을 보내드립니다.\n"
+            f"{store_title}과 체결하신 표준근로계약서(전자서명 완료본) 사본을 보내드립니다.\n"
             f"첨부된 PDF 파일을 보관해 주시기 바랍니다.\n\n"
-            f"감사합니다.\n분당그릴 드림"
+            f"감사합니다.\n{store_title} 드림"
         ),
         "filename": filename,
         "mimeType": "application/pdf",
@@ -410,7 +453,6 @@ def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: st
 
 
 def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
-    """서명 완료 시 직원 명부 시트에 계좌·이메일·보건증만료일(제출일+1년)을 자동 업데이트합니다."""
     emp_name = merged.get("직원명", "").strip()
     if not emp_name:
         return
@@ -489,6 +531,8 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
 
 def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, emp_sign_img: Image.Image):
     ws, ss = get_contract_worksheet(secrets_dict)
+    runtime_cfg = load_runtime_settings(secrets_dict, ss)
+
     row_idx = contract["_row_idx"]
     sign_dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     date_tag = datetime.datetime.now().strftime("%Y%m%d")
@@ -498,11 +542,11 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
     merged["상태"] = "서명완료"
     merged["서명일시"] = sign_dt
 
-    pdf_bytes = generate_contract_pdf(merged, emp_sign_img)
+    pdf_bytes = generate_contract_pdf(merged, emp_sign_img, runtime_cfg)
     emp_name = merged.get("직원명", "직원").strip()
     filename = f"{date_tag}_{emp_name}_근로계약서.pdf"
 
-    drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes)
+    drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes, runtime_cfg)
     merged["드라이브PDF링크"] = drive_link
 
     updated_row = [merged.get(h, "") for h in CONTRACT_HEADERS]
@@ -514,26 +558,28 @@ def complete_employee_signature(secrets_dict, contract: dict, emp_inputs: dict, 
         pass
 
     email_ok, email_msg = send_contract_email(
-        secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes
+        secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes, runtime_cfg
     )
 
-    bot_token = secrets_dict.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = secrets_dict.get("TELEGRAM_CHAT_ID", "")
-    if bot_token and chat_id:
-        tele_text = (
-            f"📝 [전자 근로계약서 서명 완료]\n"
-            f"• 직원명: {emp_name} ({merged.get('계약유형')})\n"
-            f"• 근무조건: {merged.get('임금구분')} {merged.get('금액')}원 / {merged.get('근로개시일')} 입사\n"
-            f"• 이메일 교부: {email_msg}\n"
-            f"• 구글 드라이브 저장 완료"
-        )
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": tele_text},
-                timeout=5,
+    if runtime_cfg.get("tg_alert_contract", "TRUE").upper() == "TRUE":
+        bot_token = runtime_cfg.get("telegram_bot_token", "")
+        chat_id = runtime_cfg.get("telegram_chat_id", "")
+        store_title = runtime_cfg.get("store_title", "분당그릴")
+        if bot_token and chat_id:
+            tele_text = (
+                f"📝 [{store_title} 전자 근로계약서 서명 완료]\n"
+                f"• 직원명: {emp_name} ({merged.get('계약유형')})\n"
+                f"• 근무조건: {merged.get('임금구분')} {merged.get('금액')}원 / {merged.get('근로개시일')} 입사\n"
+                f"• 이메일 교부: {email_msg}\n"
+                f"• 구글 드라이브 저장 완료"
             )
-        except Exception:
-            pass
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": tele_text},
+                    timeout=5,
+                )
+            except Exception:
+                pass
 
     return pdf_bytes, filename, drive_link, email_ok, email_msg
