@@ -3,10 +3,11 @@
 [파일명] views/payroll.py
 [역할] 매장 통합 월별 급여 정산 · 명세서 일괄 발송 · 매출 대비 인건비 경영 분석 페이지
 [주요 기능]
-  1. store_registry 및 '환경설정' 탭과 실시간 연동 (다매장 목록, 공제율, 목표 인건비율 경고선, 정산 기준일)
-  2. 정규직 급여 계산 구조: 계산급여 = 계약급여 - 제세금 / 입금급여 = 계산급여 +/- 변동급여
-  3. 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
-  4. Apps Script 웹앱 연동 세무사(.txt) & 직원 개별 급여명세서 일괄 발송
+1. store_registry 및 '환경설정' 탭과 실시간 연동 (다매장 목록, 공제율, 목표 인건비율 경고선, 정산 기준일)
+2. 정규직 급여 계산 구조: 계산급여 = 계약급여 - 제세금 / 입금급여 = 계산급여 +/- 변동급여
+3. 해당 정산 기간 내 '정규직근태변동' 내역 자동 조회 및 정규직 급여 표 상단 요약 표시
+4. 정규직 중도 입·퇴사자 일할 계산기 및 원클릭 표 적용
+5. Apps Script 웹앱 연동 세무사(.txt) & 직원 개별 급여명세서 일괄 발송
 ================================================================================
 """
 
@@ -253,7 +254,7 @@ if not check_login():
 
 
 # =========================================================================
-# 2. 통합근태DB · 파트타임 · 정규직 시트 로드 및 월 급여 자동 계산
+# 2. 통합근태DB · 파트타임 · 정규직 · 정규직근태변동 시트 로드 및 월 급여 계산
 # =========================================================================
 @st.cache_data(ttl=30, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
 def fetch_and_calculate_salary(
@@ -266,13 +267,27 @@ def fetch_and_calculate_salary(
 ):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
+    titles = [s.title.strip() for s in db_ss.worksheets()]
+
+    reg_change_tab = (
+        "정규직근태변동"
+        if "정규직근태변동" in titles
+        else ("정직원근태변동" if "정직원근태변동" in titles else "")
+    )
+    target_tabs = [t for t in ["통합근태DB", "파트타임", "정규직"] if t in titles]
+    if reg_change_tab:
+        target_tabs.append(reg_change_tab)
+
+    values_map = {}
+    if target_tabs:
+        res = db_ss.values_batch_get([f"'{t}'!A:Z" for t in target_tabs])
+        for tab_name, vr in zip(target_tabs, res.get("valueRanges", [])):
+            values_map[tab_name] = vr.get("values", [])
 
     warnings = []
     attendance_map = {}
 
-    att_ws = db_ss.worksheet("통합근태DB")
-    att_rows = att_ws.get_all_values()
-
+    att_rows = values_map.get("통합근태DB", [])
     if len(att_rows) >= 2:
         headers = [c.strip() for c in att_rows[0]]
         col_idx = {h: i for i, h in enumerate(headers) if h}
@@ -327,23 +342,19 @@ def fetch_and_calculate_salary(
                 "work_dates": ", ".join(unique_dates),
             }
 
-    def read_tab_records(tab_name: str):
-        titles = [s.title.strip() for s in db_ss.worksheets()]
-        if tab_name not in titles:
-            return []
-        ws = db_ss.worksheet(tab_name)
-        all_rows = ws.get_all_values()
+    def parse_tab_records(tab_name: str, req_col: str = "이름"):
+        all_rows = values_map.get(tab_name, [])
         if len(all_rows) < 2:
             return []
         headers = [c.strip() for c in all_rows[0]]
         records = []
         for r in all_rows[1:]:
             row_dict = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
-            if row_dict.get("이름"):
+            if row_dict.get(req_col):
                 records.append(row_dict)
         return records
 
-    part_records = read_tab_records("파트타임")
+    part_records = parse_tab_records("파트타임")
     part_list = []
     processed_lookup_names = set()
 
@@ -407,7 +418,7 @@ def fetch_and_calculate_salary(
                 "이메일": "",
             })
 
-    ins_records = read_tab_records("정규직")
+    ins_records = parse_tab_records("정규직")
     ins_list = []
     for rec in ins_records:
         name = str(rec.get("이름", "")).strip()
@@ -438,7 +449,26 @@ def fetch_and_calculate_salary(
             "이메일": str(rec.get("이메일", "")).strip(),
         })
 
-    return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings
+    # 해당 정산 기간(start_date ~ end_date)의 정규직 특근/휴무 변동 내역 필터링
+    reg_changes_list = []
+    if reg_change_tab:
+        raw_rc = parse_tab_records(reg_change_tab, req_col="발생일")
+        for r in raw_rc:
+            d_obj = parse_sheet_date(r.get("발생일", ""))
+            if d_obj and start_date <= d_obj <= end_date:
+                reg_changes_list.append({
+                    "발생일": d_obj.strftime("%Y-%m-%d"),
+                    "이름": str(r.get("이름", "")).strip(),
+                    "구분": str(r.get("구분", "")).strip(),
+                    "단위": str(r.get("일수_시간", "")).strip(),
+                    "사유 및 정산 메모": str(r.get("상세메모", "")).strip(),
+                    "등록일시": str(r.get("등록일시", "")).strip(),
+                })
+    df_reg_changes = pd.DataFrame(reg_changes_list)
+    if not df_reg_changes.empty:
+        df_reg_changes = df_reg_changes.sort_values(["발생일", "이름"], ascending=[True, True]).reset_index(drop=True)
+
+    return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings, df_reg_changes
 
 
 # =========================================================================
@@ -905,7 +935,7 @@ with tab_calc:
                 st.rerun()
 
     try:
-        df_ins_raw, df_part_raw, warnings = fetch_and_calculate_salary(
+        df_ins_raw, df_part_raw, warnings, df_reg_changes = fetch_and_calculate_salary(
             store_cfg["db_id"],
             start_dt,
             end_dt,
@@ -922,6 +952,18 @@ with tab_calc:
 
         st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
         st.caption("💡 **계산급여** = `계약급여 - 제세금`  |  **입금급여(실이체액)** = `계산급여 ± 변동급여` (추가근무는 양수 `100000`, 휴무 차감은 음수 `-100000` 입력)")
+
+        if not df_reg_changes.empty:
+            with st.container(border=True):
+                st.markdown(
+                    f"📌 **이번 정산 기간({start_dt.strftime('%m/%d')}~{end_dt.strftime('%m/%d')}) 정규직 특근·휴무 등록 내역 ({len(df_reg_changes)}건)** — 아래 표의 `변동급여 (+/-)` 입력 시 참고하세요."
+                )
+                st.dataframe(
+                    df_reg_changes,
+                    use_container_width=True,
+                    hide_index=True,
+                    row_height=28,
+                )
 
         if "prorated_overrides" not in st.session_state:
             st.session_state["prorated_overrides"] = {}
