@@ -3,12 +3,10 @@
 [파일명] views/contract_sign.py
 [역할] 직원이 전용 링크(?contract_id=...)로 접속했을 때 열리는 모바일/웹 전자서명 페이지
 [주요 기능]
-  1. '환경설정' 탭과 실시간 연동 (사업체명, 대표자명, 사업장 소재지, 임금지급일 반영)
-  2. 관리자 메뉴(사이드바)를 완전히 숨기고 계약서 전용 화면만 단독 표시
-  3. 제1조 ~ 제17조 표준근로계약서 + 선택 시 '비밀유지 및 경업금지 서약서' 본문 출력
-  4. 직원 명부에서 연동된 기본정보(주민번호, 은행명, 계좌번호, 이메일)를 입력란에 자동 채움
-  5. 정자 성명 타이핑(자동 사인 이미지 변환) 또는 자필 서명 사진 업로드 지원
-  6. st.form 기반 제출 및 시트 상태 중복 체크로 무반응 버그 및 중복 제출 완벽 방지
+  1. 일반 근로계약서 / 연소근로자(만 18세 미만) 표준근로계약서 자동 전환 렌더링
+  2. 연소근로자인 경우 '친권자(후견인) 동의서' 본문, 부모님 인적사항 입력란 및 친권자 전자서명란 표시
+  3. 선택적 '비밀유지 및 경업금지 서약서' 본문 출력
+  4. st.form 기반 제출 및 시트 상태 중복 체크로 무반응 버그 및 중복 제출 완벽 방지
 ================================================================================
 """
 
@@ -20,6 +18,7 @@ from contract_utils import (
     get_contract_by_id,
     complete_employee_signature,
     load_runtime_settings,
+    extract_birth_and_age_from_rrn,
 )
 
 BANK_OPTIONS = [
@@ -97,7 +96,6 @@ if not cid:
     st.error("잘못된 접근입니다. 매니저에게 전달받은 전용 계약서 링크로 접속해 주세요.")
     st.stop()
 
-# 방금 서명을 완료한 직후라면 완료 및 PDF 다운로드 화면 즉시 출력
 if "sign_done_data" in st.session_state and st.session_state["sign_done_data"] is not None:
     done = st.session_state["sign_done_data"]
     if done.get("cid") == cid:
@@ -131,9 +129,11 @@ store_title = runtime_cfg.get("store_title", "분당그릴").strip() or "분당�
 spaced_store = " ".join(list(store_title)) if len(store_title) <= 5 else store_title
 owner_name = runtime_cfg.get("owner_name", "이용석").strip() or "이용석"
 spaced_owner = " ".join(list(owner_name)) if len(owner_name) <= 4 else owner_name
+store_phone = runtime_cfg.get("store_phone", "031-713-0342").strip() or "031-713-0342"
 store_address = runtime_cfg.get("store_address", "경기도 성남시 분당구 미금일로 74번길 13-3 1층").strip()
 pay_day = runtime_cfg.get("payroll_start_day", "5").strip() or "5"
 
+is_minor = str(contract.get("연소근로자여부", "N")).strip().upper() in ("Y", "TRUE", "1")
 include_nda = str(contract.get("비밀유지서약", "N")).strip().upper() in ("Y", "TRUE", "1")
 
 
@@ -180,9 +180,33 @@ period_text = (
     else f"<b>1. 근로개시일 :</b> {s_date} 부터"
 )
 
+doc_title_html = (
+    "연소근로자(18세 미만인 자) 표준근로계약서"
+    if is_minor
+    else f"표준근로계약서({ctype})"
+)
+
+minor_clause_8_html = (
+    "<b>8. 가족관계증명서 및 동의서 :</b><br>"
+    "&nbsp;&nbsp;- 가족관계기록사항에 관한 증명서 제출 여부 : 제출함<br>"
+    "&nbsp;&nbsp;- 친권자 또는 후견인의 동의서 구비 여부 : 구비함 (하단 전자동의서 첨부)<br>"
+    f"<b>9. 사회보험 적용여부 :</b> {contract.get('사회보험')}<br>"
+    "<b>10. 근로계약서 교부 :</b> 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부 요구와 관계없이 근로자에게 교부함(근로기준법 제17조, 제67조 이행)<br>"
+    if is_minor
+    else f"<b>8. 사회보험 적용여부 :</b> {contract.get('사회보험')}<br>"
+    "<b>9. 근로계약서 교부 :</b> 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부 요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)<br>"
+    "<b>10. 근로계약, 취업규칙 등의 성실한 이행의무 :</b> 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함<br>"
+)
+
+clause_17_html = (
+    "<b>17. 기 타 :</b> 13세 이상 15세 미만인 자에 대해서는 고용노동부장관으로부터 취직인허증을 교부받아야 하며, 이 계약에 정함이 없는 사항은 근로기준법령에 의함"
+    if is_minor
+    else "<b>17. 기 타 :</b> 이 계약에 정함이 없는 사항은 근로기준법령에 의함"
+)
+
 st.markdown(f"""
 <div class="contract-box">
-    <div class="contract-title">표준근로계약서({ctype})</div>
+    <div class="contract-title">{doc_title_html}</div>
     <p><b>{spaced_store}</b> (이하 "사업주"라 함)과(와) <b>{emp_name}</b> (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</p>
     <p>{period_text}<br>
     <b>2. 근 무 장 소 :</b> {store_address}<br>
@@ -190,11 +214,9 @@ st.markdown(f"""
     <b>4. 소정근로시간(변동있음) :</b> {contract.get('근무시작')} 부터 {contract.get('근무종료')} 까지 (휴게시간 : {contract.get('휴게시간(분)')}분)<br>
     <b>5. 근무일/휴일 :</b> 매주 {contract.get('주근무일수')}일(또는 매일단위)근무, 주휴일 매주 {contract.get('주휴요일')}요일<br>
     <b>6. 임 금 :</b> {contract.get('임금구분')} <b>{pay_amt}원</b> / 상여금: {contract.get('상여금')} / 기타급여: {contract.get('기타급여')}<br>
-    &nbsp;&nbsp;- 임금지급일 : 매월 {pay_day}일 (휴일의 경우는 휴일 지급) / 근로자 명의 예금통장에 입금<br>
+    &nbsp;&nbsp;- 임금지급일 : 매월 {pay_day}일 (휴일의 경우는 {'전일' if is_minor else '휴일'} 지급) / 근로자 명의 예금통장에 입금<br>
     <b>7. 연차유급휴가 :</b> 근로기준법에서 정하는 바에 따라 부여함<br>
-    <b>8. 사회보험 적용여부 :</b> {contract.get('사회보험')}<br>
-    <b>9. 근로계약서 교부 :</b> 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부 요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)<br>
-    <b>10. 근로계약, 취업규칙 등의 성실한 이행의무 :</b> 사업주와 근로자는 각자가 근로계약, 취업규칙, 단체협약을 지키고 성실하게 이행하여야 함<br>
+    {minor_clause_8_html}
     <b>11. 위생 관리 및 보건증 제출 :</b> 근로자는 식품위생법에 따라 입사 시 유효한 보건증(건강진단결과서)을 제출해야 하며, 근무 기간 중 유효기간 만료 전 갱신하여 제출할 의무가 있다. 보건증 미제출 또는 위생 관련 법령 위반으로 발생한 불이익에 대해 근로자는 필요한 조치에 적극 협조한다.<br>
     <b>12. 복무 규율 및 사직 통보 :</b> 근로자는 부득이한 사정으로 결근·지각·조퇴할 경우 최소 근무 시작 24시간 전에 당사자(업주)에게 사전 승인을 받아야 한다. 근로자가 사직하고자 할 경우에는 인수인계 및 대체 인력 채용을 위해 최소 30일 전에 사업주에게 서면 또는 메시지로 사직 의사를 통보해야 한다.<br>
     <b>13. 수습기간 :</b> 입사 후 3개월(최대 3개월)간은 수습기간으로 정한다. 수습기간 중 근로 태도, 업무 적응도, 위생 수칙 준수 여부 등이 현저히 미달할 경우 근로기준법 제26조, 제27조 및 제35조에 따라 본 계약을 즉시 해지할 수 있다. (단, 근로계약기간이 1년 미만인 경우 수습기간 중이라도 임금을 감액하지 아니하고 100% 지급한다)<br>
@@ -205,9 +227,21 @@ st.markdown(f"""
     &nbsp;&nbsp;- 수집 항목: 매장 내 CCTV에 촬영되는 영상정보 (홀, 카운터, 주방 등)<br>
     &nbsp;&nbsp;- 보유 및 이용 기간: 촬영일로부터 30일 (보존기간 경과 시 자동 파기)<br>
     &nbsp;&nbsp;- 동의 거부 안내: 귀하는 영상 수집에 대한 동의를 거부할 권리가 있으나, 매장 보안 및 안전 관리 목적상 채용 또는 근무 수행에 제한이 있을 수 있습니다.<br>
-    <b>17. 기 타 :</b> 이 계약에 정함이 없는 사항은 근로기준법령에 의함</p>
+    {clause_17_html}</p>
 </div>
 """, unsafe_allow_html=True)
+
+if is_minor:
+    st.markdown(f"""
+    <div class="contract-box" style="border: 1.5px solid #2563EB; background-color: #EFF6FF;">
+        <div class="contract-title" style="background-color:#ffffff;">친권자(후견인) 동의서</div>
+        <p><b>○ 사업장 개요</b><br>
+        &nbsp;&nbsp;- 회사명: {store_title} &nbsp;|&nbsp; 대표자: {spaced_owner} &nbsp;|&nbsp; 전화: {store_phone}<br>
+        &nbsp;&nbsp;- 회사주소: {store_address}</p>
+        <p><b>본인(친권자/후견인)은 연소근로자 {emp_name} 가 위 사업장에서 근로를 하는 것에 대하여 동의합니다.</b><br>
+        <span style="font-size:13px; color:#1E40AF;">※ 첨부 필수서류: 가족관계증명서 1부 (매장 별도 제출)</span></p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if include_nda:
     st.markdown(f"""
@@ -261,26 +295,56 @@ with st.form("contract_sign_submit_form"):
         addr = st.text_input("거주지 주소", value=pre_addr, placeholder="예: 경기도 성남시 분당구 ...")
         cctv_agree = st.radio("위 16조 개인영상정보(CCTV) 수집 및 이용에 동의하십니까?", ["동의함", "동의하지 않음"], horizontal=True)
 
+    # 연소근로자(만 18세 미만) 친권자(후견인) 인적사항 및 서명 입력란
+    g_name = ""
+    g_birth = ""
+    g_addr = ""
+    g_phone = ""
+    g_rel = "부"
+    g_sign_text = ""
+    g_sign_file = None
+
+    if is_minor:
+        st.divider()
+        st.markdown("#### 👨‍👩‍👧 친권자(후견인) 인적사항 및 동의 서명 (필수)")
+        st.caption("부모님(친권자)께서 아래 인적사항을 직접 입력하고 서명해 주세요.")
+        gc1, gc2, gc3 = st.columns([1.1, 1.1, 0.9])
+        g_name = gc1.text_input("친권자(부모님) 성명*", placeholder="예: 홍판서")
+        g_birth = gc2.text_input("친권자 생년월일*", placeholder="예: 1978.05.12")
+        g_rel = gc3.selectbox("연소근로자와의 관계*", ["부", "모", "후견인"])
+
+        gc4, gc5 = st.columns([1.0, 1.6])
+        g_phone = gc4.text_input("친권자 연락처*", placeholder="예: 010-9876-5432")
+        g_addr = gc5.text_input("친권자 주소* (근로자와 같으면 동일하게 입력)", value=pre_addr, placeholder="예: 경기도 성남시 분당구 ...")
+
+        if sign_method.startswith("✍️"):
+            g_sign_text = st.text_input("친권자 전자서명란 — 부모님 성명을 정자로 직접 입력해 주세요*", placeholder="예: 홍판서")
+        else:
+            g_sign_file = st.file_uploader("친권자 자필 서명 이미지(PNG/JPG) 업로드*", type=["png", "jpg", "jpeg"], key="g_sign_uploader")
+
     st.divider()
     sign_text_input = ""
     uploaded_sign_file = None
 
     if sign_method.startswith("✍️"):
         sign_text_input = st.text_input(
-            f"전자서명란 — 아래 칸에 본인 성명('{emp_name}')을 정자로 직접 입력해 주세요",
+            f"근로자 전자서명란 — 아래 칸에 본인 성명('{emp_name}')을 정자로 직접 입력해 주세요*",
             placeholder=emp_name,
         )
     else:
         uploaded_sign_file = st.file_uploader(
-            "흰 종이에 서명 후 촬영한 사진 또는 서명 이미지(PNG/JPG)를 올려주세요",
+            "근로자 자필 서명 사진 또는 이미지(PNG/JPG)를 올려주세요*",
             type=["png", "jpg", "jpeg"],
+            key="emp_sign_uploader",
         )
 
-    agree_label = (
-        f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지) 및 비밀유지·경업금지 서약서(제1조부터 제4조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
-        if include_nda
-        else f"본인({emp_name})은 위 표준근로계약서(제1조부터 제17조까지)의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
-    )
+    doc_parts = ["표준근로계약서(제1조부터 제17조까지)"]
+    if is_minor:
+        doc_parts.append("친권자(후견인) 동의서")
+    if include_nda:
+        doc_parts.append("비밀유지·경업금지 서약서(제1조부터 제4조까지)")
+
+    agree_label = f"본인({emp_name}){' 및 친권자' if is_minor else ''}는 위 {' 및 '.join(doc_parts)}의 내용을 충분히 확인하고 이에 동의하여 전자서명합니다."
     agree_confirm = st.checkbox(agree_label)
 
     submitted = st.form_submit_button(
@@ -291,13 +355,19 @@ with st.form("contract_sign_submit_form"):
 
 if submitted:
     if not rrn.strip() or not account.strip() or not phone.strip() or not addr.strip() or not email.strip():
-        st.error("주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
+        st.error("근로자의 주민등록번호, 계좌번호, 연락처, 이메일, 주소를 모두 입력해 주세요.")
+    elif is_minor and (not g_name.strip() or not g_birth.strip() or not g_phone.strip() or not g_addr.strip()):
+        st.error("친권자(부모님)의 성명, 생년월일, 연락처, 주소를 모두 입력해 주세요.")
     elif not agree_confirm:
         st.error("계약 내용 확인 및 전자서명 동의 체크박스를 선택해 주세요.")
     elif sign_method.startswith("✍️") and not sign_text_input.strip():
-        st.error("전자서명란에 본인 성명을 입력해 주세요.")
+        st.error("근로자 전자서명란에 본인 성명을 입력해 주세요.")
     elif not sign_method.startswith("✍️") and uploaded_sign_file is None:
-        st.error("서명 이미지 파일을 업로드해 주세요.")
+        st.error("근로자 서명 이미지 파일을 업로드해 주세요.")
+    elif is_minor and sign_method.startswith("✍️") and not g_sign_text.strip():
+        st.error("친권자 전자서명란에 부모님 성명을 입력해 주세요.")
+    elif is_minor and not sign_method.startswith("✍️") and g_sign_file is None:
+        st.error("친권자 서명 이미지 파일을 업로드해 주세요.")
     else:
         with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
             latest_check = get_contract_by_id(st.secrets, cid)
@@ -306,8 +376,10 @@ if submitted:
 
             if sign_method.startswith("✍️"):
                 sign_img = _create_text_signature_image(sign_text_input.strip())
+                guardian_img = _create_text_signature_image(g_sign_text.strip()) if is_minor else None
             else:
                 sign_img = Image.open(uploaded_sign_file).convert("RGBA")
+                guardian_img = Image.open(g_sign_file).convert("RGBA") if is_minor else None
 
             emp_inputs = {
                 "주민번호": rrn.strip(),
@@ -318,9 +390,14 @@ if submitted:
                 "이메일": email.strip(),
                 "CCTV동의": cctv_agree,
                 "보건증제출일": health_date.strftime("%Y-%m-%d"),
+                "친권자성명": g_name.strip() if is_minor else "",
+                "친권자생년월일": g_birth.strip() if is_minor else "",
+                "친권자주소": g_addr.strip() if is_minor else "",
+                "친권자연락처": g_phone.strip() if is_minor else "",
+                "친권자관계": g_rel if is_minor else "",
             }
             pdf_bytes, filename, drive_link, email_ok, email_msg = complete_employee_signature(
-                st.secrets, contract, emp_inputs, sign_img
+                st.secrets, contract, emp_inputs, sign_img, guardian_img
             )
             st.session_state["sign_done_data"] = {
                 "cid": cid,
