@@ -21,6 +21,7 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
+from store_registry import get_secret
 
 DB_SPREADSHEET_ID = "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8"
 CONTRACT_FOLDER_ID = "1I91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
@@ -76,7 +77,6 @@ def get_google_creds(secrets_dict):
         )
     return Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
-
 def load_runtime_settings(secrets_dict, ss=None) -> dict:
     """구글 시트 '환경설정' 탭과 Secrets를 통합해 최신 설정값을 반환합니다."""
     cfg = {
@@ -89,9 +89,9 @@ def load_runtime_settings(secrets_dict, ss=None) -> dict:
         "default_break_min": "30",
         "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
         "payroll_start_day": "5",
-        "drive_webapp_url": str(secrets_dict.get("DRIVE_UPLOAD_WEBAPP_URL", "")).strip(),
-        "telegram_bot_token": str(secrets_dict.get("TELEGRAM_BOT_TOKEN", "")).strip(),
-        "telegram_chat_id": str(secrets_dict.get("TELEGRAM_CHAT_ID", "")).strip(),
+        "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip(),
+        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", "").strip(),
+        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", "").strip(),
         "tg_alert_contract": "TRUE",
     }
     try:
