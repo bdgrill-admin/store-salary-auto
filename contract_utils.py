@@ -21,7 +21,7 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
-from store_registry import get_secret
+from store_registry import get_secret, dispatch_telegram_alert
 
 DB_SPREADSHEET_ID = "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8"
 CONTRACT_FOLDER_ID = "1I91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
@@ -77,6 +77,7 @@ def get_google_creds(secrets_dict):
         )
     return Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
+
 def load_runtime_settings(secrets_dict, ss=None) -> dict:
     """구글 시트 '환경설정' 탭과 Secrets를 통합해 최신 설정값을 반환합니다."""
     cfg = {
@@ -92,6 +93,8 @@ def load_runtime_settings(secrets_dict, ss=None) -> dict:
         "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip(),
         "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", "").strip(),
         "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", "").strip(),
+        "manager_telegram_chat_id": "",
+        "tg_target_contract": "모두",
         "tg_alert_contract": "TRUE",
     }
     try:
@@ -831,26 +834,15 @@ def complete_employee_signature(
         secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes, runtime_cfg
     )
 
-    if runtime_cfg.get("tg_alert_contract", "TRUE").upper() == "TRUE":
-        bot_token = runtime_cfg.get("telegram_bot_token", "")
-        chat_id = runtime_cfg.get("telegram_chat_id", "")
-        store_title = runtime_cfg.get("store_title", "분당그릴")
-        extra_info = f" ({', '.join(tags)})" if tags else ""
-        if bot_token and chat_id:
-            tele_text = (
-                f"📝 [{store_title} 전자 근로계약서{extra_info} 서명 완료]\n"
-                f"• 직원명: {emp_name} ({merged.get('계약유형')})\n"
-                f"• 근무조건: {merged.get('임금구분')} {merged.get('금액')}원 / {merged.get('근로개시일')} 입사\n"
-                f"• 이메일 교부: {email_msg}\n"
-                f"• 구글 드라이브 저장 완료"
-            )
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                    json={"chat_id": chat_id, "text": tele_text},
-                    timeout=5,
-                )
-            except Exception:
-                pass
+    store_title = runtime_cfg.get("store_title", "분당그릴")
+    extra_info = f" ({', '.join(tags)})" if tags else ""
+    tele_text = (
+        f"📝 [{store_title} 전자 근로계약서{extra_info} 서명 완료]\n"
+        f"• 직원명: {emp_name} ({merged.get('계약유형')})\n"
+        f"• 근무조건: {merged.get('임금구분')} {merged.get('금액')}원 / {merged.get('근로개시일')} 입사\n"
+        f"• 이메일 교부: {email_msg}\n"
+        f"• 구글 드라이브 저장 완료"
+    )
+    dispatch_telegram_alert(runtime_cfg, "tg_target_contract", tele_text, default_target="모두")
 
     return pdf_bytes, filename, drive_link, email_ok, email_msg
