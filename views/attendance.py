@@ -182,7 +182,62 @@ def load_db_sheets(db_id: str):
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
 
     return df_emp, df_reg, df_att
+    
+@st.cache_data(ttl=20, show_spinner=False)
+def load_regular_changes(db_id: str) -> pd.DataFrame:
+    gc = get_gspread_client()
+    ss = gc.open_by_key(db_id)
+    titles = [s.title.strip() for s in ss.worksheets()]
+    if "정직원근태변동" not in titles:
+        return pd.DataFrame()
+    ws = ss.worksheet("정직원근태변동")
+    rows = ws.get_all_values()
+    if len(rows) < 2:
+        return pd.DataFrame()
+    headers = [c.strip() for c in rows[0]]
+    out = []
+    for idx, r in enumerate(rows[1:], start=2):
+        row_d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
+        if any(row_d.values()):
+            row_d["_sheet_row"] = idx
+            out.append(row_d)
+    return pd.DataFrame(out)
 
+def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values: list):
+    gc = get_gspread_client()
+    ss = gc.open_by_key(db_id)
+    titles = [s.title.strip() for s in ss.worksheets()]
+    if "정직원근태변동" not in titles:
+        ws = ss.add_worksheet(title="정직원근태변동", rows=500, cols=8)
+        ws.append_row(
+            ["발생일", "이름", "구분", "일수_시간", "상세메모", "정산반영여부", "등록일시"],
+            value_input_option="RAW",
+        )
+    else:
+        ws = ss.worksheet("정직원근태변동")
+
+    ws.append_row(row_values, value_input_option="USER_ENTERED")
+
+    # 대표님 텔레그램으로 즉시 알림 발송 (누락 방지용)
+    bot_token = app_cfg.get("telegram_bot_token", "").strip()
+    chat_id = app_cfg.get("telegram_chat_id", "").strip()
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    if bot_token and chat_id:
+        msg = (
+            f"📌 [{store_title} 정직원 근태변동 등록]\n"
+            f"• 발생일: {row_values[0]}\n"
+            f"• 이름: {row_values[1]}\n"
+            f"• 구분: {row_values[2]} ({row_values[3]})\n"
+            f"• 사유: {row_values[4] or '없음'}"
+        )
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg},
+                timeout=4,
+            )
+        except Exception:
+            pass
 
 @st.cache_resource
 def _daily_health_telegram_tracker():
