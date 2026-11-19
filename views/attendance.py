@@ -19,7 +19,7 @@ from store_registry import (
 STORES = load_all_stores()
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
-REG_CHANGE_TYPES = ["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"]
+REG_CHANGE_TYPES = ["➕ 추가출근)", "➖ 기타휴무", "🔄 대체휴무"]
 REG_CHANGE_UNITS = ["1일", "0.5일 (반차)", "시간 단위 (사유란 기재)"]
 
 
