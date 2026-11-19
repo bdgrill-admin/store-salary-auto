@@ -4,7 +4,7 @@
 [역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 연동 상태 진단' 페이지
 [주요 기능]
   1. 관리자 비밀번호 보안 잠금
-  2. 구글 시트('환경설정' 탭)에 설정값 영구 저장 및 불러오기 (Secrets보다 우선 적용)
+  2. 구글 시트('환경설정' 탭)에 설정값 영구 저장 및 불러오기 (맨 앞 '0' 보존을 위해 RAW 모드 저장)
      - 🔐 보안 및 권한: 매니저 PIN, 관리자 비밀번호, 매니저 급여정산 메뉴 열람 허용 여부
      - ⏱️ 출퇴근 및 보건증 규칙: 시간 선택 단위(분), 보건증 만료 알림 기준일(D-Day)
      - 📝 전자 근로계약서 기본값: 사업장명, 대표자명, 주소, 연락처, 기본 근무시간/휴게시간/업무내용
@@ -48,7 +48,6 @@ STORES = {
 CREDENTIALS_FILE = "credentials.json"
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "0524")
 
-# 환경설정 기본값 정의 (시트에 저장된 값이 있으면 시트 값을 1순위로 우선 적용)
 DEFAULT_SETTINGS = {
     # 1. 보안 및 권한
     "manager_pin": get_secret("MANAGER_PIN_BUNDANG", "0524"),
@@ -136,7 +135,7 @@ def get_gspread_client():
 
 @st.cache_data(ttl=30, show_spinner="환경설정 데이터를 불러오는 중...")
 def load_settings_from_sheet(db_id: str) -> dict:
-    """구글 시트 '환경설정' 탭에서 설정값을 로드합니다. 탭이 없으면 기본값을 반환합니다."""
+    """구글 시트 '환경설정' 탭에서 설정값을 로드합니다."""
     cfg = dict(DEFAULT_SETTINGS)
     try:
         gc = get_gspread_client()
@@ -157,7 +156,7 @@ def load_settings_from_sheet(db_id: str) -> dict:
 
 
 def save_settings_to_sheet(db_id: str, new_cfg: dict):
-    """구글 시트 '환경설정' 탭에 설정값을 저장합니다. 탭이 없으면 자동 생성합니다."""
+    """구글 시트 '환경설정' 탭에 문자열 원본(RAW) 그대로 저장하여 맨 앞 '0'이 사라지지 않게 합니다."""
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
     titles = [ws.title.strip() for ws in ss.worksheets()]
@@ -172,7 +171,8 @@ def save_settings_to_sheet(db_id: str, new_cfg: dict):
     for k, v in new_cfg.items():
         rows.append([str(k), str(v), now_str])
 
-    ws.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
+    # value_input_option="RAW" 사용: 0으로 시작하는 PIN 번호나 전화번호가 숫자로 변환되어 0이 잘리는 현상 방지
+    ws.update(range_name="A1", values=rows, value_input_option="RAW")
 
 
 # ==============================================================================
@@ -218,21 +218,18 @@ t_sec, t_att, t_con, t_pay, t_diag = st.tabs([
 ])
 
 with st.form("settings_main_form"):
-    # --------------------------------------------------------------------------
-    # [탭 1] 보안 및 권한 관리
-    # --------------------------------------------------------------------------
     with t_sec:
         st.markdown('<div class="section-title">비밀번호 및 매니저 접근 권한</div>', unsafe_allow_html=True)
         with st.container(border=True):
             s1, s2 = st.columns(2)
             in_mgr_pin = s1.text_input(
                 "매니저 전용 PIN 번호 (출퇴근 승인 · 직원 관리 · 매뉴얼)",
-                value=current_cfg.get("manager_pin", "0524"),
-                max_chars=10,
+                value=str(current_cfg.get("manager_pin", "0524")),
+                max_chars=20,
             )
             in_admin_pwd = s2.text_input(
                 "대표자/관리자 비밀번호 (급여 정산 · 환경설정)",
-                value=current_cfg.get("admin_password", "0524"),
+                value=str(current_cfg.get("admin_password", "0524")),
                 max_chars=20,
             )
             in_allow_mgr_payroll = st.checkbox(
@@ -240,9 +237,6 @@ with st.form("settings_main_form"):
                 value=(current_cfg.get("allow_mgr_payroll", "FALSE").upper() == "TRUE"),
             )
 
-    # --------------------------------------------------------------------------
-    # [탭 2] 출퇴근 및 보건증 규칙
-    # --------------------------------------------------------------------------
     with t_att:
         st.markdown('<div class="section-title">출퇴근 입력 및 보건증 만료 알림 기준</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -264,9 +258,6 @@ with st.form("settings_main_form"):
                 step=1,
             )
 
-    # --------------------------------------------------------------------------
-    # [탭 3] 전자 근로계약서 기본 템플릿
-    # --------------------------------------------------------------------------
     with t_con:
         st.markdown('<div class="section-title">사업장 정보 및 계약서 기본 근무조건</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -295,9 +286,6 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("default_job_desc", "홀 서빙 및 주방 보조 등 매장 운영 전반"),
             )
 
-    # --------------------------------------------------------------------------
-    # [탭 4] 급여 정산 및 발송 설정
-    # --------------------------------------------------------------------------
     with t_pay:
         st.markdown('<div class="section-title">월별 급여 정산일 · 세무사 수신처 · 통장 표기</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -323,9 +311,6 @@ with st.form("settings_main_form"):
                 value=(current_cfg.get("auto_send_payslip", "TRUE").upper() == "TRUE"),
             )
 
-    # --------------------------------------------------------------------------
-    # [탭 5] 텔레그램 & 이메일 발송 기본값 및 알림 스위치
-    # --------------------------------------------------------------------------
     with t_diag:
         st.markdown('<div class="section-title">📲 텔레그램 발송 기본값 (봇 토큰 · 채팅 ID)</div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -411,7 +396,6 @@ with st.form("settings_main_form"):
 
 # ==============================================================================
 # 3. 원클릭 외부 서비스(시트 · 텔레그램 · 이메일) 연동 상태 진단 패널
-#    (저장된 최신 환경설정 값을 사용하여 즉시 테스트 발송)
 # ==============================================================================
 st.divider()
 st.markdown('<div class="section-title">📡 외부 연동 상태 실시간 점검 (원클릭 테스트)</div>', unsafe_allow_html=True)
