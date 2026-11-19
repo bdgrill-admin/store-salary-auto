@@ -7,13 +7,13 @@
 
 import re
 import datetime
-import requests
 import pandas as pd
 import streamlit as st
 from store_registry import (
     load_all_stores,
     load_store_settings,
     get_gspread_client,
+    dispatch_telegram_alert,
 )
 
 STORES = load_all_stores()
@@ -153,17 +153,8 @@ def format_date_with_weekday(d_str: str) -> str:
 
 
 def send_telegram_notice(app_cfg: dict, store_key: str, text: str):
-    bot_token = app_cfg.get("telegram_bot_token", "").strip()
-    chat_id = app_cfg.get("telegram_chat_id", "").strip()
-    if bot_token and chat_id:
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": text},
-                timeout=4,
-            )
-        except Exception:
-            pass
+    """정규직 특근·휴무 등록/수정/삭제 시 설정된 수신 대상(대표/매니저/모두)에게 텔레그램 알림을 발송합니다."""
+    dispatch_telegram_alert(app_cfg, "tg_target_reg_change", text, default_target="대표")
 
 
 @st.cache_data(ttl=20, show_spinner="근태 데이터를 불러오는 중...")
@@ -252,8 +243,7 @@ def append_regular_change(db_id: str, app_cfg: dict, store_key: str, row_values:
         f"• 구분: {row_values[2]} ({row_values[3]})\n"
         f"• 사유: {row_values[4] or '없음'}"
     )
-    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
-        send_telegram_notice(app_cfg, store_key, msg)
+    send_telegram_notice(app_cfg, store_key, msg)
 
 
 def update_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, row_values: list):
@@ -268,8 +258,7 @@ def update_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: 
         f"• 변경내용: {row_values[2]} ({row_values[3]})\n"
         f"• 사유: {row_values[4] or '없음'}"
     )
-    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
-        send_telegram_notice(app_cfg, store_key, msg)
+    send_telegram_notice(app_cfg, store_key, msg)
 
 
 def delete_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: int, summary_str: str):
@@ -278,8 +267,7 @@ def delete_regular_change(db_id: str, app_cfg: dict, store_key: str, sheet_row: 
 
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
     msg = f"🗑️ [{store_title} 정규직 근태변동 삭제]\n• 삭제된 내역: {summary_str}"
-    if app_cfg.get("tg_alert_reg_change", "TRUE").upper() == "TRUE":
-        send_telegram_notice(app_cfg, store_key, msg)
+    send_telegram_notice(app_cfg, store_key, msg)
 
 
 @st.cache_resource
@@ -288,29 +276,18 @@ def _daily_health_telegram_tracker():
 
 
 def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: list):
-    if not alert_lines or app_cfg.get("tg_alert_health", "TRUE").upper() != "TRUE":
+    if not alert_lines:
         return
     tracker = _daily_health_telegram_tracker()
     today_s = datetime.date.today().strftime("%Y-%m-%d")
     if tracker.get(store_key) == today_s:
         return
 
-    bot_token = app_cfg.get("telegram_bot_token", "").strip()
-    chat_id = app_cfg.get("telegram_chat_id", "").strip()
     store_title = app_cfg.get("store_title", store_key).strip() or store_key
-    if bot_token and chat_id:
-        clean_lines = [re.sub(r"[*`]", "", x) for x in alert_lines]
-        msg = f"🏥 [{store_title} 일일 보건증 갱신 알림 ({today_s})]\n\n" + "\n".join(clean_lines)
-        try:
-            resp = requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": msg},
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                tracker[store_key] = today_s
-        except Exception:
-            pass
+    clean_lines = [re.sub(r"[*`]", "", x) for x in alert_lines]
+    msg = f"🏥 [{store_title} 일일 보건증 갱신 알림 ({today_s})]\n\n" + "\n".join(clean_lines)
+    dispatch_telegram_alert(app_cfg, "tg_target_health", msg, default_target="모두")
+    tracker[store_key] = today_s
 
 
 h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
