@@ -444,7 +444,7 @@ with top_right:
             )
 
         if pin_input == active_mgr_pin:
-            t_app, t_unapp = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제"])
+            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정직원 특근/휴무"])
 
             with t_app:
                 pending_df = (
@@ -455,7 +455,6 @@ with top_right:
                 if pending_df.empty:
                     st.success("🎉 모든 근태 기록이 확인 완료되었습니다.")
                 else:
-                    # 1. 체크박스 클릭 시마다 앱이 재실행되지 않도록 form으로 묶음
                     with st.form(key=f"mgr_approve_form_{selected_store}", border=False):
                         select_all = st.checkbox(
                             f"전체 선택 (총 {len(pending_df)}건)",
@@ -463,7 +462,6 @@ with top_right:
                             key=f"chk_all_{selected_store}",
                         )
                         st.divider()
-
                         row_checks = []
                         for _, r in pending_df.iterrows():
                             chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
@@ -481,7 +479,6 @@ with top_right:
                         )
 
                     if submitted_approve:
-                        # '전체 선택' 해제 시 개별 체크된 항목만, 체크 시 전체 항목 반영
                         approve_targets = [
                             (r_num, old_n)
                             for checked, r_num, old_n in row_checks
@@ -494,19 +491,15 @@ with top_right:
                             ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
                             now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
                             now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                            # 2. 건수만큼 반복 호출하지 않고 batch_update로 단 1회 일괄 업데이트
-                            batch_payload = []
-                            for r_num, old_n in approve_targets:
-                                new_n = f"{old_n}\n[{now_s}] 매니저 확인 완료".strip()
-                                batch_payload.append({
+                            batch_payload = [
+                                {
                                     "range": f"H{r_num}:J{r_num}",
-                                    "values": [["TRUE", new_n, now_f]],
-                                })
-
+                                    "values": [["TRUE", f"{old_n}\n[{now_s}] 매니저 확인 완료".strip(), now_f]],
+                                }
+                                for r_num, old_n in approve_targets
+                            ]
                             ws.batch_update(batch_payload, value_input_option="RAW")
                             st.success(f"✅ {len(approve_targets)}건 확인 완료!")
-                            # 3. 전체 캐시 대신 근태 시트 캐시만 핀포인트 초기화
                             load_db_sheets.clear(store_cfg["db_id"])
                             st.rerun()
 
@@ -534,8 +527,77 @@ with top_right:
                                     value_input_option="RAW",
                                 )
                                 st.warning("승인이 해제되었습니다.")
-                                st.cache_data.clear()
+                                load_db_sheets.clear(store_cfg["db_id"])
                                 st.rerun()
+
+            with t_reg:
+                reg_names = []
+                if df_reg is not None and not df_reg.empty and "이름" in df_reg.columns:
+                    active_reg = df_reg[df_reg["상태"] != "퇴사"] if "상태" in df_reg.columns else df_reg
+                    reg_names = [str(n).strip() for n in active_reg["이름"].tolist() if str(n).strip()]
+
+                if not reg_names:
+                    st.warning("'정규직' 시트에 등록된 재직 직원이 없습니다.")
+                else:
+                    with st.form(key=f"reg_change_form_{selected_store}", border=False, clear_on_submit=True):
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            reg_date = st.date_input("발생 날짜", value=sel_date)
+                        with rc2:
+                            reg_emp = st.selectbox("정직원 선택", options=reg_names)
+
+                        rc3, rc4 = st.columns(2)
+                        with rc3:
+                            reg_type = st.selectbox(
+                                "변동 구분",
+                                options=["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"],
+                            )
+                        with rc4:
+                            reg_unit = st.selectbox(
+                                "단위",
+                                options=["1일", "0.5일 (반차)", "시간 단위 (사유란 기재)"],
+                            )
+
+                        reg_memo = st.text_input(
+                            "사유 및 정산 메모",
+                            placeholder="예: 휴무일 대타 출근 / 개인사정 결근 / 3시간 추가근무",
+                        )
+                        submitted_reg = st.form_submit_button(
+                            "📌 정직원 특근/휴무 기록 저장",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                    if submitted_reg:
+                        with st.spinner("기록 저장 및 알림 발송 중..."):
+                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            row_vals = [
+                                reg_date.strftime("%Y-%m-%d"),
+                                reg_emp,
+                                reg_type,
+                                reg_unit,
+                                reg_memo.strip(),
+                                "대기",
+                                now_f,
+                            ]
+                            append_regular_change(store_cfg["db_id"], app_cfg, selected_store, row_vals)
+                            load_regular_changes.clear(store_cfg["db_id"])
+                            st.success(f"✅ [{reg_emp}] {reg_date.strftime('%m/%d')} {reg_type} 기록 완료!")
+                            st.rerun()
+
+                    # 이번 정산월 기준 등록 내역 요약 확인 (매월 5일 수기 정산 시 참고용)
+                    df_rc = load_regular_changes(store_cfg["db_id"])
+                    if not df_rc.empty and "발생일" in df_rc.columns:
+                        cur_s, cur_e = get_payroll_period(datetime.date.today(), start_day=payroll_start_day)
+                        df_rc["발생일_dt"] = pd.to_datetime(df_rc["발생일"], errors="coerce").dt.date
+                        cur_rc = df_rc[(df_rc["발생일_dt"] >= cur_s) & (df_rc["발생일_dt"] <= cur_e)].sort_values(
+                            "발생일", ascending=False
+                        )
+                        st.caption(f"📋 이번 정산월({cur_s.strftime('%m/%d')}~{cur_e.strftime('%m/%d')}) 등록 내역: {len(cur_rc)}건")
+                        if not cur_rc.empty:
+                            disp_rc = cur_rc[["발생일", "이름", "구분", "일수_시간", "상세메모"]].copy()
+                            disp_rc["발생일"] = disp_rc["발생일"].str[5:]
+                            st.dataframe(disp_rc, use_container_width=True, hide_index=True, row_height=26)
         elif pin_input:
             st.error("비밀번호가 일치하지 않습니다.")
         else:
