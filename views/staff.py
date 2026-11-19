@@ -632,7 +632,13 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             key=f"new_c_nda_{k_sfx}",
         )
         # 주민번호 앞자리로 만 18세 미만 자동 감지
-        detected_age = extract_birth_and_age_from_rrn(prefill.get("주민번호", ""))
+        raw_age = extract_birth_and_age_from_rrn(prefill.get("주민번호", ""))
+        try:
+            detected_age = int(raw_age) if raw_age is not None and str(raw_age).strip() != "" else None
+        except (ValueError, TypeError):
+            detected_age = None
+
+        auto_is_minor = (detected_age is not None and detected_age < 18)
         auto_is_minor = (detected_age is not None and detected_age < 18)
 
         c_is_minor = st.checkbox(
