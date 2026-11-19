@@ -3,11 +3,12 @@
 [파일명] views/contract_sign.py
 [역할] 직원이 전용 링크(?contract_id=...)로 접속했을 때 열리는 모바일/웹 전자서명 페이지
 [주요 기능]
-  1. 관리자 메뉴(사이드바)를 완전히 숨기고 계약서 전용 화면만 단독 표시
-  2. 제1조 ~ 제17조 근로계약서 전문을 가독성 높은 박스 형태로 출력
-  3. 직원 명부에서 연동된 기본정보(주민번호, 은행명, 계좌번호, 이메일)를 입력란에 자동 채움(Pre-fill)
-  4. 정자 성명 타이핑(자동 사인 이미지 변환) 또는 자필 서명 사진 업로드 지원
-  5. [중복 제출 방지] 제출 버튼 클릭 즉시 버튼 잠금 처리 및 완료 화면 고정으로 연타 원천 차단
+  1. '환경설정' 탭과 실시간 연동 (사업체명, 사업장 소재지, 임금지급일 실시간 반영)
+  2. 관리자 메뉴(사이드바)를 완전히 숨기고 계약서 전용 화면만 단독 표시
+  3. 제1조 ~ 제17조 근로계약서 전문을 가독성 높은 박스 형태로 출력
+  4. 직원 명부에서 연동된 기본정보(주민번호, 은행명, 계좌번호, 이메일)를 입력란에 자동 채움(Pre-fill)
+  5. 정자 성명 타이핑(자동 사인 이미지 변환) 또는 자필 서명 사진 업로드 지원
+  6. [중복 제출 방지] 제출 버튼 클릭 즉시 버튼 잠금 처리 및 완료 화면 고정으로 연타 원천 차단
 ================================================================================
 """
 
@@ -15,7 +16,11 @@ import os
 import datetime
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
-from contract_utils import get_contract_by_id, complete_employee_signature
+from contract_utils import (
+    get_contract_by_id,
+    complete_employee_signature,
+    load_runtime_settings,
+)
 
 # ------------------------------------------------------------------------------
 # 급여 대량이체용 표준 은행명 리스트 및 약칭 변환 매핑 (staff.py와 100% 동일하게 통일)
@@ -113,7 +118,7 @@ if "sign_done_data" in st.session_state and st.session_state["sign_done_data"] i
     st.stop()
 
 # ------------------------------------------------------------------------------
-# 시트에서 계약서 정보 조회 및 이미 서명 완료된 계약서 재접속 차단
+# 시트에서 계약서 정보 및 환경설정 조회 (이미 서명 완료된 계약서 재접속 차단)
 # ------------------------------------------------------------------------------
 contract = get_contract_by_id(st.secrets, cid)
 if not contract:
@@ -125,6 +130,12 @@ if contract.get("상태") == "서명완료":
     if contract.get("드라이브PDF링크"):
         st.info("계약서 사본은 입력하신 이메일로 발송되었습니다.")
     st.stop()
+
+runtime_cfg = load_runtime_settings(st.secrets)
+store_title = runtime_cfg.get("store_title", "분당그릴").strip() or "분당그릴"
+spaced_store = " ".join(list(store_title)) if len(store_title) <= 5 else store_title
+store_address = runtime_cfg.get("store_address", "경기도 성남시 분당구 미금일로 74번길 13-3 1층").strip()
+pay_day = runtime_cfg.get("payroll_start_day", "5").strip() or "5"
 
 
 # ------------------------------------------------------------------------------
@@ -164,7 +175,7 @@ def _create_text_signature_image(sign_text: str) -> Image.Image:
 
 
 # ------------------------------------------------------------------------------
-# 제1조 ~ 제17조 표준근로계약서 본문 렌더링
+# 제1조 ~ 제17조 표준근로계약서 본문 렌더링 ('환경설정' 사업체명·주소·지급일 실시간 반영)
 # ------------------------------------------------------------------------------
 ctype = contract.get("계약유형", "기간의 정함이 없는 경우")
 emp_name = contract.get("직원명", "")
@@ -181,14 +192,14 @@ period_text = (
 st.markdown(f"""
 <div class="contract-box">
     <div class="contract-title">표준근로계약서({ctype})</div>
-    <p><b>분 당 그 릴</b> (이하 "사업주"라 함)과(와) <b>{emp_name}</b> (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</p>
+    <p><b>{spaced_store}</b> (이하 "사업주"라 함)과(와) <b>{emp_name}</b> (이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</p>
     <p>{period_text}<br>
-    <b>2. 근 무 장 소 :</b> 경기도 성남시 분당구 미금일로 74번길 13-3 1층<br>
+    <b>2. 근 무 장 소 :</b> {store_address}<br>
     <b>3. 업무의 내용 :</b> {contract.get('업무내용')}<br>
     <b>4. 소정근로시간(변동있음) :</b> {contract.get('근무시작')} 부터 {contract.get('근무종료')} 까지 (휴게시간 : {contract.get('휴게시간(분)')}분)<br>
     <b>5. 근무일/휴일 :</b> 매주 {contract.get('주근무일수')}일(또는 매일단위)근무, 주휴일 매주 {contract.get('주휴요일')}요일<br>
     <b>6. 임 금 :</b> {contract.get('임금구분')} <b>{pay_amt}원</b> / 상여금: {contract.get('상여금')} / 기타급여: {contract.get('기타급여')}<br>
-    &nbsp;&nbsp;- 임금지급일 : 매월 5일 (휴일의 경우는 휴일 지급) / 근로자 명의 예금통장에 입금<br>
+    &nbsp;&nbsp;- 임금지급일 : 매월 {pay_day}일 (휴일의 경우는 휴일 지급) / 근로자 명의 예금통장에 입금<br>
     <b>7. 연차유급휴가 :</b> 근로기준법에서 정하는 바에 따라 부여함<br>
     <b>8. 사회보험 적용여부 :</b> {contract.get('사회보험')}<br>
     <b>9. 근로계약서 교부 :</b> 사업주는 근로계약을 체결함과 동시에 본 계약서를 사본하여 근로자의 교부 요구와 관계없이 근로자에게 교부함(근로기준법 제17조 이행)<br>
@@ -272,8 +283,10 @@ agree_confirm = st.checkbox(f"본인({emp_name})은 위 표준근로계약서 1�
 if "submitting_lock" not in st.session_state:
     st.session_state["submitting_lock"] = False
 
+
 def _lock_submit_btn():
     st.session_state["submitting_lock"] = True
+
 
 if st.button(
     "✅ 계약 내용 확인 및 전자서명 최종 제출",
