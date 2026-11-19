@@ -3,14 +3,17 @@
 [파일명] store_registry.py
 [역할] 다매장(분당그릴 · 감동한점 등) 목록 및 지점별 환경설정 통합 관리 공용 모듈
 [주요 기능]
-  1. 기준 DB('분당그릴') 내 '매장목록' 탭에서 등록된 전체 지점의 시트/폴더 ID 로드
-  2. 각 지점 DB 내 '환경설정' 탭에서 공제율, 목표 인건비율, 비밀번호, 기본 근무조건 등 로드
-  3. 구글 시트 저장 시 앞자리 '0' 유실 방지를 위한 RAW 모드 저장 지원
+1. 기준 DB('분당그릴') 내 '매장목록' 탭에서 등록된 전체 지점의 시트/폴더 ID 로드
+2. 각 지점 DB 내 '환경설정' 탭에서 공제율, 목표 인건비율, 비밀번호, 기본 근무조건 등 로드
+3. 구글 시트 저장 시 앞자리 '0' 유실 방지를 위한 RAW 모드 저장 지원
+4. 공동대표 및 매니저 수신 대상 분기 텔레그램 발송 지원 (dispatch_telegram_alert)
 ================================================================================
 """
 
 import os
+import re
 import datetime
+import requests
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -162,11 +165,18 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
         "part_high_tax_rate": "3.3",
         "part_high_tax_threshold": "1000000",
         "target_labor_ratio": "28.0",
-        # 5. 텔레그램 & 이메일 발송 기본값 및 알림 스위치
+        # 5. 텔레그램 & 이메일 발송 기본값 및 알림 수신자 분기 스위치
         "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", ""),
+        "manager_telegram_chat_id": "",
         "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", ""),
         "sender_email": get_secret("SENDER_EMAIL", "bdgrill0524@gmail.com"),
+        "tg_target_health": "모두",
+        "tg_target_contract": "모두",
+        "tg_target_reg_change": "대표",
+        "tg_target_wage_change": "대표",
+        "tg_target_payroll": "대표",
+        # 하위 호환용 기존 키 유지
         "tg_alert_health": "TRUE",
         "tg_alert_contract": "TRUE",
         "tg_alert_payroll": "TRUE",
@@ -211,3 +221,38 @@ def save_store_settings(db_id: str, new_cfg: dict):
         rows.append([str(k), str(v), now_str])
 
     ws.update(range_name="A1", values=rows, value_input_option="RAW")
+
+
+def dispatch_telegram_alert(app_cfg: dict, target_key: str, message: str, default_target: str = "대표"):
+    """
+    수신 대상 설정('대표', '매니저', '모두', '끄기')에 따라
+    공동대표(telegram_chat_id) 및 매니저(manager_telegram_chat_id)에게 텔레그램 알림을 분기 발송합니다.
+    """
+    bot_token = str(app_cfg.get("telegram_bot_token", "")).strip()
+    if not bot_token:
+        return
+
+    mode = str(app_cfg.get(target_key, default_target)).strip()
+    if mode.upper() == "FALSE" or mode == "끄기":
+        return
+    if mode.upper() == "TRUE":
+        mode = default_target
+
+    owner_ids = [x.strip() for x in re.split(r"[,;\s]+", str(app_cfg.get("telegram_chat_id", ""))) if x.strip()]
+    mgr_ids = [x.strip() for x in re.split(r"[,;\s]+", str(app_cfg.get("manager_telegram_chat_id", ""))) if x.strip()]
+
+    recipients = []
+    if mode in ("대표", "대표만", "모두", "둘 다"):
+        recipients.extend(owner_ids)
+    if mode in ("매니저", "매니저만", "모두", "둘 다"):
+        recipients.extend(mgr_ids)
+
+    for chat_id in dict.fromkeys(recipients):
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": message},
+                timeout=4,
+            )
+        except Exception:
+            pass
