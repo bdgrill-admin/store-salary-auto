@@ -550,7 +550,7 @@ with top_right:
                         with rc3:
                             reg_type = st.selectbox(
                                 "변동 구분",
-                                options=["➕ 추가 출근(특근)", "➖ 휴무(급여 차감)", "🔄 대체 휴무"],
+                                options=["➕ 추가출근", "➖ 기타휴무", "🔄 대체휴무"],
                             )
                         with rc4:
                             reg_unit = st.selectbox(
