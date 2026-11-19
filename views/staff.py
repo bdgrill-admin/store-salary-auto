@@ -449,7 +449,12 @@ if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 
 # 📝 전자 근로계약서 발급 및 서명 현황 관리
 # ==============================================================================
 import datetime as _dt
-from contract_utils import create_new_contract, load_all_contracts, delete_contract_by_id
+from contract_utils import (
+    create_new_contract,
+    load_all_contracts,
+    delete_contract_by_id,
+    extract_birth_and_age_from_rrn,
+)
 
 st.divider()
 st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
@@ -626,6 +631,18 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             value=(prefill.get("구분") == "정규직"),
             key=f"new_c_nda_{k_sfx}",
         )
+        # 주민번호 앞자리로 만 18세 미만 자동 감지
+        detected_age = extract_birth_and_age_from_rrn(prefill.get("주민번호", ""))
+        auto_is_minor = (detected_age is not None and detected_age < 18)
+
+        c_is_minor = st.checkbox(
+            f"👨‍👩‍👧 연소근로자(만 18세 미만) 계약서 및 친권자(부모님) 동의서 함께 받기"
+            + (f" — [자동감지: 현재 만 {detected_age}세]" if auto_is_minor else ""),
+            value=auto_is_minor,
+            key=f"new_c_minor_{k_sfx}",
+        )
+        if c_is_minor:
+            st.info("📌 연소근로자(만 18세 미만) 선택 시 **가족관계증명서 1부**를 별도로 제출받아 매장에 비치해야 합니다.")
 
         if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
             final_emp_name = default_name if default_name else c_emp_name.strip()
@@ -653,6 +670,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                     "계좌번호": prefill.get("계좌번호", ""),
                     "이메일": prefill.get("이메일", ""),
                     "비밀유지서약": "Y" if c_include_nda else "N",
+                    "연소근로자여부": "Y" if c_is_minor else "N",
                 }
                 new_cid = create_new_contract(st.secrets, payload)
                 sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
@@ -672,6 +690,7 @@ try:
             is_done = item.get("상태") == "서명완료"
             status_badge = "✅ 서명완료" if is_done else "⏳ 서명대기"
             nda_badge = " · 🔒 비밀유지서약포함" if str(item.get("비밀유지서약", "")).upper() == "Y" else ""
+            minor_badge = " · 👨‍👩‍👧 친권자동의포함" if str(item.get("연소근로자여부", "")).upper() == "Y" else ""
             link_url = f"{APP_BASE_URL}?contract_id={cid_val}"
 
             with st.container(border=True):
