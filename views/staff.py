@@ -703,6 +703,8 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             default=default_ins,
             key=f"new_c_ins_{k_sfx}",
         )
+
+        # [추가] 비밀유지 및 경업금지 서약서 동시 징구 선택 체크박스
         c_include_nda = st.checkbox(
             "🔒 비밀유지 및 경업금지 서약서 함께 받기 (레시피·숙성법·원가·거래처 보호 및 퇴직 후 2년 경업금지)",
             value=(prefill.get("구분") == "정규직"),
@@ -734,10 +736,12 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                     "은행명": prefill.get("은행명", ""),
                     "계좌번호": prefill.get("계좌번호", ""),
                     "이메일": prefill.get("이메일", ""),
+                    "비밀유지서약": "Y" if c_include_nda else "N",
                 }
                 new_cid = create_new_contract(st.secrets, payload)
                 sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
-                st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
+                nda_msg = " (비밀유지 서약서 포함)" if c_include_nda else ""
+                st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서{nda_msg} 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
                 st.code(sign_url, language="text")
 
 # ------------------------------------------------------------------------------
