@@ -913,7 +913,7 @@ with head_c1:
     st.markdown(
         """
         <div class="app-header">
-            <div class="app-title">▪ 급여정산 · 경영분석</div>
+            <div class="app-title">▪&nbsp;&nbsp;급여정산 · 경영분석</div>
             <div class="app-subtitle">통합근태DB 단일 연동 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
         </div>
         """,

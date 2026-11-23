@@ -308,7 +308,7 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
 
 h_col1, h_col2, h_col3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
 with h_col1:
-    st.markdown('<div class="app-title">▪ 출퇴근기록부</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
 with h_col2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 with h_col3:

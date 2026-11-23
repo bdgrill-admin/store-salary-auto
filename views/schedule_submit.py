@@ -65,8 +65,7 @@ store_title = str(app_cfg.get("store_title") or store_name).strip()
 st.markdown(
     f"""
     <div class="page-hero">
-        <div class="page-hero-title">▪ [{store_title}] 파트타임 주간스케줄 신청</div>
-        <div class="page-hero-sub">퇴근시간은 정하지 않고 <b>출근시간만</b> 선택해 제출합니다. (고정 직원은 빠지는 날만 변경)</div>
+        <div class="page-hero-title">▪&nbsp;&nbsp;[{store_title}] 파트타임 주간스케줄 신청</div>
     </div>
     """,
     unsafe_allow_html=True,

@@ -136,7 +136,7 @@ def show_guide_image(file_candidates: list, caption: str):
 # ==============================================================================
 h_left, h_right = st.columns([2.6, 1.1], vertical_alignment="center")
 with h_left:
-    st.markdown('<div class="app-title">▪ 매니저매뉴얼</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪&nbsp;&nbsp;매니저매뉴얼</div>', unsafe_allow_html=True)
 with h_right:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed", key="manual_store_sel")
 

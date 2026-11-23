@@ -241,7 +241,7 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
 
 h1, h2, h3 = st.columns([2.6, 0.9, 0.7], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">▪ 직원관리</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪&nbsp;&nbsp;직원관리</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 with h3:

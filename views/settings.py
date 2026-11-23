@@ -51,7 +51,7 @@ store_names = list(all_stores_map.keys())
 
 h1, h2 = st.columns([3.2, 1.0], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">▪ 환경설정</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪&nbsp;&nbsp;환경설정</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("설정 매장", store_names, index=0, label_visibility="collapsed")
 

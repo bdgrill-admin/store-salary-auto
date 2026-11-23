@@ -38,7 +38,7 @@ STORES = load_all_stores()
 
 h1, h2, h3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">▪ 주간스케줄</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪&nbsp;&nbsp;주간스케줄</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed", key="sched_store_sel")
 with h3:
