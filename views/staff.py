@@ -8,6 +8,7 @@
 import re
 import json
 import datetime
+from urllib.parse import urlencode
 import requests
 import pandas as pd
 import streamlit as st
@@ -498,10 +499,15 @@ from contract_utils import (
 )
 
 st.divider()
-st.subheader("📝 전자 근로계약서 발급 및 서명 현황")
+st.subheader(f"📝 [{selected_store}] 전자 근로계약서 발급 및 서명 현황")
 st.caption("먼저 계약서를 작성할 직원을 선택하면, 해당 직원의 기본정보와 환경설정 기본 근무조건이 자동으로 연동되어 아래 입력창이 열립니다.")
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
+
+
+def build_contract_sign_url(contract_id: str, store_name: str) -> str:
+    query = urlencode({"contract_id": contract_id, "store": store_name})
+    return f"{APP_BASE_URL}?{query}"
 
 PLACEHOLDER_OPT = "🔽 여기를 눌러 계약서를 작성할 직원을 먼저 선택하세요..."
 DIRECT_INPUT_OPT = "➕ 직접 입력 (명부에 없는 신규 입사자)"
@@ -672,8 +678,8 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
             value=(prefill.get("구분") == "정규직"),
             key=f"new_c_nda_{k_sfx}",
         )
-        # 주민번호 앞자리로 만 18세 미만 자동 감지 (TypeError 방지를 위해 int 변환 처리)
-        raw_age = extract_birth_and_age_from_rrn(prefill.get("주민번호", ""))
+        # 주민번호 앞자리로 만 18세 미만 자동 감지 (extract_birth_and_age_from_rrn은 (생년월일, 만나이) 튜플 반환)
+        _, raw_age = extract_birth_and_age_from_rrn(prefill.get("주민번호", ""))
         try:
             detected_age = int(raw_age) if raw_age is not None and str(raw_age).strip() != "" else None
         except (ValueError, TypeError):
@@ -718,15 +724,20 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                     "비밀유지서약": "Y" if c_include_nda else "N",
                     "연소근로자여부": "Y" if c_is_minor else "N",
                 }
-                new_cid = create_new_contract(st.secrets, payload)
-                sign_url = f"{APP_BASE_URL}?contract_id={new_cid}"
-                nda_msg = " (비밀유지 서약서 포함)" if c_include_nda else ""
-                st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서{nda_msg} 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
+                new_cid = create_new_contract(st.secrets, payload, db_id=store_cfg["db_id"])
+                sign_url = build_contract_sign_url(new_cid, selected_store)
+                extra_tags = []
+                if c_is_minor:
+                    extra_tags.append("친권자 동의서 포함")
+                if c_include_nda:
+                    extra_tags.append("비밀유지 서약서 포함")
+                extra_msg = f" ({', '.join(extra_tags)})" if extra_tags else ""
+                st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서{extra_msg} 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
                 st.code(sign_url, language="text")
 
 st.markdown("#### 📋 발급 및 서명 완료 목록")
 try:
-    all_contracts = load_all_contracts(st.secrets)
+    all_contracts = load_all_contracts(st.secrets, db_id=store_cfg["db_id"])
     if not all_contracts:
         st.info("아직 발급된 전자 근로계약서가 없습니다.")
     else:
@@ -737,12 +748,12 @@ try:
             status_badge = "✅ 서명완료" if is_done else "⏳ 서명대기"
             nda_badge = " · 🔒 비밀유지서약포함" if str(item.get("비밀유지서약", "")).upper() == "Y" else ""
             minor_badge = " · 👨‍👩‍👧 친권자동의포함" if str(item.get("연소근로자여부", "")).upper() == "Y" else ""
-            link_url = f"{APP_BASE_URL}?contract_id={cid_val}"
+            link_url = build_contract_sign_url(cid_val, selected_store)
 
             with st.container(border=True):
                 r1, r2, r3 = st.columns([2.8, 2.2, 2.2], vertical_alignment="center")
                 with r1:
-                    st.markdown(f"**{emp_nm}** · {status_badge}{nda_badge} ({item.get('계약유형')})")
+                    st.markdown(f"**{emp_nm}** · {status_badge}{nda_badge}{minor_badge} ({item.get('계약유형')})")
                     st.caption(f"입사일: {item.get('근로개시일')} | {item.get('임금구분')} {item.get('금액')}원 | 생성: {item.get('생성일시')}")
                 with r2:
                     if is_done:
@@ -756,7 +767,7 @@ try:
                     elif not is_done:
                         b_col1, b_col2 = st.columns(2)
                         with b_col1:
-                            if st.button("📨 링크 발송", key=f"resend_{cid_val}", use_container_width=True):
+                            if st.button("📨 링크 발송", key=f"resend_{selected_store}_{cid_val}", use_container_width=True):
                                 target_mail = item.get("이메일", "").strip()
                                 if target_mail:
                                     ok, msg = send_contract_link_via_webapp(target_mail, emp_nm, link_url, app_cfg)
@@ -767,8 +778,8 @@ try:
                                 else:
                                     st.warning("명부에 이메일이 없습니다. 링크를 직접 복사해 카톡/문자로 전달해 주세요.")
                         with b_col2:
-                            if st.button("🗑️ 대기 삭제", key=f"del_c_{cid_val}", use_container_width=True):
-                                if delete_contract_by_id(st.secrets, cid_val):
+                            if st.button("🗑️ 대기 삭제", key=f"del_c_{selected_store}_{cid_val}", use_container_width=True):
+                                if delete_contract_by_id(st.secrets, cid_val, db_id=store_cfg["db_id"]):
                                     st.toast(f"[{emp_nm}] 님의 서명대기 계약서를 삭제했습니다.")
                                     st.rerun()
                                 else:

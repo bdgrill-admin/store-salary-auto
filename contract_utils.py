@@ -21,10 +21,16 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
-from store_registry import get_secret, dispatch_telegram_alert
+from store_registry import (
+    MASTER_DB_ID,
+    DEFAULT_CONTRACT_FOLDER_ID,
+    get_secret,
+    get_default_store_settings,
+    dispatch_telegram_alert,
+)
 
-DB_SPREADSHEET_ID = "1-PcmKzW2NCU2AQinTE6Hz8LwXuO-8-X3yux2_C7VKw8"
-CONTRACT_FOLDER_ID = "1I91dAXDQNrW-tZMFJz0v0o7XAXlbxVnn"
+DB_SPREADSHEET_ID = MASTER_DB_ID
+CONTRACT_FOLDER_ID = DEFAULT_CONTRACT_FOLDER_ID
 OWNER_SIGN_PATH = "owner_sign.png"
 
 CONTRACT_HEADERS = [
@@ -78,30 +84,20 @@ def get_google_creds(secrets_dict):
     return Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
 
-def load_runtime_settings(secrets_dict, ss=None) -> dict:
-    """구글 시트 '환경설정' 탭과 Secrets를 통합해 최신 설정값을 반환합니다."""
-    cfg = {
-        "store_title": "분당그릴",
-        "owner_name": "이용석",
-        "store_phone": "031-713-0342",
-        "store_address": "경기도 성남시 분당구 미금일로 74번길 13-3 1층",
-        "default_work_start": "17:00",
-        "default_work_end": "22:00",
-        "default_break_min": "30",
-        "default_job_desc": "홀 서빙 및 주방 보조 등 매장 운영 전반",
-        "payroll_start_day": "5",
-        "drive_webapp_url": get_secret("DRIVE_UPLOAD_WEBAPP_URL", "").strip(),
-        "telegram_bot_token": get_secret("TELEGRAM_BOT_TOKEN", "").strip(),
-        "telegram_chat_id": get_secret("TELEGRAM_CHAT_ID", "").strip(),
-        "manager_telegram_chat_id": "",
-        "tg_target_contract": "모두",
-        "tg_alert_contract": "TRUE",
-    }
+def load_runtime_settings(
+    secrets_dict,
+    ss=None,
+    db_id: str = None,
+    store_name: str = "분당그릴",
+) -> dict:
+    """해당 지점 구글 시트 '환경설정' 탭과 Secrets를 통합해 최신 설정값을 반환합니다."""
+    cfg = get_default_store_settings(store_name or "분당그릴")
+    target_db_id = (db_id or DB_SPREADSHEET_ID).strip() or DB_SPREADSHEET_ID
     try:
         if ss is None:
             creds = get_google_creds(secrets_dict)
             gc = gspread.authorize(creds)
-            ss = gc.open_by_key(DB_SPREADSHEET_ID)
+            ss = gc.open_by_key(target_db_id)
         titles = [ws.title.strip() for ws in ss.worksheets()]
         if "환경설정" in titles:
             ws = ss.worksheet("환경설정")
@@ -113,23 +109,24 @@ def load_runtime_settings(secrets_dict, ss=None) -> dict:
     return cfg
 
 
-def get_contract_worksheet(secrets_dict):
+def get_contract_worksheet(secrets_dict, db_id: str = None):
+    target_db_id = (db_id or DB_SPREADSHEET_ID).strip() or DB_SPREADSHEET_ID
     creds = get_google_creds(secrets_dict)
     gc = gspread.authorize(creds)
-    ss = gc.open_by_key(DB_SPREADSHEET_ID)
+    ss = gc.open_by_key(target_db_id)
     try:
         ws = ss.worksheet("근로계약서")
         first_row = ws.row_values(1)
         if len(first_row) < len(CONTRACT_HEADERS):
-            ws.update("A1:AI1", [CONTRACT_HEADERS], value_input_option="RAW")
+            ws.update(range_name="A1:AI1", values=[CONTRACT_HEADERS], value_input_option="RAW")
     except gspread.WorksheetNotFound:
         ws = ss.add_worksheet(title="근로계약서", rows=500, cols=len(CONTRACT_HEADERS))
         ws.append_row(CONTRACT_HEADERS, value_input_option="RAW")
     return ws, ss
 
 
-def load_all_contracts(secrets_dict):
-    ws, _ = get_contract_worksheet(secrets_dict)
+def load_all_contracts(secrets_dict, db_id: str = None):
+    ws, _ = get_contract_worksheet(secrets_dict, db_id=db_id)
     rows = ws.get_all_values()
     if len(rows) < 2:
         return []
@@ -143,16 +140,16 @@ def load_all_contracts(secrets_dict):
     return result
 
 
-def get_contract_by_id(secrets_dict, contract_id: str):
-    contracts = load_all_contracts(secrets_dict)
+def get_contract_by_id(secrets_dict, contract_id: str, db_id: str = None):
+    contracts = load_all_contracts(secrets_dict, db_id=db_id)
     for c in contracts:
         if c.get("계약ID", "").strip() == contract_id.strip():
             return c
     return None
 
 
-def delete_contract_by_id(secrets_dict, contract_id: str) -> bool:
-    ws, _ = get_contract_worksheet(secrets_dict)
+def delete_contract_by_id(secrets_dict, contract_id: str, db_id: str = None) -> bool:
+    ws, _ = get_contract_worksheet(secrets_dict, db_id=db_id)
     rows = ws.get_all_values()
     for idx, r in enumerate(rows[1:], start=2):
         if r and str(r[0]).strip() == str(contract_id).strip():
@@ -161,8 +158,8 @@ def delete_contract_by_id(secrets_dict, contract_id: str) -> bool:
     return False
 
 
-def create_new_contract(secrets_dict, data: dict) -> str:
-    ws, _ = get_contract_worksheet(secrets_dict)
+def create_new_contract(secrets_dict, data: dict, db_id: str = None) -> str:
+    ws, _ = get_contract_worksheet(secrets_dict, db_id=db_id)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cid = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     row = [
@@ -640,15 +637,23 @@ def generate_contract_pdf(
     return buf.getvalue()
 
 
-def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes, runtime_cfg: dict = None) -> str:
-    cfg = runtime_cfg or load_runtime_settings(secrets_dict)
+def upload_pdf_to_drive(
+    secrets_dict,
+    filename: str,
+    pdf_bytes: bytes,
+    runtime_cfg: dict = None,
+    folder_id: str = None,
+    db_id: str = None,
+) -> str:
+    cfg = runtime_cfg or load_runtime_settings(secrets_dict, db_id=db_id)
     webapp_url = cfg.get("drive_webapp_url", "").strip()
     if not webapp_url:
         return ""
 
+    target_folder_id = (folder_id or CONTRACT_FOLDER_ID).strip() or CONTRACT_FOLDER_ID
     payload = {
         "action": "upload_pdf",
-        "folderId": CONTRACT_FOLDER_ID,
+        "folderId": target_folder_id,
         "filename": filename,
         "base64Data": base64.b64encode(pdf_bytes).decode("utf-8"),
     }
@@ -670,11 +675,19 @@ def upload_pdf_to_drive(secrets_dict, filename: str, pdf_bytes: bytes, runtime_c
     return res_json.get("url", "")
 
 
-def send_contract_email(secrets_dict, to_email: str, emp_name: str, filename: str, pdf_bytes: bytes, runtime_cfg: dict = None):
+def send_contract_email(
+    secrets_dict,
+    to_email: str,
+    emp_name: str,
+    filename: str,
+    pdf_bytes: bytes,
+    runtime_cfg: dict = None,
+    db_id: str = None,
+):
     if not to_email or "@" not in to_email:
         return False, "이메일 주소 없음"
 
-    cfg = runtime_cfg or load_runtime_settings(secrets_dict)
+    cfg = runtime_cfg or load_runtime_settings(secrets_dict, db_id=db_id)
     webapp_url = cfg.get("drive_webapp_url", "").strip()
     store_title = cfg.get("store_title", "분당그릴").strip() or "분당그릴"
     if not webapp_url:
@@ -738,7 +751,11 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
         else ["입사일자", "이름", "주민번호", "은행명", "계좌번호", "시급", "상태", "메모", "이메일", "텔레그램ID", "보건증만료일"]
     )
 
-    ws = ss.worksheet(tab_name)
+    try:
+        ws = ss.worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        ws = ss.add_worksheet(title=tab_name, rows=200, cols=len(default_headers))
+        ws.append_row(default_headers, value_input_option="RAW")
     rows = ws.get_all_values()
     headers = [c.strip() for c in rows[0]] if rows else default_headers
     if not rows:
@@ -782,7 +799,7 @@ def _sync_employee_sheet(ss, merged: dict, emp_inputs: dict):
     end_col_letter = chr(ord("A") + len(headers) - 1)
 
     if found_idx:
-        ws.update(f"A{found_idx}:{end_col_letter}{found_idx}", [new_row], value_input_option="RAW")
+        ws.update(range_name=f"A{found_idx}:{end_col_letter}{found_idx}", values=[new_row], value_input_option="RAW")
     else:
         ws.append_row(new_row, value_input_option="RAW")
 
@@ -793,9 +810,12 @@ def complete_employee_signature(
     emp_inputs: dict,
     emp_sign_img: Image.Image,
     guardian_sign_img: Image.Image = None,
+    db_id: str = None,
+    folder_id: str = None,
+    store_name: str = "분당그릴",
 ):
-    ws, ss = get_contract_worksheet(secrets_dict)
-    runtime_cfg = load_runtime_settings(secrets_dict, ss)
+    ws, ss = get_contract_worksheet(secrets_dict, db_id=db_id)
+    runtime_cfg = load_runtime_settings(secrets_dict, ss=ss, db_id=db_id, store_name=store_name)
 
     row_idx = contract["_row_idx"]
     sign_dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -819,11 +839,18 @@ def complete_employee_signature(
     suffix = f"_{'_'.join(tags)}" if tags else ""
     filename = f"{date_tag}_{emp_name}_근로계약서{suffix}.pdf"
 
-    drive_link = upload_pdf_to_drive(secrets_dict, filename, pdf_bytes, runtime_cfg)
+    drive_link = upload_pdf_to_drive(
+        secrets_dict,
+        filename,
+        pdf_bytes,
+        runtime_cfg=runtime_cfg,
+        folder_id=folder_id,
+        db_id=db_id,
+    )
     merged["드라이브PDF링크"] = drive_link
 
     updated_row = [merged.get(h, "") for h in CONTRACT_HEADERS]
-    ws.update(f"A{row_idx}:AI{row_idx}", [updated_row], value_input_option="RAW")
+    ws.update(range_name=f"A{row_idx}:AI{row_idx}", values=[updated_row], value_input_option="RAW")
 
     try:
         _sync_employee_sheet(ss, merged, emp_inputs)
@@ -831,10 +858,16 @@ def complete_employee_signature(
         pass
 
     email_ok, email_msg = send_contract_email(
-        secrets_dict, emp_inputs.get("이메일", ""), emp_name, filename, pdf_bytes, runtime_cfg
+        secrets_dict,
+        emp_inputs.get("이메일", ""),
+        emp_name,
+        filename,
+        pdf_bytes,
+        runtime_cfg=runtime_cfg,
+        db_id=db_id,
     )
 
-    store_title = runtime_cfg.get("store_title", "분당그릴")
+    store_title = runtime_cfg.get("store_title", store_name).strip() or store_name
     extra_info = f" ({', '.join(tags)})" if tags else ""
     tele_text = (
         f"📝 [{store_title} 전자 근로계약서{extra_info} 서명 완료]\n"

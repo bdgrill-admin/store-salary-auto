@@ -2,19 +2,21 @@
 
 ## 1. 프로젝트 개요 및 실행 환경
 - **목적:** 분당그릴을 비롯한 다매장(예: 감동한점, 일품돼지 등)의 일일 출퇴근 관리, 매니저 승인, 정규직 특근/휴무 관리, 직원 명부, 전자 근로계약서(비밀유지 서약서 및 만 18세 미만 연소근로자 친권자 동의서 포함), 월별 급여 정산, 세무사 보고 및 급여명세서 일괄 발송을 통합 처리하는 Streamlit 웹 애플리케이션.
-- **기술 스택:** Python 3.x, Streamlit, `gspread`, `google-auth`, `pandas`, `openpyxl`, `reportlab`, `Pillow`, `requests`.
+- **기술 스택:** Python 3.x, Streamlit, `gspread`, `google-auth`, `pandas`, `openpyxl`, `reportlab`, `Pillow`, `requests`, `python-dotenv`.
 - **실행 명령어:** `streamlit run app.py`
-- **보안 파일 주의:** `.streamlit/secrets.toml`, `credentials.json`, `owner_sign.png`는 로컬/배포 환경 전용 민감 파일이므로 절대 코드에 하드코딩하거나 Git에 커밋하지 않는다.
+- **보안 파일 주의:** `.streamlit/secrets.toml`, `.env`, `credentials.json`, `owner_sign.png`는 로컬/배포 환경 전용 민감 파일이므로 절대 코드에 하드코딩하거나 Git에 커밋하지 않는다.
 
 ---
 
 ## 2. 디렉터리 및 핵심 파일 아키텍처
-- **`store_registry.py`**: 다매장 목록(`load_all_stores`, `save_all_stores`), 지점별 구글 시트 `환경설정` 탭 로더/세이버(`load_store_settings`, `save_store_settings`), `gspread` 클라이언트(`get_gspread_client`), 시크릿 헬퍼(`get_secret`), 공통 텔레그램 분기 발송 함수(`dispatch_telegram_alert`)를 담당하는 중앙 레지스트리 모듈.
-- **`contract_utils.py`**: 전자 근로계약서(`근로계약서` 탭) CRUD, ReportLab 기반 한국어 PDF 생성(표준근로계약서 + 선택적 연소근로자 친권자 동의서 + 선택적 비밀유지·경업금지 서약서), Google Apps Script 웹앱을 통한 구글 드라이브 PDF 업로드 및 이메일 사본 교부, 서명 완료 시 `파트타임`/`정규직` 시트 동기화 및 `tg_target_contract` 텔레그램 알림 발송.
+- **`app.py`**: 메인 진입점 및 라우터. URL 쿼리 파라미터(`?contract_id=...`) 유무에 따라 직원 전자서명 단독 모드(`views/contract_sign.py`)와 매장 관리 모드(출퇴근·급여정산·직원관리·매니저 매뉴얼·환경설정 5개 페이지)로 자동 분기한다.
+- **`store_registry.py`**: 기준 DB(`MASTER_DB_ID`)의 `매장목록` 탭 기반 다매장 목록 관리(`load_all_stores`, `save_all_stores`), 지점별 구글 시트 `환경설정` 탭 로더/세이버(`load_store_settings`, `save_store_settings`), `gspread` 클라이언트(`get_gspread_client`), 시크릿·환경변수 헬퍼(`get_secret`), 공통 텔레그램 분기 발송 함수(`dispatch_telegram_alert`)를 담당하는 중앙 레지스트리 모듈.
+- **`contract_utils.py`**: 지점별 `db_id` 및 `folder_id` 기반 전자 근로계약서(`근로계약서` 탭) CRUD, ReportLab 기반 한국어 PDF 생성(표준근로계약서 + 선택적 연소근로자 친권자 동의서 + 선택적 비밀유지·경업금지 서약서), Google Apps Script 웹앱을 통한 지점별 구글 드라이브 PDF 업로드 및 이메일 사본 교부, 서명 완료 시 해당 지점 `파트타임`/`정규직` 시트 동기화 및 `tg_target_contract` 텔레그램 알림 발송.
+- **`views/contract_sign.py`**: 직원 전용 전자 근로계약서 서명 페이지(`?contract_id=...&store=...`, `store` 미포함 기존 링크는 기준 DB `MASTER_DB_ID` 매장으로 하위 호환). 지점별 `환경설정`·계약서 DB·드라이브 폴더 연동, 일반/연소근로자(만 18세 미만) 표준근로계약서 자동 전환, 친권자(후견인) 동의서 인적사항·서명 입력, 비밀유지·경업금지 서약서 렌더링, 정자 성명 자동 서명 이미지 생성 또는 자필 서명 사진 업로드, `st.form` 및 시트 상태 재검증을 통한 중복 제출 방지.
 - **`views/attendance.py`**: 일일 출퇴근 입력/수정, 매니저 PIN 인증 후 일괄 승인/해제, `정규직근태변동` 탭 등록/수정/삭제(`tg_target_reg_change` 알림), 일일 보건증 만료 텔레그램 브리핑(`tg_target_health` 알림), 개인별 월별 근무시간 조회.
-- **`views/staff.py`**: 파트타임·정규직 직원 명부 관리(`st.data_editor`), 신규 직원 등록(`notify_new_part_staff`), 시급 변경 감지(`notify_part_wage_changes`), 보건증 만료 경고 및 알림 전송, 전자 근로계약서 링크 발급 및 서명 대기/완료 관리.
-- **`views/payroll.py`**: 정산 기준일(`payroll_start_day`, 기본 매월 5일 = 전월 5일 ~ 당월 4일) 기반 급여 산출, 정규직 일할 계산기, 세무사용 `.txt` 및 은행 대량이체 `.xlsx` 생성, Apps Script 웹앱 경유 세무사·직원 개별 명세서 발송, 정산 확정 시 `정규직근태변동` 시트의 `정산반영여부`를 `'완료'`로 자동 변경(`mark_reg_changes_settled`), `tg_target_payroll` 텔레그램 보고, 매출 대비 인건비 경영 분석 차트/YoY 비교.
-- **`views/settings.py`**: 관리자 전용 환경설정(보안 PIN/비밀번호, 보건증 경고 D-Day, 계약서 기본값, 공제율·목표 인건비율, 공동대표/매니저 복수 텔레그램 채팅 ID 및 알림별 수신 대상 분기, 다매장 시트 ID 등록·수정, 외부 서비스 원클릭 진단).
+- **`views/staff.py`**: 파트타임·정규직 직원 명부 관리(`st.data_editor`), 신규 직원 등록(`notify_new_part_staff`), 시급 변경 감지(`notify_part_wage_changes`), 보건증 만료 경고 및 알림 전송, 주민번호 기반 연소근로자 자동 감지, 전자 근로계약서 링크 발급 및 서명 대기/완료 관리.
+- **`views/payroll.py`**: 정산 기준일(`payroll_start_day`, 기본 매월 5일 = 전월 5일 ~ 당월 4일) 기반 급여 산출, 정규직 일할 계산기, 세무사용 `.txt` 및 은행 대량이체 `.xlsx` 생성, Apps Script 웹앱(미설정 시 Gmail SMTP fallback) 경유 세무사·직원 이메일 발송 및 개인 `텔레그램ID` 급여명세서 발송, 정산 확정 시 `급여히스토리` 시트 저장 및 `정규직근태변동` 시트의 `정산반영여부` `'완료'` 자동 변경(`mark_reg_changes_settled`), `tg_target_payroll` 텔레그램 보고, `매출관리` 시트 연동 매출 대비 인건비 경영 분석 차트/YoY 비교.
+- **`views/settings.py`**: 관리자 전용 환경설정(보안 PIN/비밀번호, 출퇴근 시간 입력 단위 `att_time_step_min`, 보건증 경고 D-Day, 계약서 기본값, 공제율·목표 인건비율, 공동대표/매니저 복수 텔레그램 채팅 ID 및 알림별 수신 대상 분기, 다매장 시트 ID 등록·수정, 외부 서비스 원클릭 진단).
 - **`views/manual.py`**: 모바일/태블릿/PC 겸용 매니저 실무 교육 매뉴얼(4개 업무 탭 구성, 지점별 PIN 잠금 연동).
 
 ---
@@ -28,14 +30,14 @@
 
 2. **`파트타임` 탭:**
    `입사일자` | `이름` | `주민번호` | `은행명` | `계좌번호` | `시급` | `상태` (`재직`/`퇴사`) | `메모` | `이메일` | `텔레그램ID` | `보건증만료일`
-   - **예금주-실근무자 매핑 규칙:** 예금주(`이름`)와 실제 출근자가 다를 경우 `메모`에 5자 이내의 실근무자명을 기재하며, 급여 집계 시 `메모`의 이름으로 `통합근태DB`를 조회하고 이체는 `이름`(예금주) 기준으로 처리한다.
+   - **예금주-실근무자 매핑 규칙:** 예금주(`이름`)와 실제 출근자가 다를 경우 `메모`에 `"퇴사"` 문구 없이 5자 이내의 실근무자명을 기재하며, 출퇴근·급여 집계 시 `메모`의 이름으로 `통합근태DB`를 조회하고 이체는 `이름`(예금주) 기준으로 처리한다.
    - **퇴사자 처리:** 행을 삭제하지 않고 `상태`만 `'퇴사'`로 변경한다.
 
 3. **`정규직` 탭:**
    `입사일자` | `이름` | `주민번호` | `은행명` | `계좌번호` | `계약급여` | `제세금` | `계산급여` | `상태` (`재직`/`퇴사`) | `메모` | `이메일` | `텔레그램ID` | `보건증만료일`
    - **급여 계산 공식:** `계산급여 = max(0, 계약급여 - 제세금)`, `입금급여 = max(0, 계산급여 + 변동급여)`.
 
-4. **`정규직근태변동` 탭:**
+4. **`정규직근태변동` 탭:** *(구버전 탭명 `정직원근태변동` 자동 호환)*
    `발생일` | `이름` | `구분` (`➕ 추가출근`, `➖ 기타휴무`, `🔄 대체휴무`) | `일수_시간` | `상세메모` | `정산반영여부` (`대기`/`완료`) | `등록일시`
    - **정산 완료 연동:** `views/payroll.py`에서 정산 확정 시 해당 정산 기간(`start_dt` ~ `end_dt`) 내 행의 `정산반영여부`를 `'완료'`로 자동 업데이트한다.
 
@@ -43,16 +45,23 @@
    `CONTRACT_HEADERS` 순서를 엄격히 유지한다.
 
 6. **`환경설정` 탭:**
-   `Key` | `Value` 형태로 지점별 모든 설정값을 영구 저장한다.
+   `설정키` | `설정값` | `최종수정일시` 형태로 지점별 모든 설정값을 RAW 모드로 영구 저장한다.
+
+7. **`매장목록` 탭 (기준 DB `MASTER_DB_ID` 전용):**
+   `매장명` | `통합근태DB_ID` | `급여히스토리_ID` | `매출관리_ID` | `계약서폴더_ID` | `매니저PIN` | `사용여부`
+
+8. **별도 외부 연동 스프레드시트 (`views/payroll.py`):**
+   - **급여히스토리 시트 (`hist_id`):** `과거요약` 탭 및 월별 `YY.MM` 탭(예: `26.01`).
+   - **매출관리 시트 (`sales_id`):** `월별매출` 탭(`정산월` | `총매출`).
 
 ---
 
 ## 4. 텔레그램 알림 수신 분기 규칙
-- **직접 `requests.post(.../sendMessage)`를 새로 작성하지 말고 반드시 `store_registry.dispatch_telegram_alert(cfg, target_key, message, default_target)`를 사용한다.** (단, `views/payroll.py`에서 직원 개인 `텔레그램ID`로 개별 급여명세서를 발송하는 경우 제외)
+- **직접 `requests.post(.../sendMessage)`를 새로 작성하지 말고 반드시 `store_registry.dispatch_telegram_alert(app_cfg, target_key, message, default_target)`를 사용한다.** (단, `views/payroll.py`에서 직원 개인 `텔레그램ID`로 개별 급여명세서를 발송하는 경우와 `views/settings.py`의 수신자별 연동 테스트 발송 제외)
 - **수신자 ID 설정 키:**
-  - `telegram_chat_id`: 대표/공동대표 채팅 ID (쉼표 `,`로 복수 구분)
-  - `manager_telegram_chat_id`: 매니저 채팅 ID (쉼표 `,`로 복수 구분)
-- **알림별 분기 키 (`대표` / `매니저` / `모두` / `끄기`):**
+  - `telegram_chat_id`: 대표/공동대표 채팅 ID (쉼표 `,`·세미콜론·공백으로 복수 구분)
+  - `manager_telegram_chat_id`: 매니저 채팅 ID (쉼표 `,`·세미콜론·공백으로 복수 구분)
+- **알림별 분기 키 (`대표` / `매니저` / `모두` / `끄기`):** *(저장 시 하위 호환용 `tg_alert_*` 키도 함께 동기화)*
   - `tg_target_health`: 보건증 만료 알림 (기본 `"모두"`)
   - `tg_target_contract`: 전자 근로계약서 서명 완료 (기본 `"모두"`)
   - `tg_target_payroll`: 월별 급여 정산 확정 보고 (기본 `"대표"`)
@@ -63,5 +72,5 @@
 
 ## 5. 코딩 및 수정 원칙
 1. **부분 수정 지양:** 파일을 수정할 때는 사용자가 바로 복사·붙여넣기 하거나 에이전트가 안전하게 덮어쓸 수 있도록 누락 없는 전체 코드를 유지한다.
-2. **구글 시트 API 호출 최적화:** `values_batch_get`, `batch_update`를 활용해 API 할당량 초과(HTTP 429)를 방지하고, 데이터 변경 직후에는 `st.cache_data.clear()`를 호출해 화면 반영을 보장한다.
+2. **구글 시트 API 호출 최적화:** `values_batch_get`, `batch_update`를 활용해 API 할당량 초과(HTTP 429)를 방지하고, 데이터 변경 직후에는 `st.cache_data.clear()` 또는 해당 캐시 함수의 `.clear(...)`를 호출해 화면 반영을 보장한다.
 3. **한국어 UI 일관성:** 모든 사용자 노출 메시지, 버튼, 표 컬럼명, 텔레그램 알림 문구는 매장 현장 직원과 매니저가 직관적으로 이해할 수 있는 자연스러운 한국어로 작성한다.

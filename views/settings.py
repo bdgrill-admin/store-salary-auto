@@ -4,7 +4,7 @@
 [역할] 대표님/관리자 전용 '매장 통합 시스템 환경설정 & 다매장 관리' 페이지
 [주요 기능]
 1. 보안 · 권한: 매니저 PIN, 대표자 비밀번호, 매니저 급여정산 열람 허용 여부
-2. 보건증 알림: 보건증 만료 사전 경고일(D-Day)
+2. 출퇴근 · 보건증 규칙: 출퇴근 시간 입력 단위(분), 보건증 만료 사전 경고일(D-Day)
 3. 근로계약서 기본값: 사업체명, 대표자명, 매장 전화번호, 사업장 주소, 기본 근무조건
 4. 급여 · 공제율 · 인건비 목표: 정산 기준일, 세무사 이메일, 파트타임 공제율/기준금액, 목표 인건비율(%)
 5. 텔레그램 · 이메일 설정: 봇 토큰, 공동대표/매니저 채팅 ID(복수), 알림별 수신 대상 분기(대표/매니저/모두/끄기)
@@ -112,7 +112,7 @@ st.caption(f"💡 현재 선택된 **[{selected_store}]**의 설정은 구글 �
 
 t_sec, t_att, t_con, t_pay, t_diag, t_stores = st.tabs([
     "🔐 보안 · 권한",
-    "🏥 보건증 알림 기준",
+    "⏱️ 출퇴근 · 보건증 규칙",
     "📝 근로계약서 기본값",
     "💰 급여 · 공제율 · 인건비 목표",
     "📲 텔레그램 · 이메일 설정",
@@ -143,16 +143,26 @@ with st.form("settings_main_form"):
             )
 
     # --------------------------------------------------------------------------
-    # [탭 2] 보건증 만료 알림 기준
+    # [탭 2] 출퇴근 입력 단위 및 보건증 만료 알림 기준
     # --------------------------------------------------------------------------
     with t_att:
-        st.markdown('<div class="section-title">보건증 만료 사전 경고 기준일</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">출퇴근 입력 단위 및 보건증 만료 사전 경고 기준일</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            in_health_days = st.number_input(
-                "보건증 만료 사전 경고 기준일 (만료 며칠 전부터 출퇴근기록부·직원관리 화면 및 텔레그램 알림 표시)",
+            a1, a2 = st.columns(2)
+            cur_step_min = max(1, min(60, int(current_cfg.get("att_time_step_min", "10") or 10)))
+            cur_health_days = max(7, min(90, int(current_cfg.get("health_alert_days", "30") or 30)))
+            in_att_step_min = a1.number_input(
+                "출퇴근 시간 입력 단위 (분, 예: 10분 단위 선택)",
+                min_value=1,
+                max_value=60,
+                value=cur_step_min,
+                step=1,
+            )
+            in_health_days = a2.number_input(
+                "보건증 만료 사전 경고 기준일 (만료 며칠 전부터 알림 표시)",
                 min_value=7,
                 max_value=90,
-                value=int(current_cfg.get("health_alert_days", "30") or 30),
+                value=cur_health_days,
                 step=1,
             )
 
@@ -349,6 +359,7 @@ with st.form("settings_main_form"):
                 "manager_pin": in_mgr_pin.strip(),
                 "admin_password": in_admin_pwd.strip(),
                 "allow_mgr_payroll": "TRUE" if in_allow_mgr_payroll else "FALSE",
+                "att_time_step_min": str(int(in_att_step_min)),
                 "health_alert_days": str(int(in_health_days)),
                 "store_title": in_store_title.strip(),
                 "owner_name": in_owner_name.strip(),

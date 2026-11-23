@@ -12,8 +12,14 @@
 
 import os
 import datetime
+from urllib.parse import unquote
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+from store_registry import (
+    load_all_stores,
+    MASTER_DB_ID,
+    DEFAULT_CONTRACT_FOLDER_ID,
+)
 from contract_utils import (
     get_contract_by_id,
     complete_employee_signature,
@@ -91,14 +97,45 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-cid = st.query_params.get("contract_id", "")
+cid = str(st.query_params.get("contract_id", "")).strip()
+raw_store_param = str(st.query_params.get("store", "")).strip()
 if not cid:
     st.error("잘못된 접근입니다. 매니저에게 전달받은 전용 계약서 링크로 접속해 주세요.")
     st.stop()
 
+all_stores_map = load_all_stores(include_inactive=True)
+
+if raw_store_param:
+    store_name = raw_store_param
+    if store_name not in all_stores_map:
+        decoded_name = unquote(raw_store_param).strip()
+        if decoded_name in all_stores_map:
+            store_name = decoded_name
+    if store_name not in all_stores_map:
+        st.error(f"등록되지 않은 매장('{raw_store_param}')의 계약서 링크입니다. 매니저에게 새 링크를 요청해 주세요.")
+        st.stop()
+    store_info = all_stores_map[store_name]
+    target_db_id = store_info["db_id"]
+    target_folder_id = store_info.get("folder_id") or DEFAULT_CONTRACT_FOLDER_ID
+else:
+    # 기존 링크(?contract_id=... 단독) 하위 호환: 기준 DB(MASTER_DB_ID) 매장 사용
+    default_name = "분당그릴"
+    default_info = None
+    for s_nm, s_inf in all_stores_map.items():
+        if s_inf.get("db_id") == MASTER_DB_ID:
+            default_name = s_nm
+            default_info = s_inf
+            break
+    if default_info is None and all_stores_map:
+        default_name = next(iter(all_stores_map))
+        default_info = all_stores_map[default_name]
+    store_name = default_name
+    target_db_id = (default_info or {}).get("db_id") or MASTER_DB_ID
+    target_folder_id = (default_info or {}).get("folder_id") or DEFAULT_CONTRACT_FOLDER_ID
+
 if "sign_done_data" in st.session_state and st.session_state["sign_done_data"] is not None:
     done = st.session_state["sign_done_data"]
-    if done.get("cid") == cid:
+    if done.get("cid") == cid and done.get("store") == store_name:
         st.success("🎉 전자 근로계약서 체결이 완료되었습니다!")
         if done["email_ok"]:
             st.info(f"📧 입력하신 이메일({done['email']})로 계약서 PDF 사본이 자동 발송되었습니다.")
@@ -113,7 +150,7 @@ if "sign_done_data" in st.session_state and st.session_state["sign_done_data"] i
         )
         st.stop()
 
-contract = get_contract_by_id(st.secrets, cid)
+contract = get_contract_by_id(st.secrets, cid, db_id=target_db_id)
 if not contract:
     st.error("존재하지 않거나 만료된 계약서 링크입니다. 매니저에게 문의해 주세요.")
     st.stop()
@@ -124,8 +161,8 @@ if contract.get("상태") == "서명완료":
         st.info("계약서 사본은 입력하신 이메일로 발송되었습니다.")
     st.stop()
 
-runtime_cfg = load_runtime_settings(st.secrets)
-store_title = runtime_cfg.get("store_title", "분당그릴").strip() or "분당그릴"
+runtime_cfg = load_runtime_settings(st.secrets, db_id=target_db_id, store_name=store_name)
+store_title = runtime_cfg.get("store_title", store_name).strip() or store_name
 spaced_store = " ".join(list(store_title)) if len(store_title) <= 5 else store_title
 owner_name = runtime_cfg.get("owner_name", "이용석").strip() or "이용석"
 spaced_owner = " ".join(list(owner_name)) if len(owner_name) <= 4 else owner_name
@@ -370,7 +407,7 @@ if submitted:
         st.error("친권자 서명 이미지 파일을 업로드해 주세요.")
     else:
         with st.spinner("근로계약서 PDF 생성 및 교부 처리 중입니다. 잠시만 기다려 주세요..."):
-            latest_check = get_contract_by_id(st.secrets, cid)
+            latest_check = get_contract_by_id(st.secrets, cid, db_id=target_db_id)
             if latest_check and latest_check.get("상태") == "서명완료":
                 st.rerun()
 
@@ -397,10 +434,18 @@ if submitted:
                 "친권자관계": g_rel if is_minor else "",
             }
             pdf_bytes, filename, drive_link, email_ok, email_msg = complete_employee_signature(
-                st.secrets, contract, emp_inputs, sign_img, guardian_img
+                st.secrets,
+                contract,
+                emp_inputs,
+                sign_img,
+                guardian_img,
+                db_id=target_db_id,
+                folder_id=target_folder_id,
+                store_name=store_name,
             )
             st.session_state["sign_done_data"] = {
                 "cid": cid,
+                "store": store_name,
                 "pdf_bytes": pdf_bytes,
                 "filename": filename,
                 "email": email.strip(),

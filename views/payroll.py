@@ -672,11 +672,38 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
 
     monthly_map = {}
     staff_rows = []
-    sheet_titles = [ws.title.strip() for ws in ss.worksheets()]
+    worksheets = ss.worksheets()
+    past_ws_title = None
+    month_tabs = []
 
-    if "과거요약" in sheet_titles:
-        ws_past = ss.worksheet("과거요약")
-        p_rows = ws_past.get_all_values()
+    for ws in worksheets:
+        raw_title = ws.title
+        stripped = raw_title.strip()
+        if stripped == "과거요약":
+            past_ws_title = raw_title
+            continue
+        sname = normalize_ym_label(stripped)
+        if re.match(r"^\d{2}\.\d{2}$", sname):
+            month_tabs.append((raw_title, sname))
+
+    batch_titles = []
+    if past_ws_title is not None:
+        batch_titles.append(past_ws_title)
+    batch_titles.extend([raw_t for raw_t, _ in month_tabs])
+
+    values_map = {}
+    if batch_titles:
+        try:
+            res = ss.values_batch_get([f"'{t}'!A:Z" for t in batch_titles])
+            for raw_t, vr in zip(batch_titles, res.get("valueRanges", [])):
+                values_map[raw_t] = vr.get("values", [])
+        except Exception:
+            for ws in worksheets:
+                if ws.title in batch_titles:
+                    values_map[ws.title] = ws.get_all_values()
+
+    if past_ws_title is not None:
+        p_rows = values_map.get(past_ws_title, [])
         for r in p_rows[1:]:
             if len(r) < 2:
                 continue
@@ -691,11 +718,8 @@ def load_gsheet_history(hist_id: str, sales_id: str = ""):
                     "파트근무분": 0,
                 }
 
-    for ws in ss.worksheets():
-        sname = normalize_ym_label(ws.title.strip())
-        if not re.match(r"^\d{2}\.\d{2}$", sname):
-            continue
-        parsed = _parse_grid_values(ws.get_all_values())
+    for raw_t, sname in month_tabs:
+        parsed = _parse_grid_values(values_map.get(raw_t, []))
         if parsed["total"] > 0:
             monthly_map[sname] = {
                 "정산월": sname,
