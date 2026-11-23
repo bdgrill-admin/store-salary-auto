@@ -115,7 +115,7 @@ def load_db_sheets(db_id: str):
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
 
-    target_tabs = [t for t in ["파트타임", "정규직", "통합근태DB", "입금확인로그"] if t in titles]
+    target_tabs = [t for t in ["파트타임", "정규직", "통합근태DB", "입금확인로그", "주간스케줄"] if t in titles]
     values_map = {}
     if target_tabs:
         res = ss.values_batch_get([f"'{t}'!A:Z" for t in target_tabs])
@@ -140,8 +140,9 @@ def load_db_sheets(db_id: str):
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
     df_pay = parse_rows(values_map.get("입금확인로그", []), with_row_num=True)
+    df_sched = parse_rows(values_map.get("주간스케줄", []))
 
-    return df_emp, df_reg, df_att, df_pay
+    return df_emp, df_reg, df_att, df_pay, df_sched
 
 
 def mark_payments_confirmed(db_id: str, sheet_rows: list):
@@ -274,7 +275,7 @@ store_cfg = STORES[selected_store]
 app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
 
 try:
-    df_emp, df_reg, df_att, df_pay = load_db_sheets(store_cfg["db_id"])
+    df_emp, df_reg, df_att, df_pay, df_sched = load_db_sheets(store_cfg["db_id"])
 except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
@@ -452,6 +453,37 @@ with st.container(border=True):
             '<div style="font-size:0.86rem; color:#475569; line-height:1.45;">💡 <b>신규 입력</b>: 하단에서 본인 이름 선택 후 저장 &nbsp;|&nbsp; <b>수정</b>: 표에서 해당 줄 체크</div>',
             unsafe_allow_html=True,
         )
+
+    # 확정된 주간 스케줄 기준 선택 날짜 출근 예정자 표시
+    if df_sched is not None and not df_sched.empty and "주차" in df_sched.columns and "구분" in df_sched.columns:
+        day_cols_kr = ["월", "화", "수", "목", "금", "토", "일"]
+        sel_mon_str = (sel_date - datetime.timedelta(days=sel_date.weekday())).strftime("%Y-%m-%d")
+        sel_day_col = day_cols_kr[sel_date.weekday()]
+        if sel_day_col in df_sched.columns:
+            day_sched_df = df_sched[
+                (df_sched["주차"].astype(str).str.strip() == sel_mon_str)
+                & (df_sched["구분"].astype(str).str.strip() == "확정")
+            ]
+            scheduled_items = []
+            for _, sr in day_sched_df.iterrows():
+                s_nm = str(sr.get("이름", "")).strip()
+                s_tm = str(sr.get(sel_day_col, "")).strip()
+                if s_nm and s_tm and s_tm not in ("-", "휴무", "없음", "❌휴무요청"):
+                    scheduled_items.append((s_tm, s_nm))
+            if scheduled_items:
+                scheduled_items.sort(key=lambda x: (x[0], x[1]))
+                pills = " ".join(
+                    f'<span style="display:inline-block; background:#EEF2FF; border:1px solid #C7D2FE; color:#3730A3; '
+                    f'font-size:0.82rem; font-weight:700; padding:2px 9px; border-radius:999px; margin:2px 4px 2px 0;">'
+                    f'{nm} {tm}</span>'
+                    for tm, nm in scheduled_items
+                )
+                st.markdown(
+                    f'<div style="margin-top:0.45rem; padding-top:0.45rem; border-top:1px dashed #E2E8F0; line-height:1.7;">'
+                    f'<span style="font-size:0.84rem; font-weight:800; color:#312E81; margin-right:6px;">'
+                    f'📅 {sel_date.strftime("%m/%d")}({sel_day_col}) 출근 예정 ({len(scheduled_items)}명):</span> {pills}</div>',
+                    unsafe_allow_html=True,
+                )
 
 if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])

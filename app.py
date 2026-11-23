@@ -32,11 +32,17 @@ if "contract_id" in st.query_params:
     pg = st.navigation([
         st.Page("views/contract_sign.py", title="전자 근로계약서", icon="✍️", default=True),
     ])
+elif "schedule" in st.query_params:
+    # [직원 전용] 주간 스케줄 신청 링크(?schedule=매장명)로 접속한 경우
+    # -> 매장 내부 메뉴는 차단하고 본인 희망/휴무 신청 화면만 단독 실행
+    pg = st.navigation([
+        st.Page("views/schedule_submit.py", title="주간 스케줄 신청", icon="📅", default=True),
+    ])
 else:
     # [매장/관리자 전용] 기본 주소로 접속한 경우
-    # -> 매장 운영에 필요한 3대 핵심 메뉴(출퇴근 기록, 급여 정산, 직원·계약서 관리) 표시
     pg = st.navigation([
         st.Page("views/attendance.py", title="출퇴근 기록부", icon="⏱️", default=True),
+        st.Page("views/schedule.py", title="주간 스케줄", icon="📅"),
         st.Page("views/payroll.py", title="급여 정산", icon="💰"),
         st.Page("views/staff.py", title="직원 관리", icon="👥"),
         st.Page("views/manual.py", title="매니저 매뉴얼", icon="📖"),
