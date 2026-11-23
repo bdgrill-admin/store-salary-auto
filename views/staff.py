@@ -18,6 +18,7 @@ from store_registry import (
     get_gspread_client,
     dispatch_telegram_alert,
 )
+from ui_styles import apply_base_theme, render_section_banner
 
 STORES = load_all_stores()
 
@@ -36,32 +37,10 @@ BANK_ALIAS_MAP = {
     "기업은행": "IBK기업은행", "카카오": "카카오뱅크", "토스": "토스뱅크", "케이": "케이뱅크",
 }
 
+apply_base_theme(max_width=1360)
 st.markdown(
     """
     <style>
-    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    html, body, [class*="css"] {
-        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    }
-    .block-container {
-        padding-top: 3rem;
-        padding-bottom: 3rem;
-        max-width: 1360px;
-    }
-    .app-title {
-        font-size: 1.55rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin: 0;
-    }
-    .section-title {
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin: 1.1rem 0 0.5rem 0;
-        padding-left: 0.6rem;
-        border-left: 4px solid #334155;
-    }
     .step1-highlight {
         background-color: #FFFBEB;
         border: 2px solid #F59E0B;
@@ -70,15 +49,10 @@ st.markdown(
         margin-bottom: 12px;
     }
     .step1-title {
-        font-size: 1.08rem;
+        font-size: 1.04rem;
         font-weight: 800;
         color: #B45309;
         margin-bottom: 4px;
-    }
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        min-height: 2.55rem;
     }
     </style>
     """,
@@ -423,7 +397,12 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                 st.cache_data.clear()
                 st.rerun()
 
-st.markdown('<div class="section-title">1. 파트타임 직원 명부 (시급 · 계좌 · 보건증 · 재직/퇴사 관리)</div>', unsafe_allow_html=True)
+render_section_banner(
+    "👥 1. 파트타임 직원 명부",
+    badge="시급제",
+    subtitle="시급 · 계좌 · 보건증 · 재직/퇴사 관리",
+    accent="blue",
+)
 df_part_disp = df_part.copy()
 df_part_disp["시급"] = df_part_disp["시급"].apply(clean_int)
 
@@ -448,7 +427,12 @@ edited_part = st.data_editor(
     },
 )
 
-st.markdown('<div class="section-title">2. 정규직 직원 명부 (계약급여 - 제세금 = 계산급여 자동 산출)</div>', unsafe_allow_html=True)
+render_section_banner(
+    "🧑‍🍳 2. 정규직 직원 명부",
+    badge="월급제",
+    subtitle="계약급여 - 제세금 = 계산급여 자동 산출",
+    accent="indigo",
+)
 st.caption("💡 **계약급여**와 매월 고정 공제되는 **제세금**(4대보험+소득세)을 입력하면 **계산급여**(고정 실수령액)가 자동 계산됩니다.")
 
 df_reg_disp = df_reg.copy()
@@ -499,8 +483,12 @@ from contract_utils import (
 )
 
 st.divider()
-st.subheader(f"📝 [{selected_store}] 전자 근로계약서 발급 및 서명 현황")
-st.caption("먼저 계약서를 작성할 직원을 선택하면, 해당 직원의 기본정보와 환경설정 기본 근무조건이 자동으로 연동되어 아래 입력창이 열립니다.")
+render_section_banner(
+    f"📝 [{selected_store}] 3. 전자 근로계약서 발급 및 서명 현황",
+    badge="전자서명 · 드라이브 보관",
+    subtitle="직원 선택 시 명부 기본정보와 환경설정 근무조건이 자동 연동됩니다",
+    accent="emerald",
+)
 
 APP_BASE_URL = "https://store-salary-auto-5xqyisbltbombukh3zltva.streamlit.app/"
 

@@ -24,6 +24,7 @@ from store_registry import (
     get_gspread_client,
     DEFAULT_CONTRACT_FOLDER_ID,
 )
+from ui_styles import apply_base_theme, render_section_banner
 
 TG_TARGET_OPTIONS = ["대표", "매니저", "모두", "끄기"]
 
@@ -43,41 +44,7 @@ def normalize_tg_target(val: str, default: str = "대표") -> str:
     return default
 
 
-st.markdown(
-    """
-    <style>
-    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    html, body, [class*="css"] {
-        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    }
-    .block-container {
-        padding-top: 2.8rem;
-        padding-bottom: 3rem;
-        max-width: 1180px;
-    }
-    .app-title {
-        font-size: 1.55rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin: 0;
-    }
-    .section-title {
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin: 0.8rem 0 0.5rem 0;
-        padding-left: 0.6rem;
-        border-left: 4px solid #334155;
-    }
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        min-height: 2.6rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+apply_base_theme(max_width=1200)
 
 all_stores_map = load_all_stores(include_inactive=True)
 store_names = list(all_stores_map.keys())
@@ -265,7 +232,7 @@ with st.form("settings_main_form"):
     # [탭 5] 텔레그램 & 이메일 발송 기본값 (공동대표 · 매니저 수신 분기)
     # --------------------------------------------------------------------------
     with t_diag:
-        st.markdown('<div class="section-title">📲 텔레그램 봇 토큰 및 수신자(공동대표 · 매니저) 채팅 ID</div>', unsafe_allow_html=True)
+        render_section_banner("📲 텔레그램 봇 토큰 및 수신자 채팅 ID", badge="알림 분기", accent="indigo")
         with st.container(border=True):
             in_tg_token = st.text_input(
                 "텔레그램 봇 토큰 (TELEGRAM_BOT_TOKEN)",
@@ -338,7 +305,7 @@ with st.form("settings_main_form"):
                 index=TG_TARGET_OPTIONS.index(cur_t_wage),
             )
 
-        st.markdown('<div class="section-title">📧 이메일 & 구글 드라이브 웹앱 발송 기본값</div>', unsafe_allow_html=True)
+        render_section_banner("📧 이메일 & 구글 드라이브 웹앱 발송 기본값", badge="Apps Script", accent="blue")
         with st.container(border=True):
             em_c1, em_c2 = st.columns([1.8, 1.2])
             in_webapp_url = em_c1.text_input(
@@ -350,7 +317,7 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
             )
 
-        st.markdown('<div class="section-title">💳 실시간 계좌입금 · chak 지역상품권 자동 확인</div>', unsafe_allow_html=True)
+        render_section_banner("💳 실시간 계좌입금 · chak 지역상품권 자동 확인", badge="영업시간 · 잔액제거", accent="emerald")
         with st.container(border=True):
             pay_c1, pay_c2 = st.columns([1.5, 1.0])
             in_pay_tg_chat_id = pay_c1.text_input(
@@ -382,24 +349,25 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("payment_biz_end", "22:00"),
                 placeholder="22:00",
             )
-            wk_c1, wk_c2, wk_c3, wk_c4 = st.columns(4)
+            wk_c1, wk_c2 = st.columns(2)
             in_pay_wknd_start = wk_c1.text_input(
-                "주말(토·일) 영업 시작",
+                "주말(토·일) 영업 시작 (HH:MM)",
                 value=current_cfg.get("payment_wknd_biz_start", "12:00"),
                 placeholder="12:00",
             )
             in_pay_wknd_end = wk_c2.text_input(
-                "주말(토·일) 영업 종료",
+                "주말(토·일) 영업 종료 (HH:MM)",
                 value=current_cfg.get("payment_wknd_biz_end", "22:00"),
                 placeholder="22:00",
             )
-            in_pay_wknd_brk_start = wk_c3.text_input(
-                "주말 브레이크 시작 (선택)",
+            brk_c1, brk_c2 = st.columns(2)
+            in_pay_wknd_brk_start = brk_c1.text_input(
+                "주말 브레이크 시작 (선택 · 비우면 없음)",
                 value=current_cfg.get("payment_wknd_break_start", "15:00"),
                 placeholder="15:00",
             )
-            in_pay_wknd_brk_end = wk_c4.text_input(
-                "주말 브레이크 종료 (선택)",
+            in_pay_wknd_brk_end = brk_c2.text_input(
+                "주말 브레이크 종료 (선택 · 비우면 없음)",
                 value=current_cfg.get("payment_wknd_break_end", "17:00"),
                 placeholder="17:00",
             )
@@ -551,9 +519,14 @@ with t_stores:
 # 3. 원클릭 외부 서비스 연동 상태 진단 패널
 # ==============================================================================
 st.divider()
-st.markdown('<div class="section-title">📡 외부 연동 상태 실시간 점검 (원클릭 테스트)</div>', unsafe_allow_html=True)
+render_section_banner(
+    "📡 외부 연동 상태 실시간 점검 (원클릭 테스트)",
+    badge="진단 도구",
+    subtitle="구글 시트 · 텔레그램 · 이메일 · 입금 웹훅 연결을 한 번에 점검합니다",
+    accent="amber",
+)
 
-d1, d2, d3, d4 = st.columns(4)
+d1, d2 = st.columns(2)
 
 with d1:
     with st.container(border=True):
@@ -592,6 +565,8 @@ with d2:
                         except Exception as e:
                             sent_logs.append(f"{role_label}({cid}): 실패({e})")
                 st.success(" / ".join(sent_logs))
+
+d3, d4 = st.columns(2)
 
 with d3:
     with st.container(border=True):

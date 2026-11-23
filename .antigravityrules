@@ -11,6 +11,7 @@
 ## 2. 디렉터리 및 핵심 파일 아키텍처
 - **`app.py`**: 메인 진입점 및 라우터. URL 쿼리 파라미터(`?contract_id=...`) 유무에 따라 직원 전자서명 단독 모드(`views/contract_sign.py`)와 매장 관리 모드(출퇴근·급여정산·직원관리·매니저 매뉴얼·환경설정 5개 페이지)로 자동 분기한다.
 - **`store_registry.py`**: 기준 DB(`MASTER_DB_ID`)의 `매장목록` 탭 기반 다매장 목록 관리(`load_all_stores`, `save_all_stores`), 지점별 구글 시트 `환경설정` 탭 로더/세이버(`load_store_settings`, `save_store_settings`), `gspread` 클라이언트(`get_gspread_client`), 시크릿·환경변수 헬퍼(`get_secret`), 공통 텔레그램 분기 발송 함수(`dispatch_telegram_alert`)를 담당하는 중앙 레지스트리 모듈.
+- **`ui_styles.py`**: 전 페이지 공용 반응형 CSS(`apply_base_theme`, 모바일/태블릿/PC 브레이크포인트 및 알약형 탭·카드 스타일) 및 기능별 컬러 구분 섹션 헤더(`render_section_banner`) 모듈.
 - **`contract_utils.py`**: 지점별 `db_id` 및 `folder_id` 기반 전자 근로계약서(`근로계약서` 탭) CRUD, ReportLab 기반 한국어 PDF 생성(표준근로계약서 + 선택적 연소근로자 친권자 동의서 + 선택적 비밀유지·경업금지 서약서), Google Apps Script 웹앱을 통한 지점별 구글 드라이브 PDF 업로드 및 이메일 사본 교부, 서명 완료 시 해당 지점 `파트타임`/`정규직` 시트 동기화 및 `tg_target_contract` 텔레그램 알림 발송.
 - **`views/contract_sign.py`**: 직원 전용 전자 근로계약서 서명 페이지(`?contract_id=...&store=...`, `store` 미포함 기존 링크는 기준 DB `MASTER_DB_ID` 매장으로 하위 호환). 지점별 `환경설정`·계약서 DB·드라이브 폴더 연동, 일반/연소근로자(만 18세 미만) 표준근로계약서 자동 전환, 친권자(후견인) 동의서 인적사항·서명 입력, 비밀유지·경업금지 서약서 렌더링, 정자 성명 자동 서명 이미지 생성 또는 자필 서명 사진 업로드, `st.form` 및 시트 상태 재검증을 통한 중복 제출 방지.
 - **`views/attendance.py`**: 일일 출퇴근 입력/수정, 매니저 PIN 인증 후 일괄 승인/해제, `정규직근태변동` 탭 등록/수정/삭제(`tg_target_reg_change` 알림), 일일 보건증 만료 텔레그램 브리핑(`tg_target_health` 알림), `입금확인로그` 탭 연동 실시간 계좌입금·`chak` 결제 확인 패널, 개인별 월별 근무시간 조회.

@@ -15,6 +15,7 @@ from store_registry import (
     get_gspread_client,
     dispatch_telegram_alert,
 )
+from ui_styles import apply_base_theme, render_section_banner
 
 STORES = load_all_stores()
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -33,78 +34,20 @@ def kst_today() -> datetime.date:
 
 
 def apply_clean_style():
+    apply_base_theme(max_width=1380)
     st.markdown(
         """
         <style>
-        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-        html, body, [class*="css"] {
-            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-        }
-        .block-container {
-            padding-top: 3.2rem;
-            padding-bottom: 2.5rem;
-            max-width: 1380px;
-        }
-        .app-title {
-            font-size: 1.55rem;
-            font-weight: 700;
-            color: #1E293B;
-            margin: 0;
-            line-height: 1.2;
-            letter-spacing: -0.02em;
-            white-space: nowrap;
-        }
-        .app-subtitle {
-            font-size: 0.92rem;
-            font-weight: 600;
-            color: #475569;
-            margin-top: 0.5rem;
-            margin-bottom: 0.3rem;
-        }
-        .section-title {
-            font-size: 1.02rem;
-            font-weight: 700;
-            color: #1E293B;
-            margin: 0.6rem 0 0.45rem 0;
-            padding-left: 0.55rem;
-            border-left: 4px solid #334155;
-        }
-        .mgr-section-title {
-            font-size: 1.02rem;
-            font-weight: 700;
-            color: #92400E;
-            margin: 0.6rem 0 0.45rem 0;
-            padding-left: 0.55rem;
-            border-left: 4px solid #D97706;
-        }
-        div[data-testid="stVerticalBlock"]:has(> div.element-container > div.stMarkdown > div.mgr-box-marker) {
-            background-color: #FFFBEB;
-            border: 1.5px solid #F59E0B;
-            border-radius: 10px;
-            padding: 0.85rem 1rem;
-        }
         input[type="password"] {
-            font-size: 1.45rem !important;
-            letter-spacing: 0.22em !important;
+            font-size: 1.35rem !important;
+            letter-spacing: 0.2em !important;
             font-weight: 800 !important;
             line-height: 1.2 !important;
         }
         input[type="password"]::placeholder {
             font-size: 0.88rem !important;
             letter-spacing: normal !important;
-            font-weight: 400 !important;
-        }
-        div[data-testid="stMetric"] {
-            background-color: #F8FAFC;
-            border: 1px solid #E2E8F0;
-            border-radius: 10px;
-            padding: 0.75rem 1rem;
-        }
-        .stButton > button, .stFormSubmitButton > button {
-            border-radius: 8px;
-            font-weight: 600;
-            min-height: 2.45rem;
+            font-weight: 500 !important;
         }
         </style>
         """,
@@ -317,15 +260,15 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
     tracker[store_key] = today_s
 
 
-h_col1, h_col2, _, h_col4 = st.columns([0.95, 0.55, 2.7, 0.85], vertical_alignment="center")
+h_col1, h_col2, h_col3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
 with h_col1:
-    st.markdown('<div class="app-title">⏱️ 출퇴근기록부</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">⏱️ 출퇴근 기록부</div>', unsafe_allow_html=True)
 with h_col2:
+    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
+with h_col3:
     if st.button("🔄 새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-with h_col4:
-    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 
 store_cfg = STORES[selected_store]
 app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
@@ -401,6 +344,12 @@ if app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE":
     else:
         pay_exp_title = "💳 실시간 계좌입금 · chak 결제 확인 (오늘 수신 내역 없음)"
 
+    render_section_banner(
+        "💳 실시간 계좌입금 · chak 결제 확인",
+        badge=(f"미확인 {pending_cnt}건" if pending_cnt > 0 else "카운터 확인"),
+        subtitle="우리은행 입금 · 지역상품권 결제 실시간 연동 (잔액·출금 미표시)",
+        accent="emerald",
+    )
     with st.expander(pay_exp_title, expanded=(pending_cnt > 0)):
         biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
         if biz_only:
@@ -466,8 +415,6 @@ if app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE":
                 row_height=28,
             )
 
-st.markdown('<div class="app-subtitle">📅 조회 및 입력 날짜</div>', unsafe_allow_html=True)
-
 active_emp_names = []
 if not df_emp.empty:
     active_df = df_emp[df_emp["상태"] != "퇴사"] if "상태" in df_emp.columns else df_emp
@@ -487,35 +434,36 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-d_c1, d_c2, d_c3 = st.columns([0.85, 0.55, 3.7], vertical_alignment="center")
-with d_c1:
-    sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), label_visibility="collapsed")
-    date_str = sel_date.strftime("%Y-%m-%d")
-with d_c2:
-    weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-    w_kr = weekdays_kr[sel_date.weekday()]
-    w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
-    st.markdown(
-        f'<div style="font-size:1.25rem; font-weight:800; color:{w_color}; padding-left:0.15rem; white-space:nowrap;">{w_kr}</div>',
-        unsafe_allow_html=True,
-    )
-with d_c3:
-    st.markdown(
-        '<div style="font-size:0.88rem; color:#475569;">💡 <b>신규 입력</b>: 아래에서 본인 이름 선택 후 시간 저장 &nbsp;|&nbsp; <b>기존 수정</b>: 아래 표에서 해당 줄 체크 후 수정</div>',
-        unsafe_allow_html=True,
-    )
+with st.container(border=True):
+    d_c1, d_c2, d_c3 = st.columns([1.15, 0.65, 2.4], vertical_alignment="center")
+    with d_c1:
+        sel_date = st.date_input("📅 조회 및 입력 날짜", value=kst_today(), label_visibility="collapsed")
+        date_str = sel_date.strftime("%Y-%m-%d")
+    with d_c2:
+        weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        w_kr = weekdays_kr[sel_date.weekday()]
+        w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
+        st.markdown(
+            f'<div style="font-size:1.18rem; font-weight:800; color:{w_color}; white-space:nowrap;">📅 {w_kr}</div>',
+            unsafe_allow_html=True,
+        )
+    with d_c3:
+        st.markdown(
+            '<div style="font-size:0.86rem; color:#475569; line-height:1.45;">💡 <b>신규 입력</b>: 하단에서 본인 이름 선택 후 저장 &nbsp;|&nbsp; <b>수정</b>: 표에서 해당 줄 체크</div>',
+            unsafe_allow_html=True,
+        )
 
 if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
-top_left, top_right = st.columns([1.68, 1.07])
+top_left, top_right = st.columns([1.55, 1.15])
 
 selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
 
 with top_left:
-    st.markdown('<div class="section-title">1. 일 근무현황</div>', unsafe_allow_html=True)
+    render_section_banner("📋 1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄을 체크하세요", accent="blue")
     if not df_att.empty and "날짜" in df_att.columns:
         day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
         if not day_df.empty:
@@ -562,21 +510,16 @@ with top_left:
         st.info("등록된 근무 기록이 없습니다.")
 
 with top_right:
-    st.markdown('<div class="mgr-section-title">🔐 매니저 전용 확인</div>', unsafe_allow_html=True)
+    render_section_banner("🔐 매니저 전용 확인", badge="매니저 PIN", subtitle="일괄 승인 · 해제 · 특근/휴무", accent="amber")
     with st.container(border=True):
         st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
         with st.form(key=f"mgr_pin_form_{selected_store}", border=False):
-            p_lbl, p_inp, p_btn = st.columns([0.85, 1.35, 0.65], vertical_alignment="center")
-            with p_lbl:
-                st.markdown(
-                    '<div style="font-size:0.88rem; font-weight:700; color:#78350F; line-height:1.25;">매니저확인<br>비밀번호</div>',
-                    unsafe_allow_html=True,
-                )
+            p_inp, p_btn = st.columns([2.0, 0.9], vertical_alignment="center")
             with p_inp:
                 pin_input = st.text_input(
                     "매니저확인 비밀번호",
                     type="password",
-                    placeholder="비밀번호 입력",
+                    placeholder="매니저 PIN 입력",
                     key=f"mgr_pin_top_{selected_store}",
                     label_visibility="collapsed",
                 )
@@ -856,7 +799,11 @@ with left_col:
         real_emp_name = ""
         is_emp_selected = False
 
-    st.markdown('<div class="section-title">2. 출퇴근 시간 입력/수정</div>', unsafe_allow_html=True)
+    render_section_banner(
+        "✍️ 2. 출퇴근 시간 입력 / 수정",
+        badge=("수정 모드" if mode == "기존 수정" else "신규 입력"),
+        accent=("amber" if mode == "기존 수정" else "blue"),
+    )
 
     with st.container(border=True):
         if not active_emp_names:
@@ -889,7 +836,7 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        c_name, c1, c2, c3 = st.columns([1.15, 1.0, 0.92, 0.92])
+        c_name, c1 = st.columns(2)
         with c_name:
             if mode == "기존 수정":
                 st.text_input("본인 이름", value=real_emp_name, disabled=True)
@@ -922,6 +869,8 @@ with left_col:
                 disabled=inputs_disabled,
                 key=f"shift_{w_key_sfx}",
             )
+
+        c2, c3 = st.columns(2)
         with c2:
             start_t = st.time_input(
                 "시작시간",
@@ -1026,11 +975,11 @@ with left_col:
 
 with right_col:
     if not is_emp_selected:
-        st.markdown('<div class="section-title">3. 개인별 월별 근무시간 조회</div>', unsafe_allow_html=True)
+        render_section_banner("📊 3. 개인별 월별 근무시간 조회", badge="월별 누적", accent="indigo")
         with st.container(border=True):
             st.info("👈 좌측 **'2. 출퇴근 시간 입력/수정'**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
     else:
-        st.markdown(f'<div class="section-title">3. {real_emp_name} 님 월별 근무시간 조회</div>', unsafe_allow_html=True)
+        render_section_banner(f"📊 3. {real_emp_name} 님 월별 근무시간", badge="월별 누적", accent="indigo")
 
         month_options = get_recent_payroll_months(kst_today(), start_day=payroll_start_day, count=6)
         sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)

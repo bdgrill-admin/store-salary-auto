@@ -32,73 +32,19 @@ from store_registry import (
     get_gspread_client,
     dispatch_telegram_alert,
 )
+from ui_styles import apply_base_theme, render_section_banner
 
 STORES = load_all_stores()
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
 
 
 def apply_clean_style():
+    apply_base_theme(max_width=1360)
     st.markdown(
         """
         <style>
-        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-        html, body, [class*="css"] {
-            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-        }
-        .block-container {
-            padding-top: 2.8rem;
-            padding-bottom: 3rem;
-            max-width: 1360px;
-        }
         .app-header {
-            padding: 0.2rem 0 0.6rem 0;
-        }
-        .app-title {
-            font-size: 1.65rem;
-            font-weight: 700;
-            color: #1E293B;
-            margin: 0;
-            letter-spacing: -0.02em;
-        }
-        .app-subtitle {
-            font-size: 0.9rem;
-            color: #64748B;
-            margin-top: 0.2rem;
-        }
-        .section-title {
-            font-size: 1.12rem;
-            font-weight: 700;
-            color: #1E293B;
-            margin: 1.3rem 0 0.65rem 0;
-            padding-left: 0.6rem;
-            border-left: 4px solid #334155;
-        }
-        div[data-testid="stMetric"] {
-            background-color: #F8FAFC;
-            border: 1px solid #E2E8F0;
-            border-radius: 10px;
-            padding: 0.85rem 1rem;
-        }
-        div[data-testid="stMetric"] label {
-            font-size: 0.82rem;
-            font-weight: 600;
-            color: #475569;
-        }
-        div[data-testid="stMetricValue"] {
-            font-size: 1.32rem;
-            font-weight: 700;
-            color: #0F172A;
-        }
-        button[data-baseweb="tab"] {
-            font-size: 0.98rem;
-            font-weight: 600;
-            padding: 0.6rem 1.2rem;
-        }
-        .stButton > button, .stDownloadButton > button {
-            border-radius: 8px;
-            font-weight: 600;
-            min-height: 2.75rem;
+            padding: 0.1rem 0 0.4rem 0;
         }
         </style>
         """,
@@ -1027,8 +973,12 @@ with tab_calc:
                 for w in warnings:
                     st.markdown(f"- {w}")
 
-        st.markdown('<div class="section-title">1. 정규직 직원 급여 내역</div>', unsafe_allow_html=True)
-        st.caption("💡 **계산급여** = `계약급여 - 제세금`  |  **입금급여(실이체액)** = `계산급여 ± 변동급여` (추가근무는 양수 `100000`, 휴무 차감은 음수 `-100000` 입력)")
+        render_section_banner(
+            "🧑‍🍳 1. 정규직 직원 급여 내역",
+            badge="월급제 · 고정급",
+            subtitle="계산급여 = 계약급여 - 제세금 | 입금급여 = 계산급여 ± 변동급여",
+            accent="indigo",
+        )
 
         if not df_reg_changes.empty:
             with st.container(border=True):
@@ -1131,9 +1081,11 @@ with tab_calc:
                 df_ins_edited.at[idx, "계산급여"] = calc_pay
                 df_ins_edited.at[idx, "입금급여"] = in_pay
 
-        st.markdown('<div class="section-title">2. 파트타임 직원 급여 내역</div>', unsafe_allow_html=True)
-        st.caption(
-            f"💡 적용 공제율 기준: 세전 **{high_tax_threshold:,}원** 미만 `{base_tax_rate*100:g}%` / 이상 `{high_tax_rate*100:g}%` (환경설정에서 변경 가능)"
+        render_section_banner(
+            "👥 2. 파트타임 직원 급여 내역",
+            badge="시급제 · 매니저 승인분",
+            subtitle=f"세전 {high_tax_threshold:,}원 미만 {base_tax_rate*100:g}% / 이상 {high_tax_rate*100:g}% 공제",
+            accent="blue",
         )
         df_part_edited = st.data_editor(
             df_part_raw,
@@ -1204,8 +1156,13 @@ with tab_calc:
                     f"귀속월({prev_ym}) 매출({cur_sales_val:,}원) 대비 이번 정산 인건비율이 **{est_labor_pct:.1f}%**로 목표 기준선보다 **+{diff_est:.1f}%p** 높습니다."
                 )
 
-        st.write("")
-        m1, m2, m3, m4, m5 = st.columns(5)
+        render_section_banner(
+            "📊 이번 정산 요약 및 전년 비교",
+            badge=f"{curr_ym} 정산",
+            accent="slate",
+        )
+        m1, m2, m3 = st.columns(3)
+        m4, m5 = st.columns(2)
 
         if not prev_row.empty:
             p_reg = int(prev_row.iloc[0]["정규직"])
@@ -1264,7 +1221,11 @@ with tab_calc:
         else:
             m5.metric("전년 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
 
-        st.markdown('<div class="section-title">3. 세무사 전달 및 정산 확정</div>', unsafe_allow_html=True)
+        render_section_banner(
+            "🚀 3. 세무사 전달 · 은행 이체 · 정산 확정",
+            badge="파일 다운로드 · 일괄 발송",
+            accent="emerald",
+        )
         generated_txt = build_tax_accountant_text(df_ins_edited, df_part_edited)
 
         today_str = datetime.datetime.now().strftime("%Y%m%d")

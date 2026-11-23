@@ -13,27 +13,14 @@
 import os
 import streamlit as st
 from store_registry import load_all_stores, load_store_settings
+from ui_styles import apply_base_theme
 
 STORES = load_all_stores()
 
+apply_base_theme(max_width=960)
 st.markdown(
     """
     <style>
-    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    html, body, [class*="css"] {
-        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    }
-    .block-container {
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-        max-width: 920px;
-    }
-    .app-title {
-        font-size: 1.55rem;
-        font-weight: 700;
-        color: #1E293B;
-        margin: 0;
-    }
     .manual-header {
         background: linear-gradient(135deg, #1E293B 0%, #334155 100%);
         color: #FFFFFF;
@@ -147,7 +134,7 @@ def show_guide_image(file_candidates: list, caption: str):
 # ==============================================================================
 # 매장 선택 및 지점별 환경설정(manager_pin) 실시간 로드
 # ==============================================================================
-h_left, _, h_right = st.columns([2.5, 1.2, 1.1], vertical_alignment="center")
+h_left, h_right = st.columns([2.6, 1.1], vertical_alignment="center")
 with h_left:
     st.markdown('<div class="app-title">📖 매니저 업무 매뉴얼</div>', unsafe_allow_html=True)
 with h_right:
