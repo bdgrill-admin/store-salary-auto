@@ -17,10 +17,19 @@ from store_registry import (
 )
 
 STORES = load_all_stores()
+KST = datetime.timezone(datetime.timedelta(hours=9))
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
 EMP_PLACEHOLDER = "🔽 이름 선택"
 REG_CHANGE_TYPES = ["➕ 추가출근", "➖ 기타휴무", "🔄 대체휴무"]
 REG_CHANGE_UNITS = ["1일", "시간단위(사유란 기재)"]
+
+
+def kst_now() -> datetime.datetime:
+    return datetime.datetime.now(KST)
+
+
+def kst_today() -> datetime.date:
+    return kst_now().date()
 
 
 def apply_clean_style():
@@ -297,7 +306,7 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
     if not alert_lines:
         return
     tracker = _daily_health_telegram_tracker()
-    today_s = datetime.date.today().strftime("%Y-%m-%d")
+    today_s = kst_today().strftime("%Y-%m-%d")
     if tracker.get(store_key) == today_s:
         return
 
@@ -332,7 +341,7 @@ payroll_start_day = int(app_cfg.get("payroll_start_day", "5") or 5)
 time_step_sec = int(app_cfg.get("att_time_step_min", "10") or 10) * 60
 health_alert_days = int(app_cfg.get("health_alert_days", "30") or 30)
 
-today_dt = datetime.date.today()
+today_dt = kst_today()
 health_alerts = []
 emp_health_warning_map = {}
 
@@ -469,7 +478,7 @@ if not df_att.empty:
 
 d_c1, d_c2, d_c3 = st.columns([0.85, 0.55, 3.7], vertical_alignment="center")
 with d_c1:
-    sel_date = st.date_input("조회 및 입력 날짜", value=datetime.date.today(), label_visibility="collapsed")
+    sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), label_visibility="collapsed")
     date_str = sel_date.strftime("%Y-%m-%d")
 with d_c2:
     weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
@@ -722,7 +731,7 @@ with top_right:
 
                     df_rc = load_regular_changes(store_cfg["db_id"])
                     if not df_rc.empty and "발생일" in df_rc.columns:
-                        cur_s, cur_e = get_payroll_period(datetime.date.today(), start_day=payroll_start_day)
+                        cur_s, cur_e = get_payroll_period(kst_today(), start_day=payroll_start_day)
                         df_rc["발생일_dt"] = pd.to_datetime(df_rc["발생일"], errors="coerce").dt.date
                         cur_rc = df_rc[(df_rc["발생일_dt"] >= cur_s) & (df_rc["발생일_dt"] <= cur_e)].sort_values(
                             "발생일", ascending=False
@@ -1012,7 +1021,7 @@ with right_col:
     else:
         st.markdown(f'<div class="section-title">3. {real_emp_name} 님 월별 근무시간 조회</div>', unsafe_allow_html=True)
 
-        month_options = get_recent_payroll_months(datetime.date.today(), start_day=payroll_start_day, count=6)
+        month_options = get_recent_payroll_months(kst_today(), start_day=payroll_start_day, count=6)
         sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)
         m_start, m_end = month_options[sel_month_label]
 

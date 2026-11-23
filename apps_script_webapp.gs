@@ -165,11 +165,15 @@ function handlePaymentAlert_(data) {
       return { ok: true, skipped: "chak_non_payment" };
     }
   } else {
-    // 우리은행 푸시 / SMS: 출금·이체완료(송금)·잔액조회 제외, '입금'만 통과
-    if (/출금|송금/.test(combined) && !/입금/.test(combined)) {
+    // 우리은행 푸시: '[출금]' 원천 차단, '입출금알림' 제목 문구 제거 후 '입금' 여부 판별
+    if (/\[출금\]/.test(combined)) {
       return { ok: true, skipped: "withdrawal" };
     }
-    if (!/입금/.test(combined)) {
+    var checkText = combined.replace(/입출금알림/g, " ");
+    if (/출금|송금/.test(checkText) && !/입금/.test(checkText)) {
+      return { ok: true, skipped: "withdrawal" };
+    }
+    if (!/입금/.test(checkText)) {
       return { ok: true, skipped: "non_deposit" };
     }
     category = "계좌입금";
@@ -283,9 +287,13 @@ function stripSensitiveBankInfo_(text) {
   var s = String(text || "");
   // 잔액 / 가용잔액 / 거래후잔액 문구 제거
   s = s.replace(/(?:현재|거래후|거래 후|출금가능|가용)?\s*잔액\s*[:：]?\s*-?[\d,]+\s*원?/g, " ");
-  // 계좌번호 형태 제거 (예: 1002-***-123456, 1002-123-456789, ****1234)
-  s = s.replace(/\b\d{3,4}[-*]+[\d*]{2,5}[-*]+[\d*]{2,6}\b/g, " ");
-  s = s.replace(/\*+\d{2,6}/g, " ");
+  // chak 금일누적 결제금액 제거 (직원에게 일 매출 누적액 노출 방지)
+  s = s.replace(/(?:금일\s*)?누적\s*결제\s*금액\s*[:：]?\s*[\d,]+\s*원?/g, " ");
+  s = s.replace(/금일\s*누적\s*[:：]?\s*[\d,]+\s*원?/g, " ");
+  // 계좌번호 형태 제거 (예: 1002-132-672***계좌, 1002-***-123456, ****1234, ***계좌)
+  s = s.replace(/\d{3,4}[-*]+[\d*]{2,5}[-*]+[\d*]{2,6}\s*계좌?/g, " ");
+  s = s.replace(/\*+\d{2,6}\s*계좌?/g, " ");
+  s = s.replace(/\*+\s*계좌?/g, " ");
   s = s.replace(/\s+/g, " ").trim();
   return s;
 }
@@ -303,16 +311,30 @@ function extractWonAmount_(safeText) {
 
 function extractPayerOrDetail_(safeText, category) {
   var s = String(safeText || "");
-  s = s.replace(/\[?\s*(?:Web발신|우리은행|우리WON뱅킹|우리WON기업|우리WON|WON뱅킹|알림)\s*\]?/gi, " ");
-  // 날짜/시간 제거 (2026-11-23, 11/23, 17:14, 17:14:22)
+  s = s.replace(/\[?\s*(?:Web발신|우리은행|우리WON뱅킹|우리WON기업|우리WON|WON뱅킹|지역상품권\s*chak|입출금알림|입출금|알림)\s*\]?/gi, " ");
+  s = s.replace(/\[\s*(?:입금|출금)\s*\]/g, " ");
+  // 날짜/시간 제거 (2026-11-23, 11/23, 17:14, 18:44:31)
   s = s.replace(/\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b/g, " ");
   s = s.replace(/\b\d{1,2}[./-]\d{1,2}\b/g, " ");
   s = s.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ");
   // 금액 문구 제거
   s = s.replace(/(?:입금|결제|승인|취소)?\s*[\d,]+\s*원/g, " ");
-  s = s.replace(/(?:입금|결제가|결제|취소가|취소|알림|안내|완료되었습니다\.?|취소되었습니다\.?|되었습니다\.?)/g, " ");
+  s = s.replace(/(?:결제완료|결제취소|취소완료|결제가|결제|취소가|취소|안내|완료되었습니다\.?|취소되었습니다\.?|되었습니다\.?)/g, " ");
+  s = s.replace(/(^|\s)입금(\s|$)/g, " ");
   s = s.replace(/[()\[\]\/|·:]/g, " ");
   s = s.replace(/\s+/g, " ").trim();
+
+  // 제목+본문 합산으로 중복된 토큰 제거 (예: "분당그릴 분당그릴" -> "분당그릴")
+  if (s) {
+    var parts = s.split(" ");
+    var uniq = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] && uniq.indexOf(parts[i]) === -1) {
+        uniq.push(parts[i]);
+      }
+    }
+    s = uniq.join(" ");
+  }
 
   if (!s) {
     if (category === "chak결제") return "지역상품권 결제 완료";
