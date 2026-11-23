@@ -367,20 +367,41 @@ with st.form("settings_main_form"):
                 "출퇴근기록부 화면 상단에 '실시간 계좌입금 · chak 결제 확인' 패널 표시 (잔액·출금 제외, 당일 입금/결제만 노출)",
                 value=(current_cfg.get("show_payment_board", "TRUE").upper() == "TRUE"),
             )
-            bh_c1, bh_c2, bh_c3 = st.columns([1.4, 0.8, 0.8], vertical_alignment="bottom")
-            in_pay_biz_only = bh_c1.checkbox(
-                "영업시간 내 수신된 입금·chak 결제만 알림/기록 (영업시간 외 입금 자동 무시)",
+            in_pay_biz_only = st.checkbox(
+                "영업시간 내 수신된 입금·chak 결제만 알림/기록 (영업시간 외 및 주말 브레이크타임 자동 무시)",
                 value=(current_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"),
             )
-            in_pay_biz_start = bh_c2.text_input(
-                "영업 시작시간 (HH:MM)",
-                value=current_cfg.get("payment_biz_start", "11:00"),
-                placeholder="11:00",
+            wd_c1, wd_c2 = st.columns(2)
+            in_pay_biz_start = wd_c1.text_input(
+                "평일(월~금) 영업 시작 (HH:MM)",
+                value=current_cfg.get("payment_biz_start", "16:00"),
+                placeholder="16:00",
             )
-            in_pay_biz_end = bh_c3.text_input(
-                "영업 종료시간 (HH:MM)",
-                value=current_cfg.get("payment_biz_end", "23:00"),
-                placeholder="23:00",
+            in_pay_biz_end = wd_c2.text_input(
+                "평일(월~금) 영업 종료 (HH:MM)",
+                value=current_cfg.get("payment_biz_end", "22:00"),
+                placeholder="22:00",
+            )
+            wk_c1, wk_c2, wk_c3, wk_c4 = st.columns(4)
+            in_pay_wknd_start = wk_c1.text_input(
+                "주말(토·일) 영업 시작",
+                value=current_cfg.get("payment_wknd_biz_start", "12:00"),
+                placeholder="12:00",
+            )
+            in_pay_wknd_end = wk_c2.text_input(
+                "주말(토·일) 영업 종료",
+                value=current_cfg.get("payment_wknd_biz_end", "22:00"),
+                placeholder="22:00",
+            )
+            in_pay_wknd_brk_start = wk_c3.text_input(
+                "주말 브레이크 시작 (선택)",
+                value=current_cfg.get("payment_wknd_break_start", "15:00"),
+                placeholder="15:00",
+            )
+            in_pay_wknd_brk_end = wk_c4.text_input(
+                "주말 브레이크 종료 (선택)",
+                value=current_cfg.get("payment_wknd_break_end", "17:00"),
+                placeholder="17:00",
             )
             in_pay_excluded_senders = st.text_input(
                 "계좌입금 알림 제외 입금자명 (대표 본인 이체 등 제외, 여러 명이면 쉼표 , 로 구분)",
@@ -389,7 +410,8 @@ with st.form("settings_main_form"):
             )
             st.caption(
                 f"💡 MacroDroid 웹훅 전송 시 `dbId`에 현재 지점 시트 ID (`{store_cfg['db_id']}`)와 위 보안키를 입력하면 "
-                "설정된 영업시간 내 알림만 잔액 제거 후 시트(`입금확인로그`) 기록 및 전용 텔레그램 방으로 발송됩니다. (자정 넘김 예: `16:00` ~ `02:00` 지원)"
+                "평일/주말 영업시간(브레이크타임 제외) 내 알림만 잔액 제거 후 시트(`입금확인로그`) 기록 및 전용 텔레그램 방으로 발송됩니다. "
+                "(마감·브레이크 직후 결제까지 받으려면 종료시간에 10~20분 여유를 두셔도 됩니다.)"
             )
 
     st.write("")
@@ -440,8 +462,12 @@ with st.form("settings_main_form"):
                 "payment_webhook_secret": in_pay_webhook_secret.strip(),
                 "show_payment_board": "TRUE" if in_show_pay_board else "FALSE",
                 "payment_biz_hours_only": "TRUE" if in_pay_biz_only else "FALSE",
-                "payment_biz_start": in_pay_biz_start.strip() or "11:00",
-                "payment_biz_end": in_pay_biz_end.strip() or "23:00",
+                "payment_biz_start": in_pay_biz_start.strip() or "16:00",
+                "payment_biz_end": in_pay_biz_end.strip() or "22:00",
+                "payment_wknd_biz_start": in_pay_wknd_start.strip() or "12:00",
+                "payment_wknd_biz_end": in_pay_wknd_end.strip() or "22:00",
+                "payment_wknd_break_start": in_pay_wknd_brk_start.strip(),
+                "payment_wknd_break_end": in_pay_wknd_brk_end.strip(),
                 "payment_excluded_senders": in_pay_excluded_senders.strip(),
             }
             with st.spinner("구글 시트 '환경설정' 탭에 저장 중..."):

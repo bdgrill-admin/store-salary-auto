@@ -403,9 +403,20 @@ if app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE":
 
     with st.expander(pay_exp_title, expanded=(pending_cnt > 0)):
         biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
-        biz_start = app_cfg.get("payment_biz_start", "11:00")
-        biz_end = app_cfg.get("payment_biz_end", "23:00")
-        biz_info_txt = f"영업시간({biz_start}~{biz_end}) 내 " if biz_only else ""
+        if biz_only:
+            if today_dt.weekday() >= 5:
+                wk_s = app_cfg.get("payment_wknd_biz_start", "12:00")
+                wk_e = app_cfg.get("payment_wknd_biz_end", "22:00")
+                brk_s = app_cfg.get("payment_wknd_break_start", "15:00").strip()
+                brk_e = app_cfg.get("payment_wknd_break_end", "17:00").strip()
+                brk_txt = f", 브레이크 {brk_s}~{brk_e} 제외" if (brk_s and brk_e) else ""
+                biz_info_txt = f"주말 영업시간({wk_s}~{wk_e}{brk_txt}) 내 "
+            else:
+                wd_s = app_cfg.get("payment_biz_start", "16:00")
+                wd_e = app_cfg.get("payment_biz_end", "22:00")
+                biz_info_txt = f"평일 영업시간({wd_s}~{wd_e}) 내 "
+        else:
+            biz_info_txt = ""
         pb_c1, pb_c2, pb_c3 = st.columns([2.6, 0.9, 1.0], vertical_alignment="center")
         with pb_c1:
             st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")

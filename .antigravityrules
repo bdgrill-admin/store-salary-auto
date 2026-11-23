@@ -50,7 +50,7 @@
 
 7. **`입금확인로그` 탭:**
    `수신일시` | `구분` (`계좌입금`/`chak결제`/`chak취소`) | `입금자_상세` | `금액` | `원문요약` | `확인여부` (`대기`/`확인완료`)
-   - **보안 및 영업시간 규칙:** Apps Script(`apps_script_webapp.gs`)에서 기록 전 계좌 잔액 및 계좌번호를 제거하며, 출금 내역, 제외 입금자명(`payment_excluded_senders`, 기본 `이용석`), 영업시간(`payment_biz_hours_only`, `payment_biz_start`~`payment_biz_end`) 외 수신 내역은 저장·발송하지 않는다.
+   - **보안 및 영업시간 규칙:** Apps Script(`apps_script_webapp.gs`)에서 기록 전 계좌 잔액·계좌번호·`금일누적 결제금액`을 제거하며, 출금 내역, 제외 입금자명(`payment_excluded_senders`, 기본 `이용석`), 평일(`payment_biz_start`~`payment_biz_end`, 기본 `16:00~22:00`) 및 주말(`payment_wknd_biz_start`~`payment_wknd_biz_end`, 기본 `12:00~22:00`, 브레이크타임 `payment_wknd_break_start`~`payment_wknd_break_end`, 기본 `15:00~17:00` 제외) 영업시간 외 수신 내역은 저장·발송하지 않는다.
 
 8. **`매장목록` 탭 (기준 DB `MASTER_DB_ID` 전용):**
    `매장명` | `통합근태DB_ID` | `급여히스토리_ID` | `매출관리_ID` | `계약서폴더_ID` | `매니저PIN` | `사용여부`

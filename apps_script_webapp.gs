@@ -126,18 +126,19 @@ function handlePaymentAlert_(data) {
     return { ok: false, error: "웹훅 보안키(secretKey)가 일치하지 않습니다." };
   }
 
-  // 1-2) 영업시간 내 수신 여부 체크 (영업시간 외 개인 입금·정산 입금 등 자동 무시)
+  // 1-2) 평일/주말 영업시간 및 주말 브레이크타임 체크 (영업시간 외 입금 자동 무시)
   var now = new Date();
   var ignoreBiz = String(data.ignoreBusinessHours || "").trim().toUpperCase() === "TRUE";
   var bizOnly = String(cfg.payment_biz_hours_only || "TRUE").trim().toUpperCase() === "TRUE";
-  var bizStart = String(cfg.payment_biz_start || "11:00").trim();
-  var bizEnd = String(cfg.payment_biz_end || "23:00").trim();
-  if (!ignoreBiz && bizOnly && !isWithinBusinessHours_(now, bizStart, bizEnd)) {
-    return {
-      ok: true,
-      skipped: "outside_business_hours",
-      businessHours: bizStart + "~" + bizEnd,
-    };
+  if (!ignoreBiz && bizOnly) {
+    var bizCheck = checkStoreBusinessHours_(now, cfg);
+    if (!bizCheck.allowed) {
+      return {
+        ok: true,
+        skipped: bizCheck.reason,
+        schedule: bizCheck.schedule,
+      };
+    }
   }
 
   var storeTitle = String(cfg.store_title || data.storeName || "매장").trim();
@@ -381,6 +382,13 @@ function parseHHMMToMinutes_(str) {
   return h * 60 + min;
 }
 
+function isTimeInRange_(curMin, startMin, endMin) {
+  if (startMin <= endMin) {
+    return curMin >= startMin && curMin <= endMin;
+  }
+  return curMin >= startMin || curMin <= endMin;
+}
+
 function isWithinBusinessHours_(nowDate, startHHMM, endHHMM, currentHHMMOverride) {
   var sMin = parseHHMMToMinutes_(startHHMM);
   var eMin = parseHHMMToMinutes_(endHHMM);
@@ -390,12 +398,68 @@ function isWithinBusinessHours_(nowDate, startHHMM, endHHMM, currentHHMMOverride
   var curMin = parseHHMMToMinutes_(curHHMM);
   if (curMin < 0) return true;
 
-  if (sMin <= eMin) {
-    // 일반 영업시간 (예: 11:00 ~ 23:00)
-    return curMin >= sMin && curMin <= eMin;
+  return isTimeInRange_(curMin, sMin, eMin);
+}
+
+/**
+ * 평일(월~금: 기본 16:00~22:00)과 주말(토·일: 기본 12:00~22:00, 브레이크 15:00~17:00 제외) 영업시간 판별
+ */
+function checkStoreBusinessHours_(nowDate, cfg, isoDayOverride, currentHHMMOverride) {
+  var isoDay =
+    isoDayOverride !== undefined && isoDayOverride !== null
+      ? Number(isoDayOverride)
+      : parseInt(Utilities.formatDate(nowDate, "Asia/Seoul", "u"), 10);
+  var isWeekend = isoDay === 6 || isoDay === 7;
+
+  var curHHMM = currentHHMMOverride || Utilities.formatDate(nowDate, "Asia/Seoul", "HH:mm");
+  var curMin = parseHHMMToMinutes_(curHHMM);
+  if (curMin < 0) return { allowed: true, reason: "", schedule: "" };
+
+  if (!isWeekend) {
+    var wdStart = String((cfg && cfg.payment_biz_start) || "16:00").trim();
+    var wdEnd = String((cfg && cfg.payment_biz_end) || "22:00").trim();
+    var sMin = parseHHMMToMinutes_(wdStart);
+    var eMin = parseHHMMToMinutes_(wdEnd);
+    if (sMin >= 0 && eMin >= 0 && !isTimeInRange_(curMin, sMin, eMin)) {
+      return {
+        allowed: false,
+        reason: "outside_business_hours",
+        schedule: "평일 " + wdStart + "~" + wdEnd,
+      };
+    }
+    return { allowed: true, reason: "", schedule: "평일 " + wdStart + "~" + wdEnd };
   }
-  // 자정 넘김 영업시간 (예: 16:00 ~ 02:00)
-  return curMin >= sMin || curMin <= eMin;
+
+  var wkStart = String((cfg && cfg.payment_wknd_biz_start) || "12:00").trim();
+  var wkEnd = String((cfg && cfg.payment_wknd_biz_end) || "22:00").trim();
+  var brkStart = String(
+    cfg && cfg.payment_wknd_break_start !== undefined ? cfg.payment_wknd_break_start : "15:00"
+  ).trim();
+  var brkEnd = String(
+    cfg && cfg.payment_wknd_break_end !== undefined ? cfg.payment_wknd_break_end : "17:00"
+  ).trim();
+
+  var wsMin = parseHHMMToMinutes_(wkStart);
+  var weMin = parseHHMMToMinutes_(wkEnd);
+  if (wsMin >= 0 && weMin >= 0 && !isTimeInRange_(curMin, wsMin, weMin)) {
+    return {
+      allowed: false,
+      reason: "outside_business_hours",
+      schedule: "주말 " + wkStart + "~" + wkEnd,
+    };
+  }
+
+  var bsMin = parseHHMMToMinutes_(brkStart);
+  var beMin = parseHHMMToMinutes_(brkEnd);
+  if (bsMin >= 0 && beMin >= 0 && bsMin < beMin && curMin >= bsMin && curMin < beMin) {
+    return {
+      allowed: false,
+      reason: "break_time",
+      schedule: "주말 브레이크 " + brkStart + "~" + brkEnd,
+    };
+  }
+
+  return { allowed: true, reason: "", schedule: "주말 " + wkStart + "~" + wkEnd };
 }
 
 function isExcludedSender_(detail, safeText, excludedRaw) {

@@ -187,8 +187,12 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
         "payment_webhook_secret": "bdgrill-pay-0524",
         "show_payment_board": "TRUE",
         "payment_biz_hours_only": "TRUE",
-        "payment_biz_start": "11:00",
-        "payment_biz_end": "23:00",
+        "payment_biz_start": "16:00",
+        "payment_biz_end": "22:00",
+        "payment_wknd_biz_start": "12:00",
+        "payment_wknd_biz_end": "22:00",
+        "payment_wknd_break_start": "15:00",
+        "payment_wknd_break_end": "17:00",
         "payment_excluded_senders": "이용석",
     }
 
