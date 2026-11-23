@@ -49,6 +49,51 @@ def apply_clean_style():
             letter-spacing: normal !important;
             font-weight: 500 !important;
         }
+        /* 상단 퀵 팝업 버튼 상태별 강조 색상 */
+        .st-key-qbtn_pay_alert button {
+            background-color: #059669 !important;
+            color: #FFFFFF !important;
+            border: 2px solid #047857 !important;
+            box-shadow: 0 2px 10px rgba(5, 150, 105, 0.32) !important;
+        }
+        .st-key-qbtn_pay_alert button:hover {
+            background-color: #047857 !important;
+            color: #FFFFFF !important;
+        }
+        .st-key-qbtn_health_alert button {
+            background-color: #DC2626 !important;
+            color: #FFFFFF !important;
+            border: 2px solid #B91C1C !important;
+            box-shadow: 0 2px 10px rgba(220, 38, 38, 0.30) !important;
+        }
+        .st-key-qbtn_health_alert button:hover {
+            background-color: #B91C1C !important;
+            color: #FFFFFF !important;
+        }
+        .st-key-qbtn_mgr_alert button {
+            background-color: #D97706 !important;
+            color: #FFFFFF !important;
+            border: 2px solid #B45309 !important;
+            box-shadow: 0 2px 10px rgba(217, 119, 6, 0.30) !important;
+        }
+        .st-key-qbtn_mgr_alert button:hover {
+            background-color: #B45309 !important;
+            color: #FFFFFF !important;
+        }
+        .st-key-qbtn_pay_idle button,
+        .st-key-qbtn_health_idle button,
+        .st-key-qbtn_mgr_idle button {
+            background-color: #F8FAFC !important;
+            color: #475569 !important;
+            border: 1.5px solid #CBD5E1 !important;
+        }
+        .st-key-qbtn_pay_idle button:hover,
+        .st-key-qbtn_health_idle button:hover,
+        .st-key-qbtn_mgr_idle button:hover {
+            background-color: #F1F5F9 !important;
+            color: #0F172A !important;
+            border-color: #94A3B8 !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -316,105 +361,440 @@ for gubun_label, df_chk in [("파트타임", df_emp), ("정규직", df_reg)]:
 
 if health_alerts:
     auto_send_daily_health_telegram(selected_store, app_cfg, health_alerts)
-    with st.expander(f"🏥 [필독] 보건증 갱신/만료 대상 직원이 {len(health_alerts)}명 있습니다 (클릭하여 명단 확인)", expanded=True):
+
+# 실시간 계좌입금 · chak 결제 집계
+show_pay_board = app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE"
+today_prefix = today_dt.strftime("%Y-%m-%d")
+today_pay_df = pd.DataFrame()
+if show_pay_board and df_pay is not None and not df_pay.empty and "수신일시" in df_pay.columns:
+    today_pay_df = (
+        df_pay[df_pay["수신일시"].astype(str).str.startswith(today_prefix)]
+        .sort_values("수신일시", ascending=False)
+        .head(20)
+        .reset_index(drop=True)
+    )
+
+pending_pay_rows = []
+if not today_pay_df.empty and "확인여부" in today_pay_df.columns:
+    pending_pay_rows = today_pay_df[today_pay_df["확인여부"].astype(str).str.strip() != "확인완료"]["_sheet_row"].tolist()
+elif not today_pay_df.empty and "_sheet_row" in today_pay_df.columns:
+    pending_pay_rows = today_pay_df["_sheet_row"].tolist()
+pending_pay_cnt = len(pending_pay_rows)
+
+# 매니저 미승인 파트타임 근태 집계
+pending_att_df = (
+    df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"].copy()
+    if (df_att is not None and not df_att.empty and "매니저확인" in df_att.columns)
+    else pd.DataFrame()
+)
+pending_att_cnt = len(pending_att_df)
+
+
+# ==============================================================================
+# 팝업 다이얼로그 정의 (입금·chak / 보건증 / 매니저 전용)
+# ==============================================================================
+@st.dialog("💳 실시간 계좌입금 · chak 결제 확인", width="large")
+def open_payment_dialog():
+    biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
+    if biz_only:
+        if today_dt.weekday() >= 5:
+            wk_s = app_cfg.get("payment_wknd_biz_start", "12:00")
+            wk_e = app_cfg.get("payment_wknd_biz_end", "22:00")
+            brk_s = app_cfg.get("payment_wknd_break_start", "15:00").strip()
+            brk_e = app_cfg.get("payment_wknd_break_end", "17:00").strip()
+            brk_txt = f", 브레이크 {brk_s}~{brk_e} 제외" if (brk_s and brk_e) else ""
+            biz_info_txt = f"주말 영업시간({wk_s}~{wk_e}{brk_txt}) 내 "
+        else:
+            wd_s = app_cfg.get("payment_biz_start", "16:00")
+            wd_e = app_cfg.get("payment_biz_end", "22:00")
+            biz_info_txt = f"평일 영업시간({wd_s}~{wd_e}) 내 "
+    else:
+        biz_info_txt = ""
+
+    st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")
+    pb_c1, pb_c2 = st.columns(2)
+    with pb_c1:
+        if st.button("🔄 입금 새로고침", key=f"dlg_refresh_pay_{selected_store}", use_container_width=True):
+            load_db_sheets.clear(store_cfg["db_id"])
+            st.rerun()
+    with pb_c2:
+        if pending_pay_cnt > 0:
+            if st.button(f"✅ 미확인 {pending_pay_cnt}건 확인완료", key=f"dlg_confirm_pay_{selected_store}", type="primary", use_container_width=True):
+                with st.spinner("확인 처리 중..."):
+                    mark_payments_confirmed(store_cfg["db_id"], pending_pay_rows)
+                    load_db_sheets.clear(store_cfg["db_id"])
+                    st.session_state["edited_banner"] = f"✅ 계좌입금·chak 미확인 {pending_pay_cnt}건을 확인완료 처리했습니다."
+                    st.rerun()
+
+    if today_pay_df.empty:
+        st.info("오늘 수신된 계좌입금 또는 chak 결제 내역이 아직 없습니다.")
+    else:
+        def _fmt_pay_gubun(g):
+            gs = str(g).strip()
+            if "취소" in gs:
+                return f"⚠️ {gs}"
+            if "chak" in gs.lower() or "상품권" in gs:
+                return f"🎫 {gs}"
+            return f"💰 {gs or '계좌입금'}"
+
+        def _fmt_pay_amt(v):
+            digits = re.sub(r"[^\d-]", "", str(v))
+            try:
+                return f"{int(digits):,}원" if digits else str(v)
+            except ValueError:
+                return str(v)
+
+        pay_disp = pd.DataFrame({
+            "시각": today_pay_df["수신일시"].astype(str).str.slice(11, 19),
+            "구분": today_pay_df.get("구분", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_gubun),
+            "입금자 / 상세": today_pay_df.get("입금자_상세", pd.Series([""] * len(today_pay_df))),
+            "금액": today_pay_df.get("금액", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_amt),
+            "상태": today_pay_df.get("확인여부", pd.Series(["대기"] * len(today_pay_df))).apply(
+                lambda x: "✅ 확인완료" if str(x).strip() == "확인완료" else "🆕 미확인"
+            ),
+        })
+        st.dataframe(pay_disp, use_container_width=True, hide_index=True, row_height=30)
+
+
+@st.dialog("🏥 보건증 갱신 · 만료 알림", width="large")
+def open_health_dialog():
+    if health_alerts:
+        st.warning(f"보건증 갱신 또는 만료 확인이 필요한 재직 직원이 **{len(health_alerts)}명** 있습니다.")
         for ha in health_alerts:
             st.markdown(f"- {ha}")
-
-if app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE":
-    today_prefix = today_dt.strftime("%Y-%m-%d")
-    today_pay_df = pd.DataFrame()
-    if df_pay is not None and not df_pay.empty and "수신일시" in df_pay.columns:
-        today_pay_df = (
-            df_pay[df_pay["수신일시"].astype(str).str.startswith(today_prefix)]
-            .sort_values("수신일시", ascending=False)
-            .head(20)
-            .reset_index(drop=True)
-        )
-
-    pending_pay_rows = []
-    if not today_pay_df.empty and "확인여부" in today_pay_df.columns:
-        pending_pay_rows = today_pay_df[today_pay_df["확인여부"].astype(str).str.strip() != "확인완료"]["_sheet_row"].tolist()
-    elif not today_pay_df.empty and "_sheet_row" in today_pay_df.columns:
-        pending_pay_rows = today_pay_df["_sheet_row"].tolist()
-
-    pending_cnt = len(pending_pay_rows)
-    if pending_cnt > 0:
-        pay_exp_title = f"💳 실시간 계좌입금 · chak 결제 확인 — 🆕 미확인 {pending_cnt}건 (오늘 총 {len(today_pay_df)}건)"
-    elif not today_pay_df.empty:
-        pay_exp_title = f"💳 실시간 계좌입금 · chak 결제 확인 (오늘 {len(today_pay_df)}건 · 확인완료)"
+        st.caption("💡 직원이 새 보건증을 제출하면 '직원 관리' 메뉴에서 보건증 만료일을 갱신해 주세요.")
     else:
-        pay_exp_title = "💳 실시간 계좌입금 · chak 결제 확인 (오늘 수신 내역 없음)"
+        st.success("🎉 현재 재직 중인 모든 직원의 보건증이 유효합니다!")
 
-    render_section_banner(
-        "💳 실시간 계좌입금 · chak 결제 확인",
-        badge=(f"미확인 {pending_cnt}건" if pending_cnt > 0 else "카운터 확인"),
-        subtitle="우리은행 입금 · 지역상품권 결제 실시간 연동 (잔액·출금 미표시)",
-        accent="emerald",
-    )
-    with st.expander(pay_exp_title, expanded=(pending_cnt > 0)):
-        biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
-        if biz_only:
-            if today_dt.weekday() >= 5:
-                wk_s = app_cfg.get("payment_wknd_biz_start", "12:00")
-                wk_e = app_cfg.get("payment_wknd_biz_end", "22:00")
-                brk_s = app_cfg.get("payment_wknd_break_start", "15:00").strip()
-                brk_e = app_cfg.get("payment_wknd_break_end", "17:00").strip()
-                brk_txt = f", 브레이크 {brk_s}~{brk_e} 제외" if (brk_s and brk_e) else ""
-                biz_info_txt = f"주말 영업시간({wk_s}~{wk_e}{brk_txt}) 내 "
+
+@st.dialog("🔐 매니저 전용 확인", width="large")
+def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
+    mgr_unlock_key = f"att_mgr_dialog_unlocked_{selected_store}"
+    is_mgr_open = st.session_state.get("authenticated", False) or st.session_state.get(mgr_unlock_key, False)
+
+    if not is_mgr_open:
+        st.caption("파트타임 근태 일괄 승인·해제 및 정규직 특근/휴무 등록을 위해 매니저 PIN을 입력하세요.")
+        with st.form(key=f"dlg_mgr_pin_form_{selected_store}", border=False):
+            p_inp, p_btn = st.columns([2.1, 0.9], vertical_alignment="center")
+            with p_inp:
+                pin_input = st.text_input(
+                    "매니저확인 비밀번호",
+                    type="password",
+                    placeholder="매니저 PIN 입력",
+                    key=f"dlg_mgr_pin_inp_{selected_store}",
+                    label_visibility="collapsed",
+                )
+            with p_btn:
+                submitted_pin = st.form_submit_button("확인", type="primary", use_container_width=True)
+
+        if submitted_pin:
+            if pin_input == active_mgr_pin:
+                st.session_state[mgr_unlock_key] = True
+                is_mgr_open = True
             else:
-                wd_s = app_cfg.get("payment_biz_start", "16:00")
-                wd_e = app_cfg.get("payment_biz_end", "22:00")
-                biz_info_txt = f"평일 영업시간({wd_s}~{wd_e}) 내 "
+                st.error("비밀번호가 일치하지 않습니다.")
+
+    if not is_mgr_open:
+        return
+
+    top_m1, top_m2 = st.columns([3.0, 1.0], vertical_alignment="center")
+    with top_m1:
+        st.caption(f"🔓 [{selected_store}] 매니저 인증됨 · 기준 날짜: {cur_date_str}")
+    with top_m2:
+        if st.button("🔒 잠금", key=f"dlg_mgr_lock_{selected_store}", use_container_width=True):
+            st.session_state[mgr_unlock_key] = False
+            st.rerun()
+
+    t_app, t_unapp, t_reg = st.tabs([
+        f"⏳ 미확인 승인 ({pending_att_cnt})",
+        "🔓 승인 해제",
+        "📝 정규직 특근/휴무",
+    ])
+
+    with t_app:
+        if pending_att_df.empty:
+            st.success("🎉 모든 근태 기록이 확인 완료되었습니다.")
         else:
-            biz_info_txt = ""
-        pb_c1, pb_c2, pb_c3 = st.columns([2.6, 0.9, 1.0], vertical_alignment="center")
-        with pb_c1:
-            st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")
-        with pb_c2:
-            if st.button("🔄 입금 새로고침", key=f"btn_refresh_pay_{selected_store}", use_container_width=True):
-                load_db_sheets.clear(store_cfg["db_id"])
-                st.rerun()
-        with pb_c3:
-            if pending_cnt > 0:
-                if st.button(f"✅ 미확인 {pending_cnt}건 확인완료", key=f"btn_confirm_pay_{selected_store}", type="primary", use_container_width=True):
-                    with st.spinner("확인 처리 중..."):
-                        mark_payments_confirmed(store_cfg["db_id"], pending_pay_rows)
+            with st.form(key=f"dlg_mgr_approve_form_{selected_store}", border=False):
+                select_all = st.checkbox(
+                    f"전체 선택 (총 {len(pending_att_df)}건)",
+                    value=True,
+                    key=f"dlg_chk_all_{selected_store}",
+                )
+                st.divider()
+                row_checks = []
+                for _, r in pending_att_df.iterrows():
+                    chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
+                    checked = st.checkbox(
+                        chk_label,
+                        value=True,
+                        key=f"dlg_chk_app_{selected_store}_{r['_sheet_row']}",
+                    )
+                    row_checks.append((checked, int(r["_sheet_row"]), str(r.get("비고", ""))))
+
+                submitted_approve = st.form_submit_button(
+                    "✅ 선택한 내역 일괄 확인 완료",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted_approve:
+                approve_targets = [
+                    (r_num, old_n)
+                    for checked, r_num, old_n in row_checks
+                    if (select_all or checked)
+                ]
+                if not approve_targets:
+                    st.warning("승인할 항목을 1개 이상 선택해 주세요.")
+                else:
+                    with st.spinner("일괄 승인 처리 중..."):
+                        gc = get_gspread_client()
+                        ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                        now_s = kst_now().strftime("%m/%d %H:%M:%S")
+                        now_f = kst_now().strftime("%Y-%m-%d %H:%M:%S")
+                        batch_payload = [
+                            {
+                                "range": f"H{r_num}:J{r_num}",
+                                "values": [["TRUE", f"{old_n}\n[{now_s}] 매니저 확인 완료".strip(), now_f]],
+                            }
+                            for r_num, old_n in approve_targets
+                        ]
+                        ws.batch_update(batch_payload, value_input_option="RAW")
+                        st.session_state["edited_banner"] = f"✅ 파트타임 근태 {len(approve_targets)}건이 일괄 확인 완료되었습니다."
                         load_db_sheets.clear(store_cfg["db_id"])
                         st.rerun()
 
-        if today_pay_df.empty:
-            st.info("오늘 수신된 계좌입금 또는 chak 결제 내역이 아직 없습니다. 방금 입금된 경우 우측 [🔄 입금 새로고침]을 눌러주세요.")
+    with t_unapp:
+        if not df_att.empty:
+            approved_day = df_att[
+                (df_att["날짜"] == cur_date_str)
+                & (df_att["매니저확인"].astype(str).str.upper() == "TRUE")
+            ]
+            if approved_day.empty:
+                st.caption(f"{cur_date_str}에 승인 완료된 기록이 없습니다.")
+            else:
+                with st.form(key=f"dlg_mgr_unapprove_form_{selected_store}", border=False):
+                    unapp_checks = []
+                    for _, r in approved_day.iterrows():
+                        lbl = f"**{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}`"
+                        chk = st.checkbox(
+                            lbl,
+                            value=False,
+                            key=f"dlg_chk_unapp_{selected_store}_{r['_sheet_row']}",
+                        )
+                        unapp_checks.append((chk, int(r["_sheet_row"]), str(r.get("비고", ""))))
+
+                    submitted_unapp = st.form_submit_button(
+                        "🔓 선택한 내역 승인 해제",
+                        use_container_width=True,
+                    )
+
+                if submitted_unapp:
+                    unapp_targets = [(r_num, old_n) for chk, r_num, old_n in unapp_checks if chk]
+                    if not unapp_targets:
+                        st.warning("승인 해제할 항목을 선택해 주세요.")
+                    else:
+                        with st.spinner("승인 해제 처리 중..."):
+                            gc = get_gspread_client()
+                            ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
+                            now_s = kst_now().strftime("%m/%d %H:%M:%S")
+                            now_f = kst_now().strftime("%Y-%m-%d %H:%M:%S")
+                            batch_payload = [
+                                {
+                                    "range": f"H{r_num}:J{r_num}",
+                                    "values": [["FALSE", f"{old_n}\n[{now_s}] 매니저 확인 해제".strip(), now_f]],
+                                }
+                                for r_num, old_n in unapp_targets
+                            ]
+                            ws.batch_update(batch_payload, value_input_option="RAW")
+                            st.session_state["edited_banner"] = f"🔓 {len(unapp_targets)}건 승인이 해제되었습니다."
+                            load_db_sheets.clear(store_cfg["db_id"])
+                            st.rerun()
+
+    with t_reg:
+        reg_names = []
+        if df_reg is not None and not df_reg.empty and "이름" in df_reg.columns:
+            active_reg = df_reg[df_reg["상태"] != "퇴사"] if "상태" in df_reg.columns else df_reg
+            reg_names = [str(n).strip() for n in active_reg["이름"].tolist() if str(n).strip()]
+
+        if not reg_names:
+            st.warning("'정규직' 시트에 등록된 재직 직원이 없습니다.")
         else:
-            def _fmt_pay_gubun(g):
-                gs = str(g).strip()
-                if "취소" in gs:
-                    return f"⚠️ {gs}"
-                if "chak" in gs.lower() or "상품권" in gs:
-                    return f"🎫 {gs}"
-                return f"💰 {gs or '계좌입금'}"
+            with st.form(key=f"dlg_reg_change_form_{selected_store}", border=False, clear_on_submit=True):
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    reg_date = st.date_input("발생 날짜", value=cur_sel_date)
+                with rc2:
+                    reg_emp = st.selectbox("정규직 선택", options=reg_names)
 
-            def _fmt_pay_amt(v):
-                digits = re.sub(r"[^\d-]", "", str(v))
-                try:
-                    return f"{int(digits):,}원" if digits else str(v)
-                except ValueError:
-                    return str(v)
+                rc3, rc4 = st.columns(2)
+                with rc3:
+                    reg_type = st.selectbox("변동 구분", options=REG_CHANGE_TYPES)
+                with rc4:
+                    reg_unit = st.selectbox("단위", options=REG_CHANGE_UNITS)
 
-            pay_disp = pd.DataFrame({
-                "시각": today_pay_df["수신일시"].astype(str).str.slice(11, 19),
-                "구분": today_pay_df.get("구분", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_gubun),
-                "입금자 / 상세": today_pay_df.get("입금자_상세", pd.Series([""] * len(today_pay_df))),
-                "금액": today_pay_df.get("금액", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_amt),
-                "상태": today_pay_df.get("확인여부", pd.Series(["대기"] * len(today_pay_df))).apply(
-                    lambda x: "✅ 확인완료" if str(x).strip() == "확인완료" else "🆕 미확인"
-                ),
-            })
-            st.dataframe(
-                pay_disp,
-                use_container_width=True,
-                hide_index=True,
-                row_height=28,
-            )
+                reg_memo = st.text_input(
+                    "사유 및 정산 메모",
+                    placeholder="예: 추가출근:사유 / 개인사정결근:사유 / OO시간추가근무:사유",
+                )
+                submitted_reg = st.form_submit_button(
+                    "📌 정규직 특근/휴무 기록 저장",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted_reg:
+                with st.spinner("기록 저장 및 알림 발송 중..."):
+                    now_f = kst_now().strftime("%Y-%m-%d %H:%M:%S")
+                    row_vals = [
+                        reg_date.strftime("%Y-%m-%d"),
+                        reg_emp,
+                        reg_type,
+                        reg_unit,
+                        reg_memo.strip(),
+                        "대기",
+                        now_f,
+                    ]
+                    append_regular_change(store_cfg["db_id"], app_cfg, selected_store, row_vals)
+                    load_regular_changes.clear(store_cfg["db_id"])
+                    st.session_state["edited_banner"] = f"✅ [{reg_emp}] {reg_date.strftime('%m/%d')} {reg_type} 기록 완료!"
+                    st.rerun()
+
+            df_rc = load_regular_changes(store_cfg["db_id"])
+            if not df_rc.empty and "발생일" in df_rc.columns:
+                cur_s, cur_e = get_payroll_period(kst_today(), start_day=payroll_start_day)
+                df_rc["발생일_dt"] = pd.to_datetime(df_rc["발생일"], errors="coerce").dt.date
+                cur_rc = df_rc[(df_rc["발생일_dt"] >= cur_s) & (df_rc["발생일_dt"] <= cur_e)].sort_values(
+                    "발생일", ascending=False
+                )
+                st.caption(f"📋 이번 정산월({cur_s.strftime('%m/%d')}~{cur_e.strftime('%m/%d')}) 등록 내역: {len(cur_rc)}건")
+                if not cur_rc.empty:
+                    disp_rc = cur_rc[["발생일", "이름", "구분", "일수_시간", "상세메모"]].copy()
+                    disp_rc["발생일"] = disp_rc["발생일"].str[5:]
+                    st.dataframe(disp_rc, use_container_width=True, hide_index=True, row_height=26)
+
+                    with st.expander("✏️ 등록 내역 수정 / 삭제", expanded=False):
+                        rc_records = cur_rc.to_dict("records")
+                        rc_labels = [
+                            f"[{r['발생일'][5:]}] {r['이름']} | {r['구분']} ({r['일수_시간']}) - {r.get('상세메모', '')}"
+                            for r in rc_records
+                        ]
+                        sel_rc_idx = st.selectbox(
+                            "수정 또는 삭제할 내역 선택",
+                            options=range(len(rc_labels)),
+                            format_func=lambda i: rc_labels[i],
+                            key=f"dlg_sel_edit_rc_{selected_store}",
+                        )
+                        target_rc = rc_records[sel_rc_idx]
+                        target_rc_row = int(target_rc["_sheet_row"])
+
+                        try:
+                            def_rc_dt = datetime.date.fromisoformat(str(target_rc["발생일"])[:10])
+                        except Exception:
+                            def_rc_dt = cur_sel_date
+
+                        def_emp_idx = reg_names.index(target_rc["이름"]) if target_rc["이름"] in reg_names else 0
+                        def_type_idx = REG_CHANGE_TYPES.index(target_rc["구분"]) if target_rc["구분"] in REG_CHANGE_TYPES else 0
+                        def_unit_idx = REG_CHANGE_UNITS.index(target_rc["일수_시간"]) if target_rc["일수_시간"] in REG_CHANGE_UNITS else 0
+
+                        ec1, ec2 = st.columns(2)
+                        with ec1:
+                            edit_rc_date = st.date_input("발생 날짜 수정", value=def_rc_dt, key=f"dlg_ed_rc_dt_{selected_store}_{target_rc_row}")
+                        with ec2:
+                            edit_rc_emp = st.selectbox("정규직 수정", options=reg_names, index=def_emp_idx, key=f"dlg_ed_rc_emp_{selected_store}_{target_rc_row}")
+
+                        ec3, ec4 = st.columns(2)
+                        with ec3:
+                            edit_rc_type = st.selectbox("변동 구분 수정", options=REG_CHANGE_TYPES, index=def_type_idx, key=f"dlg_ed_rc_tp_{selected_store}_{target_rc_row}")
+                        with ec4:
+                            edit_rc_unit = st.selectbox("단위 수정", options=REG_CHANGE_UNITS, index=def_unit_idx, key=f"dlg_ed_rc_un_{selected_store}_{target_rc_row}")
+
+                        edit_rc_memo = st.text_input(
+                            "사유 및 정산 메모 수정",
+                            value=str(target_rc.get("상세메모", "")),
+                            key=f"dlg_ed_rc_mm_{selected_store}_{target_rc_row}",
+                        )
+
+                        b_save_rc, b_del_rc = st.columns(2)
+                        with b_save_rc:
+                            if st.button("💾 수정 반영", type="primary", use_container_width=True, key=f"dlg_btn_save_rc_{selected_store}_{target_rc_row}"):
+                                with st.spinner("수정 내용 반영 중..."):
+                                    now_f = kst_now().strftime("%Y-%m-%d %H:%M:%S")
+                                    upd_vals = [
+                                        edit_rc_date.strftime("%Y-%m-%d"),
+                                        edit_rc_emp,
+                                        edit_rc_type,
+                                        edit_rc_unit,
+                                        edit_rc_memo.strip(),
+                                        str(target_rc.get("정산반영여부", "대기")),
+                                        now_f,
+                                    ]
+                                    update_regular_change(store_cfg["db_id"], app_cfg, selected_store, target_rc_row, upd_vals)
+                                    load_regular_changes.clear(store_cfg["db_id"])
+                                    st.session_state["edited_banner"] = "✅ 정규직 근태변동 수정 내용이 반영되었습니다."
+                                    st.rerun()
+                        with b_del_rc:
+                            if st.button("🗑️ 내역 삭제", use_container_width=True, key=f"dlg_btn_del_rc_{selected_store}_{target_rc_row}"):
+                                with st.spinner("내역 삭제 중..."):
+                                    delete_regular_change(
+                                        store_cfg["db_id"],
+                                        app_cfg,
+                                        selected_store,
+                                        target_rc_row,
+                                        rc_labels[sel_rc_idx],
+                                    )
+                                    load_regular_changes.clear(store_cfg["db_id"])
+                                    st.session_state["edited_banner"] = "🗑️ 선택한 정규직 근태변동 내역이 삭제되었습니다."
+                                    st.rerun()
+
+
+# ==============================================================================
+# 상단 상태 반응형 퀵 팝업 버튼 바 (데이터가 생기면 색상·문구 자동 강조)
+# ==============================================================================
+date_widget_key = f"att_sel_date_{selected_store}"
+cur_sel_date_for_dlg = st.session_state.get(date_widget_key, kst_today())
+cur_date_str_for_dlg = cur_sel_date_for_dlg.strftime("%Y-%m-%d")
+
+if show_pay_board:
+    qb1, qb2, qb3 = st.columns(3)
+    with qb1:
+        if pending_pay_cnt > 0:
+            if st.button(f"🔔 입금·chak 미확인 {pending_pay_cnt}건!", key="qbtn_pay_alert", use_container_width=True):
+                open_payment_dialog()
+        else:
+            pay_lbl = f"💳 입금·chak 확인 (오늘 {len(today_pay_df)}건)" if not today_pay_df.empty else "💳 입금·chak 확인 (0건)"
+            if st.button(pay_lbl, key="qbtn_pay_idle", use_container_width=True):
+                open_payment_dialog()
+    with qb2:
+        if health_alerts:
+            if st.button(f"🚨 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
+                open_health_dialog()
+        else:
+            if st.button("🏥 보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
+                open_health_dialog()
+    with qb3:
+        if pending_att_cnt > 0:
+            if st.button(f"🟠 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
+                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+        else:
+            if st.button("🔐 매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
+                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+else:
+    qb2, qb3 = st.columns(2)
+    with qb2:
+        if health_alerts:
+            if st.button(f"🚨 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
+                open_health_dialog()
+        else:
+            if st.button("🏥 보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
+                open_health_dialog()
+    with qb3:
+        if pending_att_cnt > 0:
+            if st.button(f"🟠 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
+                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+        else:
+            if st.button("🔐 매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
+                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
 
 active_emp_names = []
 if not df_emp.empty:
@@ -438,7 +818,7 @@ if not df_att.empty:
 with st.container(border=True):
     d_c1, d_c2, d_c3 = st.columns([1.15, 0.65, 2.4], vertical_alignment="center")
     with d_c1:
-        sel_date = st.date_input("📅 조회 및 입력 날짜", value=kst_today(), label_visibility="collapsed")
+        sel_date = st.date_input("📅 조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
         date_str = sel_date.strftime("%Y-%m-%d")
     with d_c2:
         weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
@@ -489,323 +869,57 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
     st.session_state["edited_banner"] = ""
 
-top_left, top_right = st.columns([1.55, 1.15])
-
+# ==============================================================================
+# [메인 1] 일 근무현황 (화면 전체 폭)
+# ==============================================================================
 selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
 
-with top_left:
-    render_section_banner("📋 1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄을 체크하세요", accent="blue")
-    if not df_att.empty and "날짜" in df_att.columns:
-        day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
-        if not day_df.empty:
-            day_df["확인상태"] = day_df["매니저확인"].apply(
-                lambda x: "✅ 확인완료" if str(x).strip().upper() == "TRUE" else "⏳ 대기중"
-            )
-            show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
-            valid_cols = [c for c in show_cols if c in day_df.columns]
+render_section_banner("📋 1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄 왼쪽 체크박스를 누르면 아래에서 수정할 수 있습니다", accent="blue")
+if not df_att.empty and "날짜" in df_att.columns:
+    day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
+    if not day_df.empty:
+        day_df["확인상태"] = day_df["매니저확인"].apply(
+            lambda x: "✅ 확인완료" if str(x).strip().upper() == "TRUE" else "⏳ 대기중"
+        )
+        show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
+        valid_cols = [c for c in show_cols if c in day_df.columns]
 
-            prev_sel_rows = []
-            grid_state_key = f"att_grid_{selected_store}_{date_str}"
-            if grid_state_key in st.session_state:
-                prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
+        prev_sel_rows = []
+        grid_state_key = f"att_grid_{selected_store}_{date_str}"
+        if grid_state_key in st.session_state:
+            prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
 
-            def highlight_row(row):
-                idx = row.name
-                sheet_r = day_df.loc[idx, "_sheet_row"]
-                if idx in prev_sel_rows:
-                    return ["background-color: #DBEAFE; color: #1E3A8A; font-weight: 600;"] * len(row)
-                if last_edited_row is not None and sheet_r == last_edited_row:
-                    return ["background-color: #DCFCE7; color: #14532D; font-weight: 600;"] * len(row)
-                return [""] * len(row)
+        def highlight_row(row):
+            idx = row.name
+            sheet_r = day_df.loc[idx, "_sheet_row"]
+            if idx in prev_sel_rows:
+                return ["background-color: #DBEAFE; color: #1E3A8A; font-weight: 600;"] * len(row)
+            if last_edited_row is not None and sheet_r == last_edited_row:
+                return ["background-color: #DCFCE7; color: #14532D; font-weight: 600;"] * len(row)
+            return [""] * len(row)
 
-            styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
+        styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
 
-            grid_height = max(212, min(len(day_df) * 29 + 38, 340))
-            event = st.dataframe(
-                styled_df,
-                use_container_width=True,
-                hide_index=True,
-                row_height=28,
-                height=grid_height,
-                on_select="rerun",
-                selection_mode="single-row",
-                key=grid_state_key,
-            )
+        grid_height = max(210, min(len(day_df) * 30 + 40, 360))
+        event = st.dataframe(
+            styled_df,
+            use_container_width=True,
+            hide_index=True,
+            row_height=29,
+            height=grid_height,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=grid_state_key,
+        )
 
-            sel_rows = event.selection.rows if event and event.selection else []
-            if sel_rows:
-                selected_grid_record = day_df.iloc[sel_rows[0]].to_dict()
-        else:
-            st.info("해당 날짜에 등록된 근무 기록이 없습니다.")
+        sel_rows = event.selection.rows if event and event.selection else []
+        if sel_rows:
+            selected_grid_record = day_df.iloc[sel_rows[0]].to_dict()
     else:
-        st.info("등록된 근무 기록이 없습니다.")
-
-with top_right:
-    render_section_banner("🔐 매니저 전용 확인", badge="매니저 PIN", subtitle="일괄 승인 · 해제 · 특근/휴무", accent="amber")
-    with st.container(border=True):
-        st.markdown('<div class="mgr-box-marker" style="display:none;"></div>', unsafe_allow_html=True)
-        with st.form(key=f"mgr_pin_form_{selected_store}", border=False):
-            p_inp, p_btn = st.columns([2.0, 0.9], vertical_alignment="center")
-            with p_inp:
-                pin_input = st.text_input(
-                    "매니저확인 비밀번호",
-                    type="password",
-                    placeholder="매니저 PIN 입력",
-                    key=f"mgr_pin_top_{selected_store}",
-                    label_visibility="collapsed",
-                )
-            with p_btn:
-                st.form_submit_button("확인", use_container_width=True)
-
-        if pin_input == active_mgr_pin:
-            t_app, t_unapp, t_reg = st.tabs(["⏳ 미확인 승인", "🔓 승인 해제", "📝 정규직 특근/휴무"])
-
-            with t_app:
-                pending_df = (
-                    df_att[df_att["매니저확인"].astype(str).str.upper() != "TRUE"].copy()
-                    if not df_att.empty
-                    else pd.DataFrame()
-                )
-                if pending_df.empty:
-                    st.success("🎉 모든 근태 기록이 확인 완료되었습니다.")
-                else:
-                    with st.form(key=f"mgr_approve_form_{selected_store}", border=False):
-                        select_all = st.checkbox(
-                            f"전체 선택 (총 {len(pending_df)}건)",
-                            value=True,
-                            key=f"chk_all_{selected_store}",
-                        )
-                        st.divider()
-                        row_checks = []
-                        for _, r in pending_df.iterrows():
-                            chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
-                            checked = st.checkbox(
-                                chk_label,
-                                value=True,
-                                key=f"chk_app_{selected_store}_{r['_sheet_row']}",
-                            )
-                            row_checks.append((checked, int(r["_sheet_row"]), str(r.get("비고", ""))))
-
-                        submitted_approve = st.form_submit_button(
-                            "✅ 선택한 내역 일괄 확인 완료",
-                            type="primary",
-                            use_container_width=True,
-                        )
-
-                    if submitted_approve:
-                        approve_targets = [
-                            (r_num, old_n)
-                            for checked, r_num, old_n in row_checks
-                            if (select_all or checked)
-                        ]
-                        if not approve_targets:
-                            st.warning("승인할 항목을 1개 이상 선택해 주세요.")
-                        else:
-                            with st.spinner("일괄 승인 처리 중..."):
-                                gc = get_gspread_client()
-                                ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                                now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                                now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                batch_payload = [
-                                    {
-                                        "range": f"H{r_num}:J{r_num}",
-                                        "values": [["TRUE", f"{old_n}\n[{now_s}] 매니저 확인 완료".strip(), now_f]],
-                                    }
-                                    for r_num, old_n in approve_targets
-                                ]
-                                ws.batch_update(batch_payload, value_input_option="RAW")
-                                st.success(f"✅ {len(approve_targets)}건 확인 완료!")
-                                load_db_sheets.clear(store_cfg["db_id"])
-                                st.rerun()
-
-            with t_unapp:
-                if not df_att.empty:
-                    approved_day = df_att[
-                        (df_att["날짜"] == date_str)
-                        & (df_att["매니저확인"].astype(str).str.upper() == "TRUE")
-                    ]
-                    if approved_day.empty:
-                        st.caption(f"{date_str}에 승인 완료된 기록이 없습니다.")
-                    else:
-                        with st.form(key=f"mgr_unapprove_form_{selected_store}", border=False):
-                            unapp_checks = []
-                            for _, r in approved_day.iterrows():
-                                lbl = f"**{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}`"
-                                chk = st.checkbox(
-                                    lbl,
-                                    value=False,
-                                    key=f"chk_unapp_{selected_store}_{r['_sheet_row']}",
-                                )
-                                unapp_checks.append((chk, int(r["_sheet_row"]), str(r.get("비고", ""))))
-
-                            submitted_unapp = st.form_submit_button(
-                                "🔓 선택한 내역 승인 해제",
-                                use_container_width=True,
-                            )
-
-                        if submitted_unapp:
-                            unapp_targets = [(r_num, old_n) for chk, r_num, old_n in unapp_checks if chk]
-                            if not unapp_targets:
-                                st.warning("승인 해제할 항목을 선택해 주세요.")
-                            else:
-                                with st.spinner("승인 해제 처리 중..."):
-                                    gc = get_gspread_client()
-                                    ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
-                                    now_s = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
-                                    now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    batch_payload = [
-                                        {
-                                            "range": f"H{r_num}:J{r_num}",
-                                            "values": [["FALSE", f"{old_n}\n[{now_s}] 매니저 확인 해제".strip(), now_f]],
-                                        }
-                                        for r_num, old_n in unapp_targets
-                                    ]
-                                    ws.batch_update(batch_payload, value_input_option="RAW")
-                                    st.warning(f"🔓 {len(unapp_targets)}건 승인이 해제되었습니다.")
-                                    load_db_sheets.clear(store_cfg["db_id"])
-                                    st.rerun()
-
-            with t_reg:
-                reg_names = []
-                if df_reg is not None and not df_reg.empty and "이름" in df_reg.columns:
-                    active_reg = df_reg[df_reg["상태"] != "퇴사"] if "상태" in df_reg.columns else df_reg
-                    reg_names = [str(n).strip() for n in active_reg["이름"].tolist() if str(n).strip()]
-
-                if not reg_names:
-                    st.warning("'정규직' 시트에 등록된 재직 직원이 없습니다.")
-                else:
-                    with st.form(key=f"reg_change_form_{selected_store}", border=False, clear_on_submit=True):
-                        rc1, rc2 = st.columns(2)
-                        with rc1:
-                            reg_date = st.date_input("발생 날짜", value=sel_date)
-                        with rc2:
-                            reg_emp = st.selectbox("정규직 선택", options=reg_names)
-
-                        rc3, rc4 = st.columns(2)
-                        with rc3:
-                            reg_type = st.selectbox("변동 구분", options=REG_CHANGE_TYPES)
-                        with rc4:
-                            reg_unit = st.selectbox("단위", options=REG_CHANGE_UNITS)
-
-                        reg_memo = st.text_input(
-                            "사유 및 정산 메모",
-                            placeholder="예: 추가출근:사유 / 개인사정결근:사유 / OO시간추가근무:사유",
-                        )
-                        submitted_reg = st.form_submit_button(
-                            "📌 정규직 특근/휴무 기록 저장",
-                            type="primary",
-                            use_container_width=True,
-                        )
-
-                    if submitted_reg:
-                        with st.spinner("기록 저장 및 알림 발송 중..."):
-                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            row_vals = [
-                                reg_date.strftime("%Y-%m-%d"),
-                                reg_emp,
-                                reg_type,
-                                reg_unit,
-                                reg_memo.strip(),
-                                "대기",
-                                now_f,
-                            ]
-                            append_regular_change(store_cfg["db_id"], app_cfg, selected_store, row_vals)
-                            load_regular_changes.clear(store_cfg["db_id"])
-                            st.success(f"✅ [{reg_emp}] {reg_date.strftime('%m/%d')} {reg_type} 기록 완료!")
-                            st.rerun()
-
-                    df_rc = load_regular_changes(store_cfg["db_id"])
-                    if not df_rc.empty and "발생일" in df_rc.columns:
-                        cur_s, cur_e = get_payroll_period(kst_today(), start_day=payroll_start_day)
-                        df_rc["발생일_dt"] = pd.to_datetime(df_rc["발생일"], errors="coerce").dt.date
-                        cur_rc = df_rc[(df_rc["발생일_dt"] >= cur_s) & (df_rc["발생일_dt"] <= cur_e)].sort_values(
-                            "발생일", ascending=False
-                        )
-                        st.caption(f"📋 이번 정산월({cur_s.strftime('%m/%d')}~{cur_e.strftime('%m/%d')}) 등록 내역: {len(cur_rc)}건")
-                        if not cur_rc.empty:
-                            disp_rc = cur_rc[["발생일", "이름", "구분", "일수_시간", "상세메모"]].copy()
-                            disp_rc["발생일"] = disp_rc["발생일"].str[5:]
-                            st.dataframe(disp_rc, use_container_width=True, hide_index=True, row_height=26)
-
-                            with st.expander("✏️ 등록 내역 수정 / 삭제", expanded=False):
-                                rc_records = cur_rc.to_dict("records")
-                                rc_labels = [
-                                    f"[{r['발생일'][5:]}] {r['이름']} | {r['구분']} ({r['일수_시간']}) - {r.get('상세메모', '')}"
-                                    for r in rc_records
-                                ]
-                                sel_rc_idx = st.selectbox(
-                                    "수정 또는 삭제할 내역 선택",
-                                    options=range(len(rc_labels)),
-                                    format_func=lambda i: rc_labels[i],
-                                    key=f"sel_edit_rc_{selected_store}",
-                                )
-                                target_rc = rc_records[sel_rc_idx]
-                                target_rc_row = int(target_rc["_sheet_row"])
-
-                                try:
-                                    def_rc_dt = datetime.date.fromisoformat(str(target_rc["발생일"])[:10])
-                                except Exception:
-                                    def_rc_dt = sel_date
-
-                                def_emp_idx = reg_names.index(target_rc["이름"]) if target_rc["이름"] in reg_names else 0
-                                def_type_idx = REG_CHANGE_TYPES.index(target_rc["구분"]) if target_rc["구분"] in REG_CHANGE_TYPES else 0
-                                def_unit_idx = REG_CHANGE_UNITS.index(target_rc["일수_시간"]) if target_rc["일수_시간"] in REG_CHANGE_UNITS else 0
-
-                                ec1, ec2 = st.columns(2)
-                                with ec1:
-                                    edit_rc_date = st.date_input("발생 날짜 수정", value=def_rc_dt, key=f"ed_rc_dt_{selected_store}_{target_rc_row}")
-                                with ec2:
-                                    edit_rc_emp = st.selectbox("정규직 수정", options=reg_names, index=def_emp_idx, key=f"ed_rc_emp_{selected_store}_{target_rc_row}")
-
-                                ec3, ec4 = st.columns(2)
-                                with ec3:
-                                    edit_rc_type = st.selectbox("변동 구분 수정", options=REG_CHANGE_TYPES, index=def_type_idx, key=f"ed_rc_tp_{selected_store}_{target_rc_row}")
-                                with ec4:
-                                    edit_rc_unit = st.selectbox("단위 수정", options=REG_CHANGE_UNITS, index=def_unit_idx, key=f"ed_rc_un_{selected_store}_{target_rc_row}")
-
-                                edit_rc_memo = st.text_input(
-                                    "사유 및 정산 메모 수정",
-                                    value=str(target_rc.get("상세메모", "")),
-                                    key=f"ed_rc_mm_{selected_store}_{target_rc_row}",
-                                )
-
-                                b_save_rc, b_del_rc = st.columns(2)
-                                with b_save_rc:
-                                    if st.button("💾 수정 반영", type="primary", use_container_width=True, key=f"btn_save_rc_{selected_store}_{target_rc_row}"):
-                                        with st.spinner("수정 내용 반영 중..."):
-                                            now_f = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                            upd_vals = [
-                                                edit_rc_date.strftime("%Y-%m-%d"),
-                                                edit_rc_emp,
-                                                edit_rc_type,
-                                                edit_rc_unit,
-                                                edit_rc_memo.strip(),
-                                                str(target_rc.get("정산반영여부", "대기")),
-                                                now_f,
-                                            ]
-                                            update_regular_change(store_cfg["db_id"], app_cfg, selected_store, target_rc_row, upd_vals)
-                                            load_regular_changes.clear(store_cfg["db_id"])
-                                            st.success("수정 내용이 반영되었습니다.")
-                                            st.rerun()
-                                with b_del_rc:
-                                    if st.button("🗑️ 내역 삭제", use_container_width=True, key=f"btn_del_rc_{selected_store}_{target_rc_row}"):
-                                        with st.spinner("내역 삭제 중..."):
-                                            delete_regular_change(
-                                                store_cfg["db_id"],
-                                                app_cfg,
-                                                selected_store,
-                                                target_rc_row,
-                                                rc_labels[sel_rc_idx],
-                                            )
-                                            load_regular_changes.clear(store_cfg["db_id"])
-                                            st.warning("선택한 내역이 삭제되었습니다.")
-                                            st.rerun()
-
-        elif pin_input:
-            st.error("비밀번호가 일치하지 않습니다.")
-        else:
-            st.caption("매니저 확인 전까지는 위의 표에서 행을 체크해 수정할 수 있습니다.")
+        st.info("해당 날짜에 등록된 근무 기록이 없습니다.")
+else:
+    st.info("등록된 근무 기록이 없습니다.")
 
 if "form_reset_ver" not in st.session_state:
     st.session_state["form_reset_ver"] = 0
