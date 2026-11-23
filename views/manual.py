@@ -136,7 +136,7 @@ def show_guide_image(file_candidates: list, caption: str):
 # ==============================================================================
 h_left, h_right = st.columns([2.6, 1.1], vertical_alignment="center")
 with h_left:
-    st.markdown('<div class="app-title">📖 매니저 업무 매뉴얼</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪ 매니저매뉴얼</div>', unsafe_allow_html=True)
 with h_right:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed", key="manual_store_sel")
 
@@ -187,7 +187,7 @@ if not is_unlocked:
 # ------------------------------------------------------------------------------
 _, top_c2 = st.columns([4.2, 1.0], vertical_alignment="center")
 with top_c2:
-    if st.button("🔒 매뉴얼 잠금", use_container_width=True):
+    if st.button("매뉴얼 잠금", use_container_width=True):
         unlocked_stores.clear()
         st.session_state["staff_mgr_unlocked"] = False
         st.session_state["authenticated"] = False
@@ -196,7 +196,7 @@ with top_c2:
 st.markdown(
     f"""
     <div class="manual-header">
-        <h2>📖 [{store_title}] 매니저 업무 매뉴얼</h2>
+        <h2>[{store_title}] 매니저 업무 매뉴얼</h2>
         <p>아이폰·태블릿·PC 어디서든 아래 탭을 눌러 업무 순서를 확인하세요.<br>
 - <b>현재 지점 매니저 전용 비밀번호(PIN):</b> <code>{active_mgr_pin}</code></p>
     </div>
@@ -223,10 +223,10 @@ st.markdown(
 # 모바일 터치 친화형 4개 업무 탭 구성
 # ------------------------------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
-    "⏱️ 1. 일일 출퇴근·승인",
-    "📝 2. 신규채용·계약서",
-    "🏥 3. 퇴사·보건증 관리",
-    "💰 4. 월말 급여정산",
+    "1. 일일 출퇴근·승인",
+    "2. 신규채용·계약서",
+    "3. 퇴사·보건증 관리",
+    "4. 월말 급여정산",
 ])
 
 # ==============================================================================

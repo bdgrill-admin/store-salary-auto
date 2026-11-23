@@ -913,7 +913,7 @@ with head_c1:
     st.markdown(
         """
         <div class="app-header">
-            <div class="app-title">🥩 매장 통합 급여 정산 & 경영 분석</div>
+            <div class="app-title">▪ 급여정산 · 경영분석</div>
             <div class="app-subtitle">통합근태DB 단일 연동 · 매출 대비 인건비율 · 전년 동월 비교 · 급여명세서 일괄 발송</div>
         </div>
         """,
@@ -933,8 +933,8 @@ high_tax_threshold = int(float(app_cfg.get("part_high_tax_threshold", "1000000")
 target_labor_pct = float(app_cfg.get("target_labor_ratio", "28.0") or 28.0)
 
 tab_calc, tab_trend = st.tabs([
-    f"💰 {selected_store} 월별 급여 정산",
-    f"📈 {selected_store} 매출 · 인건비 경영 분석",
+    f"{selected_store} 월별 급여정산",
+    f"{selected_store} 매출 · 인건비 경영분석",
 ])
 
 with tab_calc:
@@ -947,13 +947,13 @@ with tab_calc:
             st.markdown(
                 f"""
                 <div style="background:#F1F5F9; border-radius:8px; padding:0.58rem 0.9rem; font-size:0.93rem; color:#1E293B;">
-                    📅 <b>집계 기간:</b> {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')} &nbsp;(매니저 확인 완료 건만 자동 집계)
+                    <b>집계 기간:</b> {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')} &nbsp;(매니저 확인 완료 건만 자동 집계)
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
         with ctrl_3:
-            if st.button("🔄 시트 새로고침", use_container_width=True):
+            if st.button("시트 새로고침", use_container_width=True):
                 st.cache_data.clear()
                 st.rerun()
 
@@ -974,7 +974,7 @@ with tab_calc:
                     st.markdown(f"- {w}")
 
         render_section_banner(
-            "🧑‍🍳 1. 정규직 직원 급여 내역",
+            "1. 정규직 직원 급여 내역",
             badge="월급제 · 고정급",
             subtitle="계산급여 = 계약급여 - 제세금 | 입금급여 = 계산급여 ± 변동급여",
             accent="indigo",
@@ -999,7 +999,7 @@ with tab_calc:
 
         if not df_ins_raw.empty:
             total_period_days = (end_dt - start_dt).days + 1
-            with st.expander("🧮 정규직 중도 입·퇴사자 일할 계산기 (클릭하여 열기)", expanded=False):
+            with st.expander("정규직 중도 입·퇴사자 일할 계산기 (클릭하여 열기)", expanded=False):
                 st.caption("월 중간에 입사하거나 퇴사한 정규직 직원의 근무일수만큼 일할 계산하여 '변동급여' 차감액 및 '입금급여'에 즉시 반영합니다.")
                 pc1, pc2, pc3 = st.columns([1.4, 1.0, 1.0])
                 reg_names = df_ins_raw["이름"].tolist()
@@ -1082,7 +1082,7 @@ with tab_calc:
                 df_ins_edited.at[idx, "입금급여"] = in_pay
 
         render_section_banner(
-            "👥 2. 파트타임 직원 급여 내역",
+            "2. 파트타임 직원 급여 내역",
             badge="시급제 · 매니저 승인분",
             subtitle=f"세전 {high_tax_threshold:,}원 미만 {base_tax_rate*100:g}% / 이상 {high_tax_rate*100:g}% 공제",
             accent="blue",
@@ -1157,7 +1157,7 @@ with tab_calc:
                 )
 
         render_section_banner(
-            "📊 이번 정산 요약 및 전년 비교",
+            "이번 정산 요약 및 전년 비교",
             badge=f"{curr_ym} 정산",
             accent="slate",
         )
@@ -1222,7 +1222,7 @@ with tab_calc:
             m5.metric("전년 대비 인건비", "데이터 없음", delta=f"작년 {yoy_ym} 기록 없음", delta_color="off")
 
         render_section_banner(
-            "🚀 3. 세무사 전달 · 은행 이체 · 정산 확정",
+            "3. 세무사 전달 · 은행 이체 · 정산 확정",
             badge="파일 다운로드 · 일괄 발송",
             accent="emerald",
         )
@@ -1255,7 +1255,7 @@ with tab_calc:
 
         with panel_right:
             with st.container(border=True):
-                st.markdown("**📥 파일 다운로드**")
+                st.markdown("**파일 다운로드**")
                 st.download_button(
                     label="세무사용 .txt 다운로드",
                     data=edited_txt.encode("utf-8"),
@@ -1272,7 +1272,7 @@ with tab_calc:
                 )
 
                 st.divider()
-                st.markdown("**🚀 일괄 정산 확정 (Apps Script 메일 연동)**")
+                st.markdown("**일괄 정산 확정 (Apps Script 메일 연동)**")
                 send_to_staff = st.checkbox(
                     "직원 개별 급여명세서 동시 발송 (이메일/텔레그램)",
                     value=default_auto_slip,

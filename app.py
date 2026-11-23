@@ -18,7 +18,6 @@ import streamlit as st
 
 st.set_page_config(
     page_title="분당그릴 통합 관리 시스템",
-    page_icon="🥩",
     layout="wide",
     initial_sidebar_state="collapsed",  # 최초 접속 시 좌측 사이드바를 접힌 상태로 시작
 )
@@ -30,23 +29,23 @@ if "contract_id" in st.query_params:
     # [직원 전용] 매니저가 발급한 계약서 링크(?contract_id=xxxx)로 접속한 경우
     # -> 출퇴근 기록부나 급여 정산 등 매장 내부 메뉴는 원천 차단하고 계약서 화면만 연결
     pg = st.navigation([
-        st.Page("views/contract_sign.py", title="전자 근로계약서", icon="✍️", default=True),
+        st.Page("views/contract_sign.py", title="▪ 전자근로계약서", default=True),
     ])
 elif "schedule" in st.query_params:
     # [직원 전용] 주간 스케줄 신청 링크(?schedule=매장명)로 접속한 경우
     # -> 매장 내부 메뉴는 차단하고 본인 희망/휴무 신청 화면만 단독 실행
     pg = st.navigation([
-        st.Page("views/schedule_submit.py", title="주간 스케줄 신청", icon="📅", default=True),
+        st.Page("views/schedule_submit.py", title="▪ 주간스케줄신청", default=True),
     ])
 else:
     # [매장/관리자 전용] 기본 주소로 접속한 경우
     pg = st.navigation([
-        st.Page("views/attendance.py", title="출퇴근 기록부", icon="⏱️", default=True),
-        st.Page("views/schedule.py", title="주간 스케줄", icon="📅"),
-        st.Page("views/payroll.py", title="급여 정산", icon="💰"),
-        st.Page("views/staff.py", title="직원 관리", icon="👥"),
-        st.Page("views/manual.py", title="매니저 매뉴얼", icon="📖"),
-        st.Page("views/settings.py", title="환경설정", icon="⚙️"),
+        st.Page("views/attendance.py", title="▪ 출퇴근기록부", default=True),
+        st.Page("views/schedule.py", title="▪ 주간스케줄"),
+        st.Page("views/staff.py", title="▪ 직원관리"),
+        st.Page("views/payroll.py", title="▪ 급여정산"),
+        st.Page("views/manual.py", title="▪ 매니저매뉴얼"),
+        st.Page("views/settings.py", title="▪ 환경설정"),
     ])
 
 # ------------------------------------------------------------------------------

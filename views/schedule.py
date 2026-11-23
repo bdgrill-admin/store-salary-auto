@@ -38,11 +38,11 @@ STORES = load_all_stores()
 
 h1, h2, h3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">📅 주간 파트타임 스케줄</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪ 주간스케줄</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed", key="sched_store_sel")
 with h3:
-    if st.button("🔄 새로고침", use_container_width=True, key="sched_refresh_btn"):
+    if st.button("새로고침", use_container_width=True, key="sched_refresh_btn"):
         st.cache_data.clear()
         st.rerun()
 
@@ -171,9 +171,9 @@ def build_draft_schedule(
 df_fixed_synced = build_fixed_template_table(active_part_names, df_fixed)
 
 tab_plan, tab_fixed, tab_hist = st.tabs([
-    "📅 1. 주간 스케줄 작성 · 공유",
-    "⚙️ 2. 고정 · 유동 템플릿 설정",
-    "📋 3. 확정 스케줄 이력",
+    "1. 주간스케줄 작성 · 공유",
+    "2. 고정 · 유동 템플릿 설정",
+    "3. 확정 스케줄 이력",
 ])
 
 # ==============================================================================
@@ -195,7 +195,7 @@ with tab_plan:
 
     with top_c2:
         submit_link = f"{APP_BASE_URL}?{urlencode({'schedule': selected_store})}"
-        st.caption("🔗 직원 단톡방 공지용 신청 링크 (직원들이 로그인 없이 10초 만에 출근 희망·휴무 요청 제출)")
+        st.caption("직원 단톡방 공지용 신청 링크 (로그인 없이 출근 희망·휴무 요청 제출)")
         st.code(submit_link, language="text")
 
     df_conf_week = (
@@ -216,13 +216,13 @@ with tab_plan:
     # 1) 직원 제출 현황 (요청 / 고정 예외)
     req_cnt = len(df_req_week)
     render_section_banner(
-        f"📨 1. 직원 희망 · 휴무 요청 접수 현황",
+        "1. 직원 희망 · 휴무 요청 접수 현황",
         badge=f"제출 {req_cnt}명",
-        subtitle="고정 직원은 빠지는 날(❌휴무요청)이나 시간 변경 시에만 제출합니다",
+        subtitle="고정 직원은 빠지는 날(휴무요청)이나 시간 변경 시에만 제출합니다",
         accent="amber",
     )
     if df_req_week.empty:
-        st.info("아직 직원이 링크로 제출한 요청이 없습니다. 아래에서 [⚡ 고정 스케줄 자동 채우기] 후 직접 수정하셔도 됩니다.")
+        st.info("아직 직원이 링크로 제출한 요청이 없습니다. 아래에서 [고정 스케줄만 자동 채우기] 후 직접 수정하셔도 됩니다.")
     else:
         req_disp = df_req_week[["이름", *DAY_NAMES, "메모", "수정일시"]].copy()
         req_disp["수정일시"] = req_disp["수정일시"].astype(str).str.slice(5, 16)
@@ -239,7 +239,7 @@ with tab_plan:
         )
 
     render_section_banner(
-        f"✍️ 2. [{sel_week_label}] 최종 출근 스케줄 편집 · 확정",
+        f"2. [{sel_week_label}] 최종 출근 스케줄 편집 · 확정",
         badge=("확정본 저장됨" if not df_conf_week.empty else "초안 작성중"),
         subtitle="퇴근시간 없이 출근시간만 입력합니다 (예: 17:00, 12:00, 12:00/17:00 · 빈칸=휴무)",
         accent="blue",
@@ -247,21 +247,21 @@ with tab_plan:
 
     act_c1, act_c2, act_c3 = st.columns(3)
     with act_c1:
-        if st.button("⚡ 고정 스케줄만 자동 채우기", use_container_width=True, key=f"btn_fill_fixed_{selected_store}_{week_str}"):
+        if st.button("고정 스케줄만 자동 채우기", use_container_width=True, key=f"btn_fill_fixed_{selected_store}_{week_str}"):
             st.session_state[draft_state_key] = build_draft_schedule(
                 active_part_names, df_fixed_synced, df_conf_week, df_req_week, mode="fixed_only"
             )
             st.session_state[draft_ver_key] += 1
             st.rerun()
     with act_c2:
-        if st.button("📥 고정 + 직원요청 자동 병합", use_container_width=True, key=f"btn_merge_req_{selected_store}_{week_str}"):
+        if st.button("고정 + 직원요청 자동 병합", use_container_width=True, key=f"btn_merge_req_{selected_store}_{week_str}"):
             st.session_state[draft_state_key] = build_draft_schedule(
                 active_part_names, df_fixed_synced, df_conf_week, df_req_week, mode="merge_requests"
             )
             st.session_state[draft_ver_key] += 1
             st.rerun()
     with act_c3:
-        if st.button("🔄 저장된 확정본 다시 불러오기", use_container_width=True, key=f"btn_reload_conf_{selected_store}_{week_str}"):
+        if st.button("저장된 확정본 다시 불러오기", use_container_width=True, key=f"btn_reload_conf_{selected_store}_{week_str}"):
             st.session_state[draft_state_key] = build_draft_schedule(
                 active_part_names, df_fixed_synced, df_conf_week, df_req_week, mode="existing"
             )
@@ -311,17 +311,17 @@ with tab_plan:
         unsafe_allow_html=True,
     )
 
-    if st.button("💾 주간 스케줄 확정 저장하기 (출퇴근기록부 자동 연동)", type="primary", use_container_width=True):
+    if st.button("주간 스케줄 확정 저장하기 (출퇴근기록부 자동 연동)", type="primary", use_container_width=True):
         with st.spinner("구글 시트 '주간스케줄' 탭에 확정 저장 중..."):
             save_confirmed_week_schedule(store_cfg["db_id"], week_str, edited_schedule)
             st.session_state[draft_state_key] = edited_schedule.copy()
             load_schedule_bundle.clear(store_cfg["db_id"])
-            st.success(f"✅ [{store_title}] {sel_week_label} 주간 스케줄이 확정 저장되었습니다!")
+            st.success(f"[{store_title}] {sel_week_label} 주간 스케줄이 확정 저장되었습니다.")
             st.rerun()
 
     # 3) 단톡방 공유 (카톡 텍스트 + 시간표 이미지 PNG 둘 다!)
     render_section_banner(
-        "📤 3. 카카오톡 단톡방 공유 (텍스트 복사 · 시간표 이미지)",
+        "3. 카카오톡 단톡방 공유 (텍스트 복사 · 시간표 이미지)",
         badge="텍스트 + PNG",
         subtitle="아래 텍스트를 복사하거나 이미지를 저장해 직원 단톡방에 바로 올려주세요",
         accent="emerald",
@@ -334,17 +334,17 @@ with tab_plan:
     sh_left, sh_right = st.columns([1.0, 1.35])
     with sh_left:
         with st.container(border=True):
-            st.markdown("**💬 카톡 단톡방 복사용 텍스트** *(우측 상단 복사 아이콘 클릭)*")
+            st.markdown("**카톡 단톡방 복사용 텍스트** *(우측 상단 복사 아이콘 클릭)*")
             st.code(kakao_text, language="text")
-            if st.button("📲 텔레그램으로 확정 스케줄 알림 발송", use_container_width=True, key=f"btn_tg_sched_{selected_store}_{week_str}"):
+            if st.button("텔레그램으로 확정 스케줄 발송", use_container_width=True, key=f"btn_tg_sched_{selected_store}_{week_str}"):
                 dispatch_telegram_alert(app_cfg, "tg_target_reg_change", kakao_text, default_target="모두")
-                st.toast("텔레그램으로 확정 주간 스케줄을 발송했습니다!")
+                st.toast("텔레그램으로 확정 주간 스케줄을 발송했습니다.")
     with sh_right:
         with st.container(border=True):
-            st.markdown("**🖼️ 모바일용 주간 시간표 이미지 (PNG)**")
+            st.markdown("**모바일용 주간 시간표 이미지 (PNG)**")
             st.image(png_bytes, use_container_width=True)
             st.download_button(
-                label="🖼️ 시간표 이미지(PNG) 다운로드",
+                label="시간표 이미지(PNG) 다운로드",
                 data=png_bytes,
                 file_name=png_filename,
                 mime="image/png",
@@ -357,12 +357,12 @@ with tab_plan:
 # ==============================================================================
 with tab_fixed:
     render_section_banner(
-        "⚙️ 파트타임 고정 · 유동 기본 스케줄 템플릿",
+        "파트타임 고정 · 유동 기본 스케줄 템플릿",
         badge="1회 설정 · 매주 자동 채우기",
         subtitle="고정 출근 직원은 구분을 '고정'으로 두고 요일별 기본 출근시간만 적어두세요 (예: 17:00, 12:00)",
         accent="indigo",
     )
-    st.caption("💡 재직 중인 파트타임 명부가 자동으로 불러와집니다. 고정 직원은 매주 금~토 신청 링크에 들어가도 기본 시간이 자동 입력되어 빠지는 날만 체크하면 됩니다.")
+    st.caption("재직 중인 파트타임 명부가 자동으로 불러와집니다. 고정 직원은 매주 금~토 신청 링크에 들어가도 기본 시간이 자동 입력되어 빠지는 날만 체크하면 됩니다.")
 
     fixed_col_cfg = {
         "이름": st.column_config.TextColumn("이름", required=True),
@@ -381,11 +381,11 @@ with tab_fixed:
         column_config=fixed_col_cfg,
     )
 
-    if st.button("💾 고정 · 유동 스케줄 템플릿 저장하기", type="primary", use_container_width=True):
+    if st.button("고정 · 유동 스케줄 템플릿 저장하기", type="primary", use_container_width=True):
         with st.spinner("구글 시트 '주간스케줄_고정' 탭에 저장 중..."):
             save_fixed_templates(store_cfg["db_id"], edited_fixed)
             load_schedule_bundle.clear(store_cfg["db_id"])
-            st.success("✅ 고정 · 유동 스케줄 템플릿이 저장되었습니다!")
+            st.success("고정 · 유동 스케줄 템플릿이 저장되었습니다.")
             st.rerun()
 
 # ==============================================================================
@@ -393,7 +393,7 @@ with tab_fixed:
 # ==============================================================================
 with tab_hist:
     render_section_banner(
-        "📋 주간 확정 스케줄 이력 조회",
+        "주간 확정 스케줄 이력 조회",
         badge="과거 기록",
         accent="slate",
     )

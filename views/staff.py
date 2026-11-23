@@ -241,11 +241,11 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
 
 h1, h2, h3 = st.columns([2.6, 0.9, 0.7], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">👥 직원 · 시급/계좌 관리</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪ 직원관리</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 with h3:
-    if st.button("🔄 새로고침", use_container_width=True):
+    if st.button("새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -272,7 +272,7 @@ if not is_unlocked:
                     st.error("비밀번호가 일치하지 않습니다.")
     st.stop()
 
-st.caption("💡 **Step 1.** 먼저 직원을 등록(파트타임/정규직)한 뒤 → **Step 2.** 하단 전자 근로계약서에서 해당 직원을 선택하면 기본정보가 자동으로 연동됩니다.")
+st.caption("Step 1. 먼저 직원을 등록(파트타임/정규직)한 뒤 → Step 2. 하단 전자 근로계약서에서 해당 직원을 선택하면 기본정보가 자동으로 연동됩니다.")
 
 today_dt = datetime.date.today()
 alert_threshold_days = int(app_cfg.get("health_alert_days", "30") or 30)
@@ -318,7 +318,7 @@ if health_alerts:
                 else:
                     st.warning("환경설정에서 텔레그램 토큰과 채팅 ID를 확인해 주세요.")
 
-with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", expanded=False):
+with st.expander("+ 신규 직원 등록하기 (파트타임 · 정규직)", expanded=False):
     emp_type_choice = st.radio("등록할 직원 구분", ["파트타임 (시급제)", "정규직 (월급제)"], horizontal=True)
     is_reg_new = emp_type_choice.startswith("정규직")
 
@@ -350,7 +350,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                 placeholder="예: 강성원",
             )
 
-        if st.form_submit_button("✅ 신규 직원 등록", type="primary", use_container_width=True):
+        if st.form_submit_button("신규 직원 등록", type="primary", use_container_width=True):
             clean_nm = new_name.strip()
             if not clean_nm:
                 st.error("직원 이름을 입력해 주세요.")
@@ -398,7 +398,7 @@ with st.expander("➕ 신규 직원 등록하기 (파트타임 · 정규직)", e
                 st.rerun()
 
 render_section_banner(
-    "👥 1. 파트타임 직원 명부",
+    "1. 파트타임 직원 명부",
     badge="시급제",
     subtitle="시급 · 계좌 · 보건증 · 재직/퇴사 관리",
     accent="blue",
@@ -428,12 +428,12 @@ edited_part = st.data_editor(
 )
 
 render_section_banner(
-    "🧑‍🍳 2. 정규직 직원 명부",
+    "2. 정규직 직원 명부",
     badge="월급제",
     subtitle="계약급여 - 제세금 = 계산급여 자동 산출",
     accent="indigo",
 )
-st.caption("💡 **계약급여**와 매월 고정 공제되는 **제세금**(4대보험+소득세)을 입력하면 **계산급여**(고정 실수령액)가 자동 계산됩니다.")
+st.caption("계약급여와 매월 고정 공제되는 제세금(4대보험+소득세)을 입력하면 계산급여(고정 실수령액)가 자동 계산됩니다.")
 
 df_reg_disp = df_reg.copy()
 df_reg_disp["계약급여"] = df_reg_disp["계약급여"].apply(clean_int)
@@ -463,16 +463,16 @@ edited_reg = st.data_editor(
     },
 )
 
-if st.button("💾 수정된 직원 명부 · 시급/계좌 · 보건증 정보 저장하기", type="primary", use_container_width=True):
+if st.button("수정된 직원 명부 · 시급/계좌 · 보건증 정보 저장하기", type="primary", use_container_width=True):
     with st.spinner("통합근태DB 시트에 저장 중..."):
         save_staff_tabs(store_cfg["db_id"], edited_part, edited_reg)
         notify_part_wage_changes(df_part, edited_part, app_cfg, selected_store)
-        st.success("✅ 파트타임 및 정규직 직원 명부가 모두 저장되었습니다!")
+        st.success("파트타임 및 정규직 직원 명부가 모두 저장되었습니다.")
         st.cache_data.clear()
         st.rerun()
 
 # ==============================================================================
-# 📝 전자 근로계약서 발급 및 서명 현황 관리
+# 전자 근로계약서 발급 및 서명 현황 관리
 # ==============================================================================
 import datetime as _dt
 from contract_utils import (
@@ -484,7 +484,7 @@ from contract_utils import (
 
 st.divider()
 render_section_banner(
-    f"📝 [{selected_store}] 3. 전자 근로계약서 발급 및 서명 현황",
+    f"[{selected_store}] 3. 전자 근로계약서 발급 및 서명 현황",
     badge="전자서명 · 드라이브 보관",
     subtitle="직원 선택 시 명부 기본정보와 환경설정 근무조건이 자동 연동됩니다",
     accent="emerald",
@@ -497,8 +497,8 @@ def build_contract_sign_url(contract_id: str, store_name: str) -> str:
     query = urlencode({"contract_id": contract_id, "store": store_name})
     return f"{APP_BASE_URL}?{query}"
 
-PLACEHOLDER_OPT = "🔽 여기를 눌러 계약서를 작성할 직원을 먼저 선택하세요..."
-DIRECT_INPUT_OPT = "➕ 직접 입력 (명부에 없는 신규 입사자)"
+PLACEHOLDER_OPT = "계약서를 작성할 직원을 먼저 선택하세요..."
+DIRECT_INPUT_OPT = "+ 직접 입력 (명부에 없는 신규 입사자)"
 
 staff_lookup = {}
 staff_options = [PLACEHOLDER_OPT]
@@ -541,11 +541,11 @@ for _, r in df_reg.iterrows():
 
 staff_options.append(DIRECT_INPUT_OPT)
 
-with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필수)", expanded=True):
+with st.expander("+ 새 근로계약서 링크 생성하기 (직원 선택 필수)", expanded=True):
     st.markdown(
         """
         <div class="step1-highlight">
-            <div class="step1-title">👤 1단계: 계약서를 작성할 직원을 먼저 선택해 주세요 (필수)</div>
+            <div class="step1-title">1단계: 계약서를 작성할 직원을 먼저 선택해 주세요 (필수)</div>
             <div style="font-size:0.88rem; color:#78350F;">위 직원 명부에 등록된 재직자를 선택하면 아래에 근로조건 입력창과 기본정보가 자동으로 펼쳐집니다.</div>
         </div>
         """,
@@ -684,7 +684,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
         if c_is_minor:
             st.info("📌 연소근로자(만 18세 미만) 선택 시 **가족관계증명서 1부**를 별도로 제출받아 매장에 비치해야 합니다.")
 
-        if st.button("🔗 전자 근로계약서 링크 발급", type="primary", use_container_width=True):
+        if st.button("전자 근로계약서 링크 발급", type="primary", use_container_width=True):
             final_emp_name = default_name if default_name else c_emp_name.strip()
             if not final_emp_name:
                 st.error("직원 성명을 입력해 주세요.")
@@ -723,7 +723,7 @@ with st.expander("➕ 새 근로계약서 링크 생성하기 (직원 선택 필
                 st.success(f"✅ **{final_emp_name}** 님의 전자 근로계약서{extra_msg} 링크가 발급되었습니다! 아래 주소를 복사해 직원에게 전달해 주세요.")
                 st.code(sign_url, language="text")
 
-st.markdown("#### 📋 발급 및 서명 완료 목록")
+st.markdown("#### 발급 및 서명 완료 목록")
 try:
     all_contracts = load_all_contracts(st.secrets, db_id=store_cfg["db_id"])
     if not all_contracts:
@@ -733,9 +733,9 @@ try:
             cid_val = item.get("계약ID", "")
             emp_nm = item.get("직원명", "")
             is_done = item.get("상태") == "서명완료"
-            status_badge = "✅ 서명완료" if is_done else "⏳ 서명대기"
-            nda_badge = " · 🔒 비밀유지서약포함" if str(item.get("비밀유지서약", "")).upper() == "Y" else ""
-            minor_badge = " · 👨‍👩‍👧 친권자동의포함" if str(item.get("연소근로자여부", "")).upper() == "Y" else ""
+            status_badge = "✓ 서명완료" if is_done else "· 서명대기"
+            nda_badge = " · 비밀유지서약포함" if str(item.get("비밀유지서약", "")).upper() == "Y" else ""
+            minor_badge = " · 친권자동의포함" if str(item.get("연소근로자여부", "")).upper() == "Y" else ""
             link_url = build_contract_sign_url(cid_val, selected_store)
 
             with st.container(border=True):
@@ -751,22 +751,22 @@ try:
                         st.code(link_url, language="text")
                 with r3:
                     if is_done and item.get("드라이브PDF링크"):
-                        st.link_button("📄 드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
+                        st.link_button("드라이브 PDF 열기", item.get("드라이브PDF링크"), use_container_width=True)
                     elif not is_done:
                         b_col1, b_col2 = st.columns(2)
                         with b_col1:
-                            if st.button("📨 링크 발송", key=f"resend_{selected_store}_{cid_val}", use_container_width=True):
+                            if st.button("링크 발송", key=f"resend_{selected_store}_{cid_val}", use_container_width=True):
                                 target_mail = item.get("이메일", "").strip()
                                 if target_mail:
                                     ok, msg = send_contract_link_via_webapp(target_mail, emp_nm, link_url, app_cfg)
                                     if ok:
-                                        st.toast(f"{emp_nm} 님 이메일({target_mail})로 서명 링크를 발송했습니다!")
+                                        st.toast(f"{emp_nm} 님 이메일({target_mail})로 서명 링크를 발송했습니다.")
                                     else:
                                         st.error(f"발송 실패: {msg}")
                                 else:
                                     st.warning("명부에 이메일이 없습니다. 링크를 직접 복사해 카톡/문자로 전달해 주세요.")
                         with b_col2:
-                            if st.button("🗑️ 대기 삭제", key=f"del_c_{selected_store}_{cid_val}", use_container_width=True):
+                            if st.button("대기 삭제", key=f"del_c_{selected_store}_{cid_val}", use_container_width=True):
                                 if delete_contract_by_id(st.secrets, cid_val, db_id=store_cfg["db_id"]):
                                     st.toast(f"[{emp_nm}] 님의 서명대기 계약서를 삭제했습니다.")
                                     st.rerun()

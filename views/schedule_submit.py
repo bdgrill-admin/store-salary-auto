@@ -65,7 +65,7 @@ store_title = str(app_cfg.get("store_title") or store_name).strip()
 st.markdown(
     f"""
     <div class="page-hero">
-        <div class="page-hero-title">📅 [{store_title}] 파트타임 주간 스케줄 신청</div>
+        <div class="page-hero-title">▪ [{store_title}] 파트타임 주간스케줄 신청</div>
         <div class="page-hero-sub">퇴근시간은 정하지 않고 <b>출근시간만</b> 선택해 제출합니다. (고정 직원은 빠지는 날만 변경)</div>
     </div>
     """,
@@ -91,11 +91,11 @@ with c_w:
     week_dates = get_week_dates(sel_monday)
 
 with c_n:
-    PLACEHOLDER = "🔽 본인 이름을 선택하세요"
+    PLACEHOLDER = "본인 이름을 선택하세요"
     sel_emp = st.selectbox("2. 본인 이름 선택", options=[PLACEHOLDER] + active_part_names, index=0)
 
 if sel_emp == PLACEHOLDER:
-    st.info("☝️ 위에서 **신청할 주차**와 **본인 이름**을 선택하면 요일별 출근시간 입력창이 열립니다.")
+    st.info("위에서 **신청할 주차**와 **본인 이름**을 선택하면 요일별 출근시간 입력창이 열립니다.")
     st.stop()
 
 # 고정 스케줄 템플릿 조회
@@ -120,21 +120,21 @@ if not df_weekly.empty:
 
 if is_fixed_emp:
     render_section_banner(
-        f"📌 {sel_emp} 님 — 고정 스케줄 직원",
+        f"{sel_emp} 님 — 고정 스케줄 직원",
         badge="예외(휴무·변경)만 수정",
         subtitle="평소 고정 출근시간이 미리 채워져 있습니다. 변동이 없으면 제출하지 않으셔도 그대로 반영됩니다.",
         accent="blue",
     )
 else:
     render_section_banner(
-        f"🗓️ {sel_emp} 님 — 출근 가능 시간 신청",
+        f"{sel_emp} 님 — 출근 가능 시간 신청",
         badge="출근시간만 선택",
         subtitle="출근 가능한 요일의 출근시간만 선택해 주세요. (못 나오는 날은 '휴무' 유지)",
         accent="emerald",
     )
 
 if prev_req_row:
-    st.success(f"✅ 이미 제출된 내역이 있습니다 (최근 제출: {prev_req_row.get('수정일시', '')}). 내용을 수정해서 다시 제출하면 최신 내용으로 덮어씌워집니다.")
+    st.success(f"이미 제출된 내역이 있습니다 (최근 제출: {prev_req_row.get('수정일시', '')}). 내용을 수정해서 다시 제출하면 최신 내용으로 덮어씌워집니다.")
 
 st.write("")
 chosen_days = {}
@@ -205,13 +205,13 @@ with st.container(border=True):
                 chosen_days[d] = sel_t
 
     memo_in = st.text_input(
-        "💬 매니저에게 남길 메모 (선택)",
+        "매니저에게 남길 메모 (선택)",
         value=str(prev_req_row.get("메모", "")),
         placeholder="예: 수요일 시험이라 18시 출근 가능 / 토요일 점심만 가능",
         key=f"sub_memo_{store_name}_{week_str}_{sel_emp}",
     )
 
-    if st.button("✅ 다음 주 희망 스케줄 제출하기", type="primary", use_container_width=True):
+    if st.button("다음 주 희망 스케줄 제출하기", type="primary", use_container_width=True):
         with st.spinner("매니저에게 스케줄 요청을 저장하는 중..."):
             upsert_employee_request(target_db_id, week_str, sel_emp, chosen_days, memo_in)
             load_schedule_bundle.clear(target_db_id)
@@ -222,5 +222,4 @@ with st.container(border=True):
             if v:
                 summary_parts.append(f"{d}({v})")
         summary_str = ", ".join(summary_parts) if summary_parts else "전체 휴무"
-        st.success(f"🎉 **{sel_emp}** 님의 {sel_week_label} 스케줄 요청이 접수되었습니다!\n\n• 제출 내용: `{summary_str}`")
-        st.balloons()
+        st.success(f"**{sel_emp}** 님의 {sel_week_label} 스케줄 요청이 접수되었습니다.\n\n• 제출 내용: `{summary_str}`")

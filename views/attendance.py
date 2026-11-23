@@ -20,7 +20,7 @@ from ui_styles import apply_base_theme, render_section_banner
 STORES = load_all_stores()
 KST = datetime.timezone(datetime.timedelta(hours=9))
 SHIFT_OPTIONS = ["평일", "주말(점심)", "주말(저녁)", "기타"]
-EMP_PLACEHOLDER = "🔽 이름 선택"
+EMP_PLACEHOLDER = "이름 선택"
 REG_CHANGE_TYPES = ["➕ 추가출근", "➖ 기타휴무", "🔄 대체휴무"]
 REG_CHANGE_UNITS = ["1일", "시간단위(사유란 기재)"]
 
@@ -308,11 +308,11 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
 
 h_col1, h_col2, h_col3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
 with h_col1:
-    st.markdown('<div class="app-title">⏱️ 출퇴근 기록부</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪ 출퇴근기록부</div>', unsafe_allow_html=True)
 with h_col2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 with h_col3:
-    if st.button("🔄 새로고침", use_container_width=True):
+    if st.button("새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -393,7 +393,7 @@ pending_att_cnt = len(pending_att_df)
 # ==============================================================================
 # 팝업 다이얼로그 정의 (입금·chak / 보건증 / 매니저 전용)
 # ==============================================================================
-@st.dialog("💳 실시간 계좌입금 · chak 결제 확인", width="large")
+@st.dialog("실시간 계좌입금 · chak 결제 확인", width="large")
 def open_payment_dialog():
     biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
     if biz_only:
@@ -414,16 +414,16 @@ def open_payment_dialog():
     st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")
     pb_c1, pb_c2 = st.columns(2)
     with pb_c1:
-        if st.button("🔄 입금 새로고침", key=f"dlg_refresh_pay_{selected_store}", use_container_width=True):
+        if st.button("입금 새로고침", key=f"dlg_refresh_pay_{selected_store}", use_container_width=True):
             load_db_sheets.clear(store_cfg["db_id"])
             st.rerun()
     with pb_c2:
         if pending_pay_cnt > 0:
-            if st.button(f"✅ 미확인 {pending_pay_cnt}건 확인완료", key=f"dlg_confirm_pay_{selected_store}", type="primary", use_container_width=True):
+            if st.button(f"미확인 {pending_pay_cnt}건 확인완료", key=f"dlg_confirm_pay_{selected_store}", type="primary", use_container_width=True):
                 with st.spinner("확인 처리 중..."):
                     mark_payments_confirmed(store_cfg["db_id"], pending_pay_rows)
                     load_db_sheets.clear(store_cfg["db_id"])
-                    st.session_state["edited_banner"] = f"✅ 계좌입금·chak 미확인 {pending_pay_cnt}건을 확인완료 처리했습니다."
+                    st.session_state["edited_banner"] = f"계좌입금·chak 미확인 {pending_pay_cnt}건을 확인완료 처리했습니다."
                     st.rerun()
 
     if today_pay_df.empty:
@@ -431,11 +431,7 @@ def open_payment_dialog():
     else:
         def _fmt_pay_gubun(g):
             gs = str(g).strip()
-            if "취소" in gs:
-                return f"⚠️ {gs}"
-            if "chak" in gs.lower() or "상품권" in gs:
-                return f"🎫 {gs}"
-            return f"💰 {gs or '계좌입금'}"
+            return gs or "계좌입금"
 
         def _fmt_pay_amt(v):
             digits = re.sub(r"[^\d-]", "", str(v))
@@ -450,24 +446,24 @@ def open_payment_dialog():
             "입금자 / 상세": today_pay_df.get("입금자_상세", pd.Series([""] * len(today_pay_df))),
             "금액": today_pay_df.get("금액", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_amt),
             "상태": today_pay_df.get("확인여부", pd.Series(["대기"] * len(today_pay_df))).apply(
-                lambda x: "✅ 확인완료" if str(x).strip() == "확인완료" else "🆕 미확인"
+                lambda x: "✓ 확인완료" if str(x).strip() == "확인완료" else "● 미확인"
             ),
         })
         st.dataframe(pay_disp, use_container_width=True, hide_index=True, row_height=30)
 
 
-@st.dialog("🏥 보건증 갱신 · 만료 알림", width="large")
+@st.dialog("보건증 갱신 · 만료 알림", width="large")
 def open_health_dialog():
     if health_alerts:
         st.warning(f"보건증 갱신 또는 만료 확인이 필요한 재직 직원이 **{len(health_alerts)}명** 있습니다.")
         for ha in health_alerts:
             st.markdown(f"- {ha}")
-        st.caption("💡 직원이 새 보건증을 제출하면 '직원 관리' 메뉴에서 보건증 만료일을 갱신해 주세요.")
+        st.caption("직원이 새 보건증을 제출하면 '직원관리' 메뉴에서 보건증 만료일을 갱신해 주세요.")
     else:
-        st.success("🎉 현재 재직 중인 모든 직원의 보건증이 유효합니다!")
+        st.success("현재 재직 중인 모든 직원의 보건증이 유효합니다.")
 
 
-@st.dialog("🔐 매니저 전용 확인", width="large")
+@st.dialog("매니저 전용 확인", width="large")
 def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
     mgr_unlock_key = f"att_mgr_dialog_unlocked_{selected_store}"
     is_mgr_open = st.session_state.get("authenticated", False) or st.session_state.get(mgr_unlock_key, False)
@@ -499,16 +495,16 @@ def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
 
     top_m1, top_m2 = st.columns([3.0, 1.0], vertical_alignment="center")
     with top_m1:
-        st.caption(f"🔓 [{selected_store}] 매니저 인증됨 · 기준 날짜: {cur_date_str}")
+        st.caption(f"[{selected_store}] 매니저 인증됨 · 기준 날짜: {cur_date_str}")
     with top_m2:
-        if st.button("🔒 잠금", key=f"dlg_mgr_lock_{selected_store}", use_container_width=True):
+        if st.button("잠금", key=f"dlg_mgr_lock_{selected_store}", use_container_width=True):
             st.session_state[mgr_unlock_key] = False
             st.rerun()
 
     t_app, t_unapp, t_reg = st.tabs([
-        f"⏳ 미확인 승인 ({pending_att_cnt})",
-        "🔓 승인 해제",
-        "📝 정규직 특근/휴무",
+        f"미확인 승인 ({pending_att_cnt})",
+        "승인 해제",
+        "정규직 특근/휴무",
     ])
 
     with t_app:
@@ -759,41 +755,41 @@ if show_pay_board:
     qb1, qb2, qb3 = st.columns(3)
     with qb1:
         if pending_pay_cnt > 0:
-            if st.button(f"🔔 입금·chak 미확인 {pending_pay_cnt}건!", key="qbtn_pay_alert", use_container_width=True):
+            if st.button(f"● 입금·chak 미확인 {pending_pay_cnt}건", key="qbtn_pay_alert", use_container_width=True):
                 open_payment_dialog()
         else:
-            pay_lbl = f"💳 입금·chak 확인 (오늘 {len(today_pay_df)}건)" if not today_pay_df.empty else "💳 입금·chak 확인 (0건)"
+            pay_lbl = f"입금·chak 확인 (오늘 {len(today_pay_df)}건)" if not today_pay_df.empty else "입금·chak 확인 (0건)"
             if st.button(pay_lbl, key="qbtn_pay_idle", use_container_width=True):
                 open_payment_dialog()
     with qb2:
         if health_alerts:
-            if st.button(f"🚨 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
+            if st.button(f"▲ 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
                 open_health_dialog()
         else:
-            if st.button("🏥 보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
+            if st.button("보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
                 open_health_dialog()
     with qb3:
         if pending_att_cnt > 0:
-            if st.button(f"🟠 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
+            if st.button(f"● 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
                 open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
         else:
-            if st.button("🔐 매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
+            if st.button("매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
                 open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
 else:
     qb2, qb3 = st.columns(2)
     with qb2:
         if health_alerts:
-            if st.button(f"🚨 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
+            if st.button(f"▲ 보건증 갱신 {len(health_alerts)}명 확인", key="qbtn_health_alert", use_container_width=True):
                 open_health_dialog()
         else:
-            if st.button("🏥 보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
+            if st.button("보건증 정상 (0명)", key="qbtn_health_idle", use_container_width=True):
                 open_health_dialog()
     with qb3:
         if pending_att_cnt > 0:
-            if st.button(f"🟠 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
+            if st.button(f"● 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
                 open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
         else:
-            if st.button("🔐 매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
+            if st.button("매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
                 open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
 
 active_emp_names = []
@@ -818,19 +814,19 @@ if not df_att.empty:
 with st.container(border=True):
     d_c1, d_c2, d_c3 = st.columns([1.15, 0.65, 2.4], vertical_alignment="center")
     with d_c1:
-        sel_date = st.date_input("📅 조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
+        sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
         date_str = sel_date.strftime("%Y-%m-%d")
     with d_c2:
         weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
         w_kr = weekdays_kr[sel_date.weekday()]
         w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
         st.markdown(
-            f'<div style="font-size:1.18rem; font-weight:800; color:{w_color}; white-space:nowrap;">📅 {w_kr}</div>',
+            f'<div style="font-size:1.15rem; font-weight:800; color:{w_color}; white-space:nowrap;">{w_kr}</div>',
             unsafe_allow_html=True,
         )
     with d_c3:
         st.markdown(
-            '<div style="font-size:0.86rem; color:#475569; line-height:1.45;">💡 <b>신규 입력</b>: 하단에서 본인 이름 선택 후 저장 &nbsp;|&nbsp; <b>수정</b>: 표에서 해당 줄 체크</div>',
+            '<div style="font-size:0.86rem; color:#475569; line-height:1.45;"><b>신규 입력</b>: 하단에서 본인 이름 선택 후 저장 &nbsp;|&nbsp; <b>수정</b>: 표에서 해당 줄 체크</div>',
             unsafe_allow_html=True,
         )
 
@@ -861,7 +857,7 @@ with st.container(border=True):
                 st.markdown(
                     f'<div style="margin-top:0.45rem; padding-top:0.45rem; border-top:1px dashed #E2E8F0; line-height:1.7;">'
                     f'<span style="font-size:0.84rem; font-weight:800; color:#312E81; margin-right:6px;">'
-                    f'📅 {sel_date.strftime("%m/%d")}({sel_day_col}) 출근 예정 ({len(scheduled_items)}명):</span> {pills}</div>',
+                    f'▪ {sel_date.strftime("%m/%d")}({sel_day_col}) 출근 예정 ({len(scheduled_items)}명):</span> {pills}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -875,12 +871,12 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
 selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
 
-render_section_banner("📋 1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄 왼쪽 체크박스를 누르면 아래에서 수정할 수 있습니다", accent="blue")
+render_section_banner("1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄 왼쪽 체크박스를 누르면 아래에서 수정할 수 있습니다", accent="blue")
 if not df_att.empty and "날짜" in df_att.columns:
     day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
     if not day_df.empty:
         day_df["확인상태"] = day_df["매니저확인"].apply(
-            lambda x: "✅ 확인완료" if str(x).strip().upper() == "TRUE" else "⏳ 대기중"
+            lambda x: "✓ 확인완료" if str(x).strip().upper() == "TRUE" else "· 대기중"
         )
         show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
         valid_cols = [c for c in show_cols if c in day_df.columns]
@@ -946,7 +942,7 @@ with left_col:
         is_emp_selected = False
 
     render_section_banner(
-        "✍️ 2. 출퇴근 시간 입력 / 수정",
+        "2. 출퇴근 시간 입력 / 수정",
         badge=("수정 모드" if mode == "기존 수정" else "신규 입력"),
         accent=("amber" if mode == "기존 수정" else "blue"),
     )
@@ -1043,16 +1039,16 @@ with left_col:
         dec_hours = round(diff_mins / 60.0, 2)
 
         if not is_emp_selected:
-            st.warning("☝️ 먼저 좌측의 **본인 이름 선택**을 눌러 이름을 고르면 시간 입력칸이 활성화됩니다.")
+            st.warning("먼저 좌측의 **본인 이름 선택**에서 이름을 고르면 시간 입력칸이 활성화됩니다.")
         elif diff_mins > 0:
-            st.success(f"⏱️ 계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
+            st.success(f"계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
         else:
             st.warning("시작시간과 종료시간을 입력해 주세요.")
 
         st.markdown(
             """
             <div style="background-color:#FEF3C7; border:1px solid #F59E0B; border-radius:7px; padding:0.48rem 0.75rem; margin:0.35rem 0 0.55rem 0; color:#92400E; font-weight:700; font-size:0.88rem;">
-                ⚠️ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.
+                ※ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.
             </div>
             """,
             unsafe_allow_html=True,
@@ -1060,7 +1056,7 @@ with left_col:
 
         if mode == "기존 수정":
             edit_reason = st.text_input(
-                "🚨 수정 사유 (필수 입력)",
+                "수정 사유 (필수 입력)",
                 placeholder="예: 퇴근 시간 입력 오타 정정",
                 disabled=inputs_disabled,
                 key=f"reason_{w_key_sfx}",
@@ -1081,7 +1077,7 @@ with left_col:
             and (diff_mins > 0)
             and (mode == "신규 등록" or len(edit_reason.strip()) > 0)
         )
-        btn_label = "💾 출퇴근 시간 저장하기" if mode == "신규 등록" else "🔄 수정 내역 반영하기"
+        btn_label = "출퇴근 시간 저장하기" if mode == "신규 등록" else "수정 내역 반영하기"
 
         if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
             with st.spinner("출퇴근 기록을 저장하는 중..."):
@@ -1121,11 +1117,11 @@ with left_col:
 
 with right_col:
     if not is_emp_selected:
-        render_section_banner("📊 3. 개인별 월별 근무시간 조회", badge="월별 누적", accent="indigo")
+        render_section_banner("3. 개인별 월별 근무시간 조회", badge="월별 누적", accent="indigo")
         with st.container(border=True):
-            st.info("👈 좌측 **'2. 출퇴근 시간 입력/수정'**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
+            st.info("좌측 **'2. 출퇴근 시간 입력/수정'**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
     else:
-        render_section_banner(f"📊 3. {real_emp_name} 님 월별 근무시간", badge="월별 누적", accent="indigo")
+        render_section_banner(f"3. {real_emp_name} 님 월별 근무시간", badge="월별 누적", accent="indigo")
 
         month_options = get_recent_payroll_months(kst_today(), start_day=payroll_start_day, count=6)
         sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)
@@ -1142,13 +1138,13 @@ with right_col:
                 value=f"{work_days}일 · {mins_to_korean(m_mins)}",
             )
 
-            with st.expander(f"📋 세부 근무 내역({len(m_df)}건)", expanded=False):
+            with st.expander(f"세부 근무 내역 ({len(m_df)}건)", expanded=False):
                 if not m_df.empty:
                     m_disp = m_df.sort_values("날짜", ascending=False).copy()
                     m_disp["날짜"] = m_disp["날짜"].apply(format_date_with_weekday)
                     m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
                     m_disp["상태"] = m_disp["매니저확인"].apply(
-                        lambda x: "✅ 확인" if str(x).strip().upper() == "TRUE" else "⏳ 대기"
+                        lambda x: "✓ 확인" if str(x).strip().upper() == "TRUE" else "· 대기"
                     )
                     m_disp = m_disp.rename(columns={"근무타임": "구분", "총시간(h:m)": "총시간"})
                     st.dataframe(

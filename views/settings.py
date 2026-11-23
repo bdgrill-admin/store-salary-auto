@@ -51,7 +51,7 @@ store_names = list(all_stores_map.keys())
 
 h1, h2 = st.columns([3.2, 1.0], vertical_alignment="center")
 with h1:
-    st.markdown('<div class="app-title">⚙️ 시스템 환경설정</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title">▪ 환경설정</div>', unsafe_allow_html=True)
 with h2:
     selected_store = st.selectbox("설정 매장", store_names, index=0, label_visibility="collapsed")
 
@@ -75,15 +75,15 @@ if not st.session_state.get("authenticated", False):
                     st.error("비밀번호가 일치하지 않습니다.")
     st.stop()
 
-st.caption(f"💡 현재 선택된 **[{selected_store}]**의 설정은 구글 시트(`환경설정` 탭)에 영구 저장되며, 모든 화면에 즉시 반영됩니다.")
+st.caption(f"현재 선택된 [{selected_store}]의 설정은 구글 시트('환경설정' 탭)에 영구 저장되며, 모든 화면에 즉시 반영됩니다.")
 
 t_sec, t_att, t_con, t_pay, t_diag, t_stores = st.tabs([
-    "🔐 보안 · 권한",
-    "⏱️ 출퇴근 · 보건증 규칙",
-    "📝 근로계약서 기본값",
-    "💰 급여 · 공제율 · 인건비 목표",
-    "📲 텔레그램 · 이메일 설정",
-    "🏪 다매장 · 지점 관리",
+    "보안 · 권한",
+    "출퇴근 · 보건증",
+    "근로계약서",
+    "급여 · 공제율 · 인건비",
+    "텔레그램 · 이메일 · 입금",
+    "다매장 · 지점 관리",
 ])
 
 with st.form("settings_main_form"):
@@ -192,7 +192,7 @@ with st.form("settings_main_form"):
                 value=(current_cfg.get("auto_send_payslip", "TRUE").upper() == "TRUE"),
             )
 
-        st.markdown('<div class="section-title">📊 파트타임 세금 공제율 및 인건비율 목표 경고선</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">파트타임 세금 공제율 및 인건비율 목표 경고선</div>', unsafe_allow_html=True)
         with st.container(border=True):
             r1, r2, r3 = st.columns(3)
             in_base_rate = r1.number_input(
@@ -232,7 +232,7 @@ with st.form("settings_main_form"):
     # [탭 5] 텔레그램 & 이메일 발송 기본값 (공동대표 · 매니저 수신 분기)
     # --------------------------------------------------------------------------
     with t_diag:
-        render_section_banner("📲 텔레그램 봇 토큰 및 수신자 채팅 ID", badge="알림 분기", accent="indigo")
+        render_section_banner("텔레그램 봇 토큰 및 수신자 채팅 ID", badge="알림 분기", accent="indigo")
         with st.container(border=True):
             in_tg_token = st.text_input(
                 "텔레그램 봇 토큰 (TELEGRAM_BOT_TOKEN)",
@@ -250,10 +250,10 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("manager_telegram_chat_id", ""),
                 placeholder="예: 555666777",
             )
-            st.caption("💡 각 수신자가 봇에게 먼저 `/start` 메시지를 보낸 뒤 발급된 숫자 채팅 ID를 입력하세요.")
+            st.caption("각 수신자가 봇에게 먼저 `/start` 메시지를 보낸 뒤 발급된 숫자 채팅 ID를 입력하세요.")
 
             st.divider()
-            st.markdown("**🔔 업무별 텔레그램 알림 수신 대상 지정** (`대표` / `매니저` / `모두` / `끄기`)")
+            st.markdown("**업무별 텔레그램 알림 수신 대상 지정** (`대표` / `매니저` / `모두` / `끄기`)")
 
             cur_t_health = normalize_tg_target(
                 current_cfg.get("tg_target_health") or current_cfg.get("tg_alert_health", "모두"),
@@ -278,34 +278,34 @@ with st.form("settings_main_form"):
 
             al1, al2, al3 = st.columns(3)
             in_target_health = al1.selectbox(
-                "🏥 보건증 만료 대상자 알림",
+                "보건증 만료 대상자 알림",
                 options=TG_TARGET_OPTIONS,
                 index=TG_TARGET_OPTIONS.index(cur_t_health),
             )
             in_target_contract = al2.selectbox(
-                "📝 전자 근로계약서 서명 완료",
+                "전자 근로계약서 서명 완료",
                 options=TG_TARGET_OPTIONS,
                 index=TG_TARGET_OPTIONS.index(cur_t_contract),
             )
             in_target_payroll = al3.selectbox(
-                "💰 월별 급여 정산 확정 보고",
+                "월별 급여 정산 확정 보고",
                 options=TG_TARGET_OPTIONS,
                 index=TG_TARGET_OPTIONS.index(cur_t_payroll),
             )
 
             al4, al5, _ = st.columns(3)
             in_target_reg_change = al4.selectbox(
-                "📌 정규직 특근·휴무 등록/수정/삭제",
+                "정규직 특근·휴무 등록/수정/삭제",
                 options=TG_TARGET_OPTIONS,
                 index=TG_TARGET_OPTIONS.index(cur_t_reg),
             )
             in_target_wage_change = al5.selectbox(
-                "💵 신규 파트타임 등록 · 시급 변경",
+                "신규 파트타임 등록 · 시급 변경",
                 options=TG_TARGET_OPTIONS,
                 index=TG_TARGET_OPTIONS.index(cur_t_wage),
             )
 
-        render_section_banner("📧 이메일 & 구글 드라이브 웹앱 발송 기본값", badge="Apps Script", accent="blue")
+        render_section_banner("이메일 & 구글 드라이브 웹앱 발송 기본값", badge="Apps Script", accent="blue")
         with st.container(border=True):
             em_c1, em_c2 = st.columns([1.8, 1.2])
             in_webapp_url = em_c1.text_input(
@@ -317,7 +317,7 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
             )
 
-        render_section_banner("💳 실시간 계좌입금 · chak 지역상품권 자동 확인", badge="영업시간 · 잔액제거", accent="emerald")
+        render_section_banner("실시간 계좌입금 · chak 지역상품권 자동 확인", badge="영업시간 · 잔액제거", accent="emerald")
         with st.container(border=True):
             pay_c1, pay_c2 = st.columns([1.5, 1.0])
             in_pay_tg_chat_id = pay_c1.text_input(
@@ -383,7 +383,7 @@ with st.form("settings_main_form"):
             )
 
     st.write("")
-    if st.form_submit_button(f"💾 [{selected_store}] 환경설정 저장하기", type="primary", use_container_width=True):
+    if st.form_submit_button(f"[{selected_store}] 환경설정 저장하기", type="primary", use_container_width=True):
         if not in_mgr_pin.strip() or not in_admin_pwd.strip():
             st.error("비밀번호는 비워둘 수 없습니다.")
         else:
@@ -448,11 +448,11 @@ with st.form("settings_main_form"):
 # [탭 6] 다매장 · 지점 통합 관리
 # ==============================================================================
 with t_stores:
-    st.markdown('<div class="section-title">🏪 등록된 매장 목록 및 시트 ID 관리</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">등록된 매장 목록 및 시트 ID 관리</div>', unsafe_allow_html=True)
     st.caption("새로운 지점(예: 감동한점) 오픈 시 아래에서 시트 ID만 등록하면, 프로그램 전체 상단 '매장 선택' 메뉴에 즉시 추가됩니다.")
 
     for s_name, s_info in all_stores_map.items():
-        with st.expander(f"🏢 {s_name} ({'운영중' if s_info.get('active', True) else '비활성'})", expanded=(s_name == selected_store)):
+        with st.expander(f"▪ {s_name} ({'운영중' if s_info.get('active', True) else '비활성'})", expanded=(s_name == selected_store)):
             with st.form(f"edit_store_form_{s_name}"):
                 sc1, sc2 = st.columns([2.0, 1.0])
                 ed_db_id = sc1.text_input("통합근태DB 시트 ID (필수)", value=s_info.get("db_id", ""))
@@ -482,7 +482,7 @@ with t_stores:
                         st.success(f"✅ [{s_name}] 지점 정보가 저장되었습니다!")
                         st.rerun()
 
-    st.markdown('<div class="section-title">➕ 신규 매장(2호점 등) 추가 등록</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">신규 매장(2호점 등) 추가 등록</div>', unsafe_allow_html=True)
     with st.container(border=True):
         with st.form("add_new_store_form", clear_on_submit=True):
             nc1, nc2, nc3 = st.columns([1.2, 2.0, 1.0])
@@ -520,7 +520,7 @@ with t_stores:
 # ==============================================================================
 st.divider()
 render_section_banner(
-    "📡 외부 연동 상태 실시간 점검 (원클릭 테스트)",
+    "외부 연동 상태 실시간 점검 (원클릭 테스트)",
     badge="진단 도구",
     subtitle="구글 시트 · 텔레그램 · 이메일 · 입금 웹훅 연결을 한 번에 점검합니다",
     accent="amber",
