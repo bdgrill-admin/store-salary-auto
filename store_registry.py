@@ -182,6 +182,14 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
         "tg_alert_payroll": "TRUE",
         "tg_alert_reg_change": "TRUE",
         "tg_alert_wage_change": "TRUE",
+        # 6. 실시간 계좌입금 · chak 지역상품권 확인 연동
+        "payment_telegram_chat_id": "",
+        "payment_webhook_secret": "bdgrill-pay-0524",
+        "show_payment_board": "TRUE",
+        "payment_biz_hours_only": "TRUE",
+        "payment_biz_start": "11:00",
+        "payment_biz_end": "23:00",
+        "payment_excluded_senders": "이용석",
     }
 
 

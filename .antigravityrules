@@ -13,11 +13,12 @@
 - **`store_registry.py`**: 기준 DB(`MASTER_DB_ID`)의 `매장목록` 탭 기반 다매장 목록 관리(`load_all_stores`, `save_all_stores`), 지점별 구글 시트 `환경설정` 탭 로더/세이버(`load_store_settings`, `save_store_settings`), `gspread` 클라이언트(`get_gspread_client`), 시크릿·환경변수 헬퍼(`get_secret`), 공통 텔레그램 분기 발송 함수(`dispatch_telegram_alert`)를 담당하는 중앙 레지스트리 모듈.
 - **`contract_utils.py`**: 지점별 `db_id` 및 `folder_id` 기반 전자 근로계약서(`근로계약서` 탭) CRUD, ReportLab 기반 한국어 PDF 생성(표준근로계약서 + 선택적 연소근로자 친권자 동의서 + 선택적 비밀유지·경업금지 서약서), Google Apps Script 웹앱을 통한 지점별 구글 드라이브 PDF 업로드 및 이메일 사본 교부, 서명 완료 시 해당 지점 `파트타임`/`정규직` 시트 동기화 및 `tg_target_contract` 텔레그램 알림 발송.
 - **`views/contract_sign.py`**: 직원 전용 전자 근로계약서 서명 페이지(`?contract_id=...&store=...`, `store` 미포함 기존 링크는 기준 DB `MASTER_DB_ID` 매장으로 하위 호환). 지점별 `환경설정`·계약서 DB·드라이브 폴더 연동, 일반/연소근로자(만 18세 미만) 표준근로계약서 자동 전환, 친권자(후견인) 동의서 인적사항·서명 입력, 비밀유지·경업금지 서약서 렌더링, 정자 성명 자동 서명 이미지 생성 또는 자필 서명 사진 업로드, `st.form` 및 시트 상태 재검증을 통한 중복 제출 방지.
-- **`views/attendance.py`**: 일일 출퇴근 입력/수정, 매니저 PIN 인증 후 일괄 승인/해제, `정규직근태변동` 탭 등록/수정/삭제(`tg_target_reg_change` 알림), 일일 보건증 만료 텔레그램 브리핑(`tg_target_health` 알림), 개인별 월별 근무시간 조회.
+- **`views/attendance.py`**: 일일 출퇴근 입력/수정, 매니저 PIN 인증 후 일괄 승인/해제, `정규직근태변동` 탭 등록/수정/삭제(`tg_target_reg_change` 알림), 일일 보건증 만료 텔레그램 브리핑(`tg_target_health` 알림), `입금확인로그` 탭 연동 실시간 계좌입금·`chak` 결제 확인 패널, 개인별 월별 근무시간 조회.
 - **`views/staff.py`**: 파트타임·정규직 직원 명부 관리(`st.data_editor`), 신규 직원 등록(`notify_new_part_staff`), 시급 변경 감지(`notify_part_wage_changes`), 보건증 만료 경고 및 알림 전송, 주민번호 기반 연소근로자 자동 감지, 전자 근로계약서 링크 발급 및 서명 대기/완료 관리.
 - **`views/payroll.py`**: 정산 기준일(`payroll_start_day`, 기본 매월 5일 = 전월 5일 ~ 당월 4일) 기반 급여 산출, 정규직 일할 계산기, 세무사용 `.txt` 및 은행 대량이체 `.xlsx` 생성, Apps Script 웹앱(미설정 시 Gmail SMTP fallback) 경유 세무사·직원 이메일 발송 및 개인 `텔레그램ID` 급여명세서 발송, 정산 확정 시 `급여히스토리` 시트 저장 및 `정규직근태변동` 시트의 `정산반영여부` `'완료'` 자동 변경(`mark_reg_changes_settled`), `tg_target_payroll` 텔레그램 보고, `매출관리` 시트 연동 매출 대비 인건비 경영 분석 차트/YoY 비교.
-- **`views/settings.py`**: 관리자 전용 환경설정(보안 PIN/비밀번호, 출퇴근 시간 입력 단위 `att_time_step_min`, 보건증 경고 D-Day, 계약서 기본값, 공제율·목표 인건비율, 공동대표/매니저 복수 텔레그램 채팅 ID 및 알림별 수신 대상 분기, 다매장 시트 ID 등록·수정, 외부 서비스 원클릭 진단).
+- **`views/settings.py`**: 관리자 전용 환경설정(보안 PIN/비밀번호, 출퇴근 시간 입력 단위 `att_time_step_min`, 보건증 경고 D-Day, 계약서 기본값, 공제율·목표 인건비율, 공동대표/매니저 복수 텔레그램 채팅 ID 및 알림별 수신 대상 분기, 실시간 입금·`chak` 전용 텔레그램 방 ID 및 웹훅 보안키, 다매장 시트 ID 등록·수정, 외부 서비스 원클릭 진단).
 - **`views/manual.py`**: 모바일/태블릿/PC 겸용 매니저 실무 교육 매뉴얼(4개 업무 탭 구성, 지점별 PIN 잠금 연동).
+- **`apps_script_webapp.gs`**: Google Apps Script 통합 웹앱 코드(`upload_pdf`, `send_email`, `payment_alert` 액션 지원 — 우리은행/chak 알림 수신 시 잔액·계좌번호 제거 후 `입금확인로그` 기록 및 전용 텔레그램 방 발송).
 
 ---
 
@@ -47,10 +48,14 @@
 6. **`환경설정` 탭:**
    `설정키` | `설정값` | `최종수정일시` 형태로 지점별 모든 설정값을 RAW 모드로 영구 저장한다.
 
-7. **`매장목록` 탭 (기준 DB `MASTER_DB_ID` 전용):**
+7. **`입금확인로그` 탭:**
+   `수신일시` | `구분` (`계좌입금`/`chak결제`/`chak취소`) | `입금자_상세` | `금액` | `원문요약` | `확인여부` (`대기`/`확인완료`)
+   - **보안 및 영업시간 규칙:** Apps Script(`apps_script_webapp.gs`)에서 기록 전 계좌 잔액 및 계좌번호를 제거하며, 출금 내역, 제외 입금자명(`payment_excluded_senders`, 기본 `이용석`), 영업시간(`payment_biz_hours_only`, `payment_biz_start`~`payment_biz_end`) 외 수신 내역은 저장·발송하지 않는다.
+
+8. **`매장목록` 탭 (기준 DB `MASTER_DB_ID` 전용):**
    `매장명` | `통합근태DB_ID` | `급여히스토리_ID` | `매출관리_ID` | `계약서폴더_ID` | `매니저PIN` | `사용여부`
 
-8. **별도 외부 연동 스프레드시트 (`views/payroll.py`):**
+9. **별도 외부 연동 스프레드시트 (`views/payroll.py`):**
    - **급여히스토리 시트 (`hist_id`):** `과거요약` 탭 및 월별 `YY.MM` 탭(예: `26.01`).
    - **매출관리 시트 (`sales_id`):** `월별매출` 탭(`정산월` | `총매출`).
 
@@ -61,6 +66,7 @@
 - **수신자 ID 설정 키:**
   - `telegram_chat_id`: 대표/공동대표 채팅 ID (쉼표 `,`·세미콜론·공백으로 복수 구분)
   - `manager_telegram_chat_id`: 매니저 채팅 ID (쉼표 `,`·세미콜론·공백으로 복수 구분)
+  - `payment_telegram_chat_id`: 매장 카운터 입금·`chak` 확인 전용 텔레그램 그룹방/채팅 ID (`apps_script_webapp.gs`의 `payment_alert` 액션에서 직접 사용)
 - **알림별 분기 키 (`대표` / `매니저` / `모두` / `끄기`):** *(저장 시 하위 호환용 `tg_alert_*` 키도 함께 동기화)*
   - `tg_target_health`: 보건증 만료 알림 (기본 `"모두"`)
   - `tg_target_contract`: 전자 근로계약서 서명 완료 (기본 `"모두"`)

@@ -350,6 +350,48 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
             )
 
+        st.markdown('<div class="section-title">💳 실시간 계좌입금 · chak 지역상품권 자동 확인</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            pay_c1, pay_c2 = st.columns([1.5, 1.0])
+            in_pay_tg_chat_id = pay_c1.text_input(
+                "입금·chak 알림 전용 텔레그램 방/채팅 ID (그룹방은 음수 ID, 복수는 쉼표 구분)",
+                value=current_cfg.get("payment_telegram_chat_id", ""),
+                placeholder="예: -1001234567890",
+            )
+            in_pay_webhook_secret = pay_c2.text_input(
+                "웹훅 보안키 (MacroDroid 전송 시 일치 확인용)",
+                value=current_cfg.get("payment_webhook_secret", "bdgrill-pay-0524"),
+                max_chars=50,
+            )
+            in_show_pay_board = st.checkbox(
+                "출퇴근기록부 화면 상단에 '실시간 계좌입금 · chak 결제 확인' 패널 표시 (잔액·출금 제외, 당일 입금/결제만 노출)",
+                value=(current_cfg.get("show_payment_board", "TRUE").upper() == "TRUE"),
+            )
+            bh_c1, bh_c2, bh_c3 = st.columns([1.4, 0.8, 0.8], vertical_alignment="bottom")
+            in_pay_biz_only = bh_c1.checkbox(
+                "영업시간 내 수신된 입금·chak 결제만 알림/기록 (영업시간 외 입금 자동 무시)",
+                value=(current_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"),
+            )
+            in_pay_biz_start = bh_c2.text_input(
+                "영업 시작시간 (HH:MM)",
+                value=current_cfg.get("payment_biz_start", "11:00"),
+                placeholder="11:00",
+            )
+            in_pay_biz_end = bh_c3.text_input(
+                "영업 종료시간 (HH:MM)",
+                value=current_cfg.get("payment_biz_end", "23:00"),
+                placeholder="23:00",
+            )
+            in_pay_excluded_senders = st.text_input(
+                "계좌입금 알림 제외 입금자명 (대표 본인 이체 등 제외, 여러 명이면 쉼표 , 로 구분)",
+                value=current_cfg.get("payment_excluded_senders", "이용석"),
+                placeholder="예: 이용석, 분당그릴",
+            )
+            st.caption(
+                f"💡 MacroDroid 웹훅 전송 시 `dbId`에 현재 지점 시트 ID (`{store_cfg['db_id']}`)와 위 보안키를 입력하면 "
+                "설정된 영업시간 내 알림만 잔액 제거 후 시트(`입금확인로그`) 기록 및 전용 텔레그램 방으로 발송됩니다. (자정 넘김 예: `16:00` ~ `02:00` 지원)"
+            )
+
     st.write("")
     if st.form_submit_button(f"💾 [{selected_store}] 환경설정 저장하기", type="primary", use_container_width=True):
         if not in_mgr_pin.strip() or not in_admin_pwd.strip():
@@ -393,6 +435,14 @@ with st.form("settings_main_form"):
                 "tg_alert_payroll": "FALSE" if in_target_payroll == "끄기" else "TRUE",
                 "tg_alert_reg_change": "FALSE" if in_target_reg_change == "끄기" else "TRUE",
                 "tg_alert_wage_change": "FALSE" if in_target_wage_change == "끄기" else "TRUE",
+                # 실시간 계좌입금 · chak 확인 연동
+                "payment_telegram_chat_id": in_pay_tg_chat_id.strip(),
+                "payment_webhook_secret": in_pay_webhook_secret.strip(),
+                "show_payment_board": "TRUE" if in_show_pay_board else "FALSE",
+                "payment_biz_hours_only": "TRUE" if in_pay_biz_only else "FALSE",
+                "payment_biz_start": in_pay_biz_start.strip() or "11:00",
+                "payment_biz_end": in_pay_biz_end.strip() or "23:00",
+                "payment_excluded_senders": in_pay_excluded_senders.strip(),
             }
             with st.spinner("구글 시트 '환경설정' 탭에 저장 중..."):
                 save_store_settings(store_cfg["db_id"], updated_cfg)
@@ -477,7 +527,7 @@ with t_stores:
 st.divider()
 st.markdown('<div class="section-title">📡 외부 연동 상태 실시간 점검 (원클릭 테스트)</div>', unsafe_allow_html=True)
 
-d1, d2, d3 = st.columns(3)
+d1, d2, d3, d4 = st.columns(4)
 
 with d1:
     with st.container(border=True):
@@ -545,5 +595,41 @@ with d3:
                         st.success(f"발송 성공! ({test_to})")
                     else:
                         st.error(f"실패: {res.json().get('error')}")
+                except Exception as e:
+                    st.error(f"오류: {e}")
+
+with d4:
+    with st.container(border=True):
+        st.markdown("**4. 입금·chak 웹훅**")
+        st.caption("테스트 입금 전송 (잔액 제거 · 시트 · 텔레그램 확인)")
+        if st.button("입금 알림 테스트", use_container_width=True):
+            webapp_url = current_cfg.get("drive_webapp_url", "").strip()
+            secret_key = current_cfg.get("payment_webhook_secret", "").strip()
+            if not webapp_url:
+                st.warning("Apps Script 웹앱 URL이 비어 있습니다.")
+            else:
+                try:
+                    payload = {
+                        "action": "payment_alert",
+                        "secretKey": secret_key,
+                        "dbId": store_cfg["db_id"],
+                        "storeName": selected_store,
+                        "source": "우리은행",
+                        "title": "우리WON뱅킹 입금 알림",
+                        "body": "[우리은행] 1002-***-123456 입금 1,000원 테스트손님 잔액 99,999,999원",
+                        "ignoreBusinessHours": "TRUE",
+                    }
+                    res = requests.post(
+                        webapp_url,
+                        data=json.dumps(payload),
+                        headers={"Content-Type": "text/plain; charset=utf-8"},
+                        allow_redirects=True,
+                        timeout=20,
+                    )
+                    rj = res.json()
+                    if rj.get("ok"):
+                        st.success(f"성공! ({rj.get('category', '계좌입금')} / {rj.get('amount', 0):,}원)")
+                    else:
+                        st.error(f"실패: {rj.get('error')}")
                 except Exception as e:
                     st.error(f"오류: {e}")

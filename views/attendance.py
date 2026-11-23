@@ -163,7 +163,7 @@ def load_db_sheets(db_id: str):
     ss = gc.open_by_key(db_id)
     titles = [s.title.strip() for s in ss.worksheets()]
 
-    target_tabs = [t for t in ["파트타임", "정규직", "통합근태DB"] if t in titles]
+    target_tabs = [t for t in ["파트타임", "정규직", "통합근태DB", "입금확인로그"] if t in titles]
     values_map = {}
     if target_tabs:
         res = ss.values_batch_get([f"'{t}'!A:Z" for t in target_tabs])
@@ -187,8 +187,26 @@ def load_db_sheets(db_id: str):
     df_att = parse_rows(values_map.get("통합근태DB", []), with_row_num=True)
     if not df_att.empty:
         df_att = df_att[(df_att["날짜"] != "") & (df_att["이름"] != "")].copy()
+    df_pay = parse_rows(values_map.get("입금확인로그", []), with_row_num=True)
 
-    return df_emp, df_reg, df_att
+    return df_emp, df_reg, df_att, df_pay
+
+
+def mark_payments_confirmed(db_id: str, sheet_rows: list):
+    """입금확인로그 탭의 선택된 행들의 확인여부를 '확인완료'로 일괄 변경합니다."""
+    if not sheet_rows:
+        return
+    gc = get_gspread_client()
+    ss = gc.open_by_key(db_id)
+    ws = ss.worksheet("입금확인로그")
+    headers = [c.strip() for c in ws.row_values(1)]
+    status_idx = headers.index("확인여부") if "확인여부" in headers else 5
+    col_letter = chr(ord("A") + status_idx)
+    batch_payload = [
+        {"range": f"{col_letter}{int(r_num)}", "values": [["확인완료"]]}
+        for r_num in sheet_rows
+    ]
+    ws.batch_update(batch_payload, value_input_option="RAW")
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -304,7 +322,7 @@ store_cfg = STORES[selected_store]
 app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
 
 try:
-    df_emp, df_reg, df_att = load_db_sheets(store_cfg["db_id"])
+    df_emp, df_reg, df_att, df_pay = load_db_sheets(store_cfg["db_id"])
 except Exception as e:
     st.error(f"구글 시트 연결 오류: {e}")
     st.stop()
@@ -348,6 +366,85 @@ if health_alerts:
     with st.expander(f"🏥 [필독] 보건증 갱신/만료 대상 직원이 {len(health_alerts)}명 있습니다 (클릭하여 명단 확인)", expanded=True):
         for ha in health_alerts:
             st.markdown(f"- {ha}")
+
+if app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE":
+    today_prefix = today_dt.strftime("%Y-%m-%d")
+    today_pay_df = pd.DataFrame()
+    if df_pay is not None and not df_pay.empty and "수신일시" in df_pay.columns:
+        today_pay_df = (
+            df_pay[df_pay["수신일시"].astype(str).str.startswith(today_prefix)]
+            .sort_values("수신일시", ascending=False)
+            .head(20)
+            .reset_index(drop=True)
+        )
+
+    pending_pay_rows = []
+    if not today_pay_df.empty and "확인여부" in today_pay_df.columns:
+        pending_pay_rows = today_pay_df[today_pay_df["확인여부"].astype(str).str.strip() != "확인완료"]["_sheet_row"].tolist()
+    elif not today_pay_df.empty and "_sheet_row" in today_pay_df.columns:
+        pending_pay_rows = today_pay_df["_sheet_row"].tolist()
+
+    pending_cnt = len(pending_pay_rows)
+    if pending_cnt > 0:
+        pay_exp_title = f"💳 실시간 계좌입금 · chak 결제 확인 — 🆕 미확인 {pending_cnt}건 (오늘 총 {len(today_pay_df)}건)"
+    elif not today_pay_df.empty:
+        pay_exp_title = f"💳 실시간 계좌입금 · chak 결제 확인 (오늘 {len(today_pay_df)}건 · 확인완료)"
+    else:
+        pay_exp_title = "💳 실시간 계좌입금 · chak 결제 확인 (오늘 수신 내역 없음)"
+
+    with st.expander(pay_exp_title, expanded=(pending_cnt > 0)):
+        biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
+        biz_start = app_cfg.get("payment_biz_start", "11:00")
+        biz_end = app_cfg.get("payment_biz_end", "23:00")
+        biz_info_txt = f"영업시간({biz_start}~{biz_end}) 내 " if biz_only else ""
+        pb_c1, pb_c2, pb_c3 = st.columns([2.6, 0.9, 1.0], vertical_alignment="center")
+        with pb_c1:
+            st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")
+        with pb_c2:
+            if st.button("🔄 입금 새로고침", key=f"btn_refresh_pay_{selected_store}", use_container_width=True):
+                load_db_sheets.clear(store_cfg["db_id"])
+                st.rerun()
+        with pb_c3:
+            if pending_cnt > 0:
+                if st.button(f"✅ 미확인 {pending_cnt}건 확인완료", key=f"btn_confirm_pay_{selected_store}", type="primary", use_container_width=True):
+                    with st.spinner("확인 처리 중..."):
+                        mark_payments_confirmed(store_cfg["db_id"], pending_pay_rows)
+                        load_db_sheets.clear(store_cfg["db_id"])
+                        st.rerun()
+
+        if today_pay_df.empty:
+            st.info("오늘 수신된 계좌입금 또는 chak 결제 내역이 아직 없습니다. 방금 입금된 경우 우측 [🔄 입금 새로고침]을 눌러주세요.")
+        else:
+            def _fmt_pay_gubun(g):
+                gs = str(g).strip()
+                if "취소" in gs:
+                    return f"⚠️ {gs}"
+                if "chak" in gs.lower() or "상품권" in gs:
+                    return f"🎫 {gs}"
+                return f"💰 {gs or '계좌입금'}"
+
+            def _fmt_pay_amt(v):
+                digits = re.sub(r"[^\d-]", "", str(v))
+                try:
+                    return f"{int(digits):,}원" if digits else str(v)
+                except ValueError:
+                    return str(v)
+
+            pay_disp = pd.DataFrame({
+                "시각": today_pay_df["수신일시"].astype(str).str.slice(11, 19),
+                "구분": today_pay_df.get("구분", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_gubun),
+                "입금자 / 상세": today_pay_df.get("입금자_상세", pd.Series([""] * len(today_pay_df))),
+                "금액": today_pay_df.get("금액", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_amt),
+                "상태": today_pay_df.get("확인여부", pd.Series(["대기"] * len(today_pay_df))).apply(
+                    lambda x: "✅ 확인완료" if str(x).strip() == "확인완료" else "🆕 미확인"
+                ),
+            })
+            st.dataframe(
+                pay_disp,
+                use_container_width=True,
+                hide_index=True,
+                row_height=28,
+            )
 
 st.markdown('<div class="app-subtitle">📅 조회 및 입력 날짜</div>', unsafe_allow_html=True)
 
