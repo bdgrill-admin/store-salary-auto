@@ -1197,11 +1197,61 @@ with tab_calc:
             subtitle=f"세전 {high_tax_threshold:,}원 미만 {base_tax_rate*100:g}% / 이상 {high_tax_rate*100:g}% 공제",
             accent="blue",
         )
+        p_leg_c1, p_leg_c2 = st.columns([3.2, 1.0], vertical_alignment="center")
+        with p_leg_c1:
+            st.markdown(
+                '<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:0.8rem; margin-bottom:4px;">'
+                '<span style="color:#475569; font-weight:700;">셀 색상 기준:</span>'
+                '<span style="background:#DBEAFE; color:#1D4ED8; font-weight:700; padding:2px 8px; border-radius:6px;">시급 12,500원 이상</span>'
+                '<span style="background:#FEE2E2; color:#B91C1C; font-weight:700; padding:2px 8px; border-radius:6px;">공제율 3.3%</span>'
+                '<span style="background:#F3E8FF; color:#6B21A8; font-weight:700; padding:2px 8px; border-radius:6px;">이름: 둘 다 해당</span>'
+                '<span style="color:#64748B;">(그외비용·사유는 바로 입력 가능)</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        with p_leg_c2:
+            part_full_edit = st.checkbox(
+                "전체 열 직접 편집",
+                value=False,
+                key=f"part_full_edit_{selected_store}",
+                help="시급·총급여·공제율까지 수동 수정하거나 행을 추가할 때 체크하세요.",
+            )
+
+        if not df_part_raw.empty and not part_full_edit:
+            def _style_part_payroll(row):
+                wage_val = clean_int(row.get("시급", 0))
+                rate_val = parse_rate(row.get("공제율", 0))
+                is_high_wage = wage_val >= 12500
+                is_high_tax = rate_val >= 0.0329
+                styles = []
+                for col in row.index:
+                    if col == "시급" and is_high_wage:
+                        styles.append("background-color: #DBEAFE; color: #1D4ED8; font-weight: 700;")
+                    elif col == "공제율" and is_high_tax:
+                        styles.append("background-color: #FEE2E2; color: #B91C1C; font-weight: 700;")
+                    elif col == "이름" and is_high_wage and is_high_tax:
+                        styles.append("background-color: #F3E8FF; color: #6B21A8; font-weight: 700;")
+                    elif col == "이름" and is_high_tax:
+                        styles.append("background-color: #FEE2E2; color: #B91C1C; font-weight: 700;")
+                    elif col == "이름" and is_high_wage:
+                        styles.append("background-color: #DBEAFE; color: #1D4ED8; font-weight: 700;")
+                    else:
+                        styles.append("")
+                return styles
+
+            part_editable_cols = {"그외비용", "그외비용사유"}
+            part_disabled_cols = [c for c in df_part_raw.columns if c not in part_editable_cols]
+            part_data_input = df_part_raw.style.apply(_style_part_payroll, axis=1)
+        else:
+            part_disabled_cols = False
+            part_data_input = df_part_raw
+
         df_part_edited = st.data_editor(
-            df_part_raw,
-            num_rows="dynamic",
+            part_data_input,
+            num_rows="dynamic" if part_full_edit else "fixed",
+            disabled=part_disabled_cols,
             use_container_width=True,
-            key=f"editor_part_{selected_store}",
+            key=f"editor_part_{selected_store}_{'edit' if part_full_edit else 'styled'}",
             column_config={
                 "시급": st.column_config.NumberColumn("시급", format="%,d"),
                 "총급여": st.column_config.NumberColumn("총급여", format="%,d"),
