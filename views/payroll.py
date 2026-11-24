@@ -1045,30 +1045,32 @@ with tab_calc:
 
         # 상단 컨트롤 카드 안에 반응형으로 집계 기간 + 파트타임 실시간 합계(미승인 포함) 표시
         rt_cards = [
-            f"""
-            <div style="flex:1 1 240px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:10px; padding:0.7rem 0.95rem;">
-                <div style="font-size:0.78rem; font-weight:700; color:#475569;">선택 정산 집계 기간</div>
-                <div style="font-size:1.05rem; font-weight:800; color:#0F172A; margin-top:2px;">{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}</div>
-                <div style="font-size:0.78rem; color:#64748B; margin-top:2px;">확정 정산은 매니저 확인 완료 건만 반영</div>
-            </div>
-            """,
-            f"""
-            <div style="flex:1 1 260px; background:#EFF6FF; border:1px solid #BFDBFE; border-left:4px solid #2563EB; border-radius:10px; padding:0.7rem 0.95rem;">
-                <div style="font-size:0.78rem; font-weight:700; color:#1E40AF;">파트타임 실시간 전체 합계 (미승인 포함)</div>
-                <div style="font-size:1.12rem; font-weight:800; color:#1E3A8A; margin-top:2px;">{realtime_info['period_all_net']:,}원 <span style="font-size:0.8rem; font-weight:600; color:#3B82F6;">(세전 {realtime_info['period_all_gross']:,}원)</span></div>
-                <div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info['period_approved_net']:,}원 · 미승인 {realtime_info['period_pending_cnt']}건 포함</div>
-            </div>
-            """,
+            (
+                '<div style="flex:1 1 240px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:10px; padding:0.7rem 0.95rem;">'
+                '<div style="font-size:0.78rem; font-weight:700; color:#475569;">선택 정산 집계 기간</div>'
+                f'<div style="font-size:1.05rem; font-weight:800; color:#0F172A; margin-top:2px;">{start_dt.strftime("%Y-%m-%d")} ~ {end_dt.strftime("%Y-%m-%d")}</div>'
+                '<div style="font-size:0.78rem; color:#64748B; margin-top:2px;">확정 정산은 매니저 확인 완료 건만 반영</div>'
+                '</div>'
+            ),
+            (
+                '<div style="flex:1 1 260px; background:#EFF6FF; border:1px solid #BFDBFE; border-left:4px solid #2563EB; border-radius:10px; padding:0.7rem 0.95rem;">'
+                '<div style="font-size:0.78rem; font-weight:700; color:#1E40AF;">파트타임 실시간 전체 합계 (미승인 포함)</div>'
+                f'<div style="font-size:1.12rem; font-weight:800; color:#1E3A8A; margin-top:2px;">{realtime_info["period_all_net"]:,}원 '
+                f'<span style="font-size:0.8rem; font-weight:600; color:#3B82F6;">(세전 {realtime_info["period_all_gross"]:,}원)</span></div>'
+                f'<div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info["period_approved_net"]:,}원 · 미승인 {realtime_info["period_pending_cnt"]}건 포함</div>'
+                '</div>'
+            ),
         ]
         if start_dt != ongoing_s:
             rt_cards.append(
-                f"""
-                <div style="flex:1 1 260px; background:#ECFDF5; border:1px solid #A7F3D0; border-left:4px solid #059669; border-radius:10px; padding:0.7rem 0.95rem;">
-                    <div style="font-size:0.78rem; font-weight:700; color:#065F46;">현재 진행월 ({ongoing_s.strftime('%m/%d')}~{ongoing_e.strftime('%m/%d')}) 파트타임 실시간 누적</div>
-                    <div style="font-size:1.12rem; font-weight:800; color:#064E3B; margin-top:2px;">{realtime_info['ongoing_all_net']:,}원 <span style="font-size:0.8rem; font-weight:600; color:#059669;">(세전 {realtime_info['ongoing_all_gross']:,}원)</span></div>
-                    <div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info['ongoing_approved_net']:,}원 · 미승인 {realtime_info['ongoing_pending_cnt']}건 포함</div>
-                </div>
-                """
+                (
+                    '<div style="flex:1 1 260px; background:#ECFDF5; border:1px solid #A7F3D0; border-left:4px solid #059669; border-radius:10px; padding:0.7rem 0.95rem;">'
+                    f'<div style="font-size:0.78rem; font-weight:700; color:#065F46;">현재 진행월 ({ongoing_s.strftime("%m/%d")}~{ongoing_e.strftime("%m/%d")}) 파트타임 실시간 누적</div>'
+                    f'<div style="font-size:1.12rem; font-weight:800; color:#064E3B; margin-top:2px;">{realtime_info["ongoing_all_net"]:,}원 '
+                    f'<span style="font-size:0.8rem; font-weight:600; color:#059669;">(세전 {realtime_info["ongoing_all_gross"]:,}원)</span></div>'
+                    f'<div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info["ongoing_approved_net"]:,}원 · 미승인 {realtime_info["ongoing_pending_cnt"]}건 포함</div>'
+                    '</div>'
+                )
             )
         summary_slot.markdown(
             f'<div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">{"".join(rt_cards)}</div>',
