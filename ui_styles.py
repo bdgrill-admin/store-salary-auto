@@ -9,6 +9,7 @@
 ================================================================================
 """
 
+import textwrap
 import streamlit as st
 
 ACCENT_PALETTE = {
@@ -59,7 +60,7 @@ ACCENT_PALETTE = {
 
 def apply_base_theme(max_width: int = 1360):
     """전 페이지 공통 반응형 스타일 및 시인성 강화 테마를 주입합니다."""
-    st.markdown(
+    css_block = textwrap.dedent(
         f"""
         <style>
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -217,34 +218,58 @@ def apply_base_theme(max_width: int = 1360):
             background-color: #F0FDF4 !important;
         }}
 
-        /* 탭(st.tabs) 알약형 시인성 개선 + 가로 스크롤 지원 */
+        /* 탭(st.tabs) 전 페이지 및 팝업 공용 스타일 (Streamlit 1.59+ react-aria & BaseWeb 동시 대응) */
+        [data-testid="stTabs"] [role="tablist"],
         div[data-baseweb="tab-list"] {{
-            gap: 0.45rem !important;
-            background-color: #F1F5F9;
-            padding: 0.35rem;
-            border-radius: 11px;
+            gap: 1.15rem !important;
+            background-color: transparent !important;
+            padding: 0 !important;
+            border-radius: 0 !important;
+            border-bottom: 1.5px solid #E2E8F0 !important;
             overflow-x: auto !important;
             flex-wrap: nowrap !important;
             scrollbar-width: thin;
         }}
+        [data-testid="stTab"],
+        [data-testid="stTabs"] [role="tab"],
         button[data-baseweb="tab"] {{
-            border-radius: 8px !important;
-            padding: 0.48rem 0.95rem !important;
-            font-size: 0.9rem !important;
-            font-weight: 700 !important;
             color: #475569 !important;
+            font-weight: 500 !important;
             background-color: transparent !important;
             white-space: nowrap !important;
             flex-shrink: 0 !important;
-            border: none !important;
         }}
+        [data-testid="stTab"] p,
+        [data-testid="stTabs"] [role="tab"] p,
+        button[data-baseweb="tab"] p {{
+            color: inherit !important;
+            font-weight: inherit !important;
+        }}
+        [data-testid="stTab"]:hover,
+        [data-testid="stTabs"] [role="tab"]:hover,
+        button[data-baseweb="tab"]:hover {{
+            color: #0F172A !important;
+        }}
+        [data-testid="stTab"][aria-selected="true"],
+        [data-testid="stTab"][data-selected="true"],
+        [data-testid="stTabs"] [role="tab"][aria-selected="true"],
+        [data-testid="stTabs"] [role="tab"][data-selected="true"],
         button[data-baseweb="tab"][aria-selected="true"] {{
-            background-color: #0F172A !important;
-            color: #FFFFFF !important;
-            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+            color: #DC2626 !important;
+            font-weight: 800 !important;
+            background-color: transparent !important;
+            box-shadow: none !important;
+        }}
+        [data-testid="stTab"][aria-selected="true"] *,
+        [data-testid="stTab"][data-selected="true"] *,
+        [data-testid="stTabs"] [role="tab"][aria-selected="true"] *,
+        [data-testid="stTabs"] [role="tab"][data-selected="true"] *,
+        button[data-baseweb="tab"][aria-selected="true"] * {{
+            color: #DC2626 !important;
+            font-weight: 800 !important;
         }}
         div[data-baseweb="tab-highlight"] {{
-            display: none !important;
+            background-color: #DC2626 !important;
         }}
 
         /* Metric 카드 시인성 강화 */
@@ -333,15 +358,16 @@ def apply_base_theme(max_width: int = 1360):
             .sec-banner-title {{
                 font-size: 0.95rem !important;
             }}
+            [data-testid="stTab"],
+            [data-testid="stTabs"] [role="tab"],
             button[data-baseweb="tab"] {{
-                padding: 0.42rem 0.72rem !important;
-                font-size: 0.84rem !important;
+                font-size: 0.86rem !important;
             }}
         }}
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+    st.markdown(css_block, unsafe_allow_html=True)
 
 
 def render_section_banner(title: str, badge: str = "", subtitle: str = "", accent: str = "blue"):

@@ -404,9 +404,9 @@ pending_att_cnt = len(pending_att_df)
 
 
 # ==============================================================================
-# 팝업 다이얼로그 정의 (입금·chak / 보건증 / 매니저 전용)
+# 팝업 다이얼로그 정의 (계좌입금·지역화폐 / 보건증 / 매니저 전용)
 # ==============================================================================
-@st.dialog("실시간 계좌입금 · chak 결제 확인", width="large")
+@st.dialog("실시간 계좌입금 · 지역화폐 결제 확인", width="large")
 def open_payment_dialog():
     biz_only = app_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"
     if biz_only:
@@ -424,10 +424,10 @@ def open_payment_dialog():
     else:
         biz_info_txt = ""
 
-    st.caption(f"{biz_info_txt}우리은행 계좌입금 및 chak 지역상품권 결제 알림만 자동 기록됩니다. (계좌 잔액·출금 미표시)")
+    st.caption(f"{biz_info_txt}우리은행 계좌입금 및 지역화폐 결제 알림만 자동 기록됩니다.")
     pb_c1, pb_c2 = st.columns(2)
     with pb_c1:
-        if st.button("입금 새로고침", key=f"dlg_refresh_pay_{selected_store}", use_container_width=True):
+        if st.button("내역 새로고침", key=f"dlg_refresh_pay_{selected_store}", use_container_width=True):
             load_db_sheets.clear(store_cfg["db_id"])
             st.rerun()
     with pb_c2:
@@ -436,15 +436,19 @@ def open_payment_dialog():
                 with st.spinner("확인 처리 중..."):
                     mark_payments_confirmed(store_cfg["db_id"], pending_pay_rows)
                     load_db_sheets.clear(store_cfg["db_id"])
-                    st.session_state["edited_banner"] = f"계좌입금·chak 미확인 {pending_pay_cnt}건을 확인완료 처리했습니다."
+                    st.session_state["edited_banner"] = f"계좌입금·지역화폐 미확인 {pending_pay_cnt}건을 확인완료 처리했습니다."
                     st.rerun()
 
     if today_pay_df.empty:
-        st.info("오늘 수신된 계좌입금 또는 chak 결제 내역이 아직 없습니다.")
+        st.info("오늘 수신된 계좌입금 또는 지역화폐 결제 내역이 아직 없습니다.")
     else:
         def _fmt_pay_gubun(g):
             gs = str(g).strip()
-            return gs or "계좌입금"
+            if not gs:
+                return "계좌입금"
+            if "chak" in gs.lower() or "상품권" in gs:
+                return "지역화폐"
+            return gs
 
         def _fmt_pay_amt(v):
             digits = re.sub(r"[^\d-]", "", str(v))
@@ -764,10 +768,10 @@ if show_pay_board:
     qb1, qb2, qb3 = st.columns(3)
     with qb1:
         if pending_pay_cnt > 0:
-            if st.button(f"● 입금·chak 미확인 {pending_pay_cnt}건", key="qbtn_pay_alert", use_container_width=True):
+            if st.button(f"● 계좌입금·지역화폐 미확인 {pending_pay_cnt}건", key="qbtn_pay_alert", use_container_width=True):
                 open_payment_dialog()
         else:
-            pay_lbl = f"입금·chak 확인 (오늘 {len(today_pay_df)}건)" if not today_pay_df.empty else "입금·chak 확인 (0건)"
+            pay_lbl = f"계좌입금·지역화폐 확인 (오늘 {len(today_pay_df)}건)" if not today_pay_df.empty else "계좌입금·지역화폐 확인 (0건)"
             if st.button(pay_lbl, key="qbtn_pay_idle", use_container_width=True):
                 open_payment_dialog()
     with qb2:

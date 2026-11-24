@@ -317,11 +317,11 @@ with st.form("settings_main_form"):
                 value=current_cfg.get("sender_email", "bdgrill0524@gmail.com"),
             )
 
-        render_section_banner("실시간 계좌입금 · chak 지역상품권 자동 확인", badge="영업시간 · 잔액제거", accent="emerald")
+        render_section_banner("실시간 계좌입금 · 지역화폐 자동 확인", badge="영업시간 · 잔액제거", accent="emerald")
         with st.container(border=True):
             pay_c1, pay_c2 = st.columns([1.5, 1.0])
             in_pay_tg_chat_id = pay_c1.text_input(
-                "입금·chak 알림 전용 텔레그램 방/채팅 ID (그룹방은 음수 ID, 복수는 쉼표 구분)",
+                "계좌입금·지역화폐 알림 전용 텔레그램 방/채팅 ID (그룹방은 음수 ID, 복수는 쉼표 구분)",
                 value=current_cfg.get("payment_telegram_chat_id", ""),
                 placeholder="예: -1001234567890",
             )
@@ -331,11 +331,11 @@ with st.form("settings_main_form"):
                 max_chars=50,
             )
             in_show_pay_board = st.checkbox(
-                "출퇴근기록부 화면 상단에 '실시간 계좌입금 · chak 결제 확인' 패널 표시 (잔액·출금 제외, 당일 입금/결제만 노출)",
+                "출퇴근기록부 화면 상단에 '실시간 계좌입금 · 지역화폐 결제 확인' 패널 표시",
                 value=(current_cfg.get("show_payment_board", "TRUE").upper() == "TRUE"),
             )
             in_pay_biz_only = st.checkbox(
-                "영업시간 내 수신된 입금·chak 결제만 알림/기록 (영업시간 외 및 주말 브레이크타임 자동 무시)",
+                "영업시간 내 수신된 계좌입금·지역화폐 결제만 알림/기록 (영업시간 외 및 주말 브레이크타임 자동 무시)",
                 value=(current_cfg.get("payment_biz_hours_only", "TRUE").upper() == "TRUE"),
             )
             wd_c1, wd_c2 = st.columns(2)
@@ -601,7 +601,7 @@ with d3:
 
 with d4:
     with st.container(border=True):
-        st.markdown("**4. 입금·chak 웹훅**")
+        st.markdown("**4. 계좌입금·지역화폐 웹훅**")
         st.caption("테스트 입금 전송 (잔액 제거 · 시트 · 텔레그램 확인)")
         if st.button("입금 알림 테스트", use_container_width=True):
             webapp_url = current_cfg.get("drive_webapp_url", "").strip()
