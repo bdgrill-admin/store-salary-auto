@@ -375,15 +375,21 @@ for gubun_label, df_chk in [("파트타임", df_emp), ("정규직", df_reg)]:
 if health_alerts:
     auto_send_daily_health_telegram(selected_store, app_cfg, health_alerts)
 
-# 실시간 계좌입금 · chak 결제 집계
+# 실시간 계좌입금 · 지역화폐 결제 집계 (날짜+시간 최신순 정렬)
 show_pay_board = app_cfg.get("show_payment_board", "TRUE").upper() == "TRUE"
 today_prefix = today_dt.strftime("%Y-%m-%d")
 today_pay_df = pd.DataFrame()
 if show_pay_board and df_pay is not None and not df_pay.empty and "수신일시" in df_pay.columns:
+    _pay_tmp = df_pay.copy()
+    _pay_tmp["_dt_sort"] = pd.to_datetime(_pay_tmp["수신일시"].astype(str).str.strip(), errors="coerce")
+    _is_today = (_pay_tmp["_dt_sort"].dt.date == today_dt) | (
+        _pay_tmp["_dt_sort"].isna() & _pay_tmp["수신일시"].astype(str).str.startswith(today_prefix)
+    )
+    _sort_cols = ["_dt_sort", "_sheet_row"] if "_sheet_row" in _pay_tmp.columns else ["_dt_sort"]
     today_pay_df = (
-        df_pay[df_pay["수신일시"].astype(str).str.startswith(today_prefix)]
-        .sort_values("수신일시", ascending=False)
-        .head(20)
+        _pay_tmp[_is_today]
+        .sort_values(_sort_cols, ascending=[False] * len(_sort_cols), na_position="last")
+        .head(30)
         .reset_index(drop=True)
     )
 
@@ -457,8 +463,14 @@ def open_payment_dialog():
             except ValueError:
                 return str(v)
 
+        def _fmt_pay_dt(row_idx):
+            dt_val = today_pay_df.at[row_idx, "_dt_sort"] if "_dt_sort" in today_pay_df.columns else pd.NaT
+            if pd.notna(dt_val):
+                return dt_val.strftime("%Y-%m-%d %H:%M:%S")
+            return str(today_pay_df.at[row_idx, "수신일시"]).strip()
+
         pay_disp = pd.DataFrame({
-            "시각": today_pay_df["수신일시"].astype(str).str.slice(11, 19),
+            "일시": [_fmt_pay_dt(i) for i in range(len(today_pay_df))],
             "구분": today_pay_df.get("구분", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_gubun),
             "입금자 / 상세": today_pay_df.get("입금자_상세", pd.Series([""] * len(today_pay_df))),
             "금액": today_pay_df.get("금액", pd.Series([""] * len(today_pay_df))).apply(_fmt_pay_amt),
