@@ -306,15 +306,28 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
     tracker[store_key] = today_s
 
 
-h_col1, h_col2, h_col3 = st.columns([2.3, 1.0, 0.85], vertical_alignment="center")
+h_col1, h_date, h_day, h_col2, h_col3 = st.columns([1.35, 1.15, 0.55, 1.0, 0.75], vertical_alignment="center")
 with h_col1:
-    st.markdown('<div class="app-title">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-title" style="white-space:nowrap;">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
 with h_col2:
     selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
 with h_col3:
     if st.button("새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+date_widget_key = f"att_sel_date_{selected_store}"
+with h_date:
+    sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
+    date_str = sel_date.strftime("%Y-%m-%d")
+with h_day:
+    weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+    w_kr = weekdays_kr[sel_date.weekday()]
+    w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
+    st.markdown(
+        f'<div style="font-size:1.12rem; font-weight:800; color:{w_color}; white-space:nowrap;">{w_kr}</div>',
+        unsafe_allow_html=True,
+    )
 
 store_cfg = STORES[selected_store]
 app_cfg = load_store_settings(store_cfg["db_id"], selected_store)
@@ -747,10 +760,6 @@ def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
 # ==============================================================================
 # 상단 상태 반응형 퀵 팝업 버튼 바 (데이터가 생기면 색상·문구 자동 강조)
 # ==============================================================================
-date_widget_key = f"att_sel_date_{selected_store}"
-cur_sel_date_for_dlg = st.session_state.get(date_widget_key, kst_today())
-cur_date_str_for_dlg = cur_sel_date_for_dlg.strftime("%Y-%m-%d")
-
 if show_pay_board:
     qb1, qb2, qb3 = st.columns(3)
     with qb1:
@@ -771,10 +780,10 @@ if show_pay_board:
     with qb3:
         if pending_att_cnt > 0:
             if st.button(f"● 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
-                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+                open_manager_dialog(sel_date, date_str)
         else:
             if st.button("매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
-                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+                open_manager_dialog(sel_date, date_str)
 else:
     qb2, qb3 = st.columns(2)
     with qb2:
@@ -787,10 +796,10 @@ else:
     with qb3:
         if pending_att_cnt > 0:
             if st.button(f"● 매니저 승인 대기 {pending_att_cnt}건", key="qbtn_mgr_alert", use_container_width=True):
-                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+                open_manager_dialog(sel_date, date_str)
         else:
             if st.button("매니저 확인 (승인완료)", key="qbtn_mgr_idle", use_container_width=True):
-                open_manager_dialog(cur_sel_date_for_dlg, cur_date_str_for_dlg)
+                open_manager_dialog(sel_date, date_str)
 
 active_emp_names = []
 if not df_emp.empty:
@@ -811,55 +820,37 @@ if not df_att.empty:
     df_att["날짜_dt"] = pd.to_datetime(df_att["날짜"], errors="coerce").dt.date
     df_att["총시간(소수)"] = pd.to_numeric(df_att["총시간(소수)"], errors="coerce").fillna(0.0)
 
-with st.container(border=True):
-    d_c1, d_c2, d_c3 = st.columns([1.15, 0.65, 2.4], vertical_alignment="center")
-    with d_c1:
-        sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
-        date_str = sel_date.strftime("%Y-%m-%d")
-    with d_c2:
-        weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-        w_kr = weekdays_kr[sel_date.weekday()]
-        w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
-        st.markdown(
-            f'<div style="font-size:1.15rem; font-weight:800; color:{w_color}; white-space:nowrap;">{w_kr}</div>',
-            unsafe_allow_html=True,
-        )
-    with d_c3:
-        st.markdown(
-            '<div style="font-size:0.86rem; color:#475569; line-height:1.45;"><b>신규 입력</b>: 하단에서 본인 이름 선택 후 저장 &nbsp;|&nbsp; <b>수정</b>: 표에서 해당 줄 체크</div>',
-            unsafe_allow_html=True,
-        )
-
-    # 확정된 주간 스케줄 기준 선택 날짜 출근 예정자 표시
-    if df_sched is not None and not df_sched.empty and "주차" in df_sched.columns and "구분" in df_sched.columns:
-        day_cols_kr = ["월", "화", "수", "목", "금", "토", "일"]
-        sel_mon_str = (sel_date - datetime.timedelta(days=sel_date.weekday())).strftime("%Y-%m-%d")
-        sel_day_col = day_cols_kr[sel_date.weekday()]
-        if sel_day_col in df_sched.columns:
-            day_sched_df = df_sched[
-                (df_sched["주차"].astype(str).str.strip() == sel_mon_str)
-                & (df_sched["구분"].astype(str).str.strip() == "확정")
-            ]
-            scheduled_items = []
-            for _, sr in day_sched_df.iterrows():
-                s_nm = str(sr.get("이름", "")).strip()
-                s_tm = str(sr.get(sel_day_col, "")).strip()
-                if s_nm and s_tm and s_tm not in ("-", "휴무", "없음", "❌휴무요청"):
-                    scheduled_items.append((s_tm, s_nm))
-            if scheduled_items:
-                scheduled_items.sort(key=lambda x: (x[0], x[1]))
-                pills = " ".join(
-                    f'<span style="display:inline-block; background:#EEF2FF; border:1px solid #C7D2FE; color:#3730A3; '
-                    f'font-size:0.82rem; font-weight:700; padding:2px 9px; border-radius:999px; margin:2px 4px 2px 0;">'
-                    f'{nm} {tm}</span>'
-                    for tm, nm in scheduled_items
-                )
-                st.markdown(
-                    f'<div style="margin-top:0.45rem; padding-top:0.45rem; border-top:1px dashed #E2E8F0; line-height:1.7;">'
-                    f'<span style="font-size:0.84rem; font-weight:800; color:#312E81; margin-right:6px;">'
-                    f'▪ {sel_date.strftime("%m/%d")}({sel_day_col}) 출근 예정 ({len(scheduled_items)}명):</span> {pills}</div>',
-                    unsafe_allow_html=True,
-                )
+# 확정된 주간 스케줄 기준 선택 날짜 출근 예정자 표시 (등록된 날에만 컴팩트 1줄 표시)
+if df_sched is not None and not df_sched.empty and "주차" in df_sched.columns and "구분" in df_sched.columns:
+    day_cols_kr = ["월", "화", "수", "목", "금", "토", "일"]
+    sel_mon_str = (sel_date - datetime.timedelta(days=sel_date.weekday())).strftime("%Y-%m-%d")
+    sel_day_col = day_cols_kr[sel_date.weekday()]
+    if sel_day_col in df_sched.columns:
+        day_sched_df = df_sched[
+            (df_sched["주차"].astype(str).str.strip() == sel_mon_str)
+            & (df_sched["구분"].astype(str).str.strip() == "확정")
+        ]
+        scheduled_items = []
+        for _, sr in day_sched_df.iterrows():
+            s_nm = str(sr.get("이름", "")).strip()
+            s_tm = str(sr.get(sel_day_col, "")).strip()
+            if s_nm and s_tm and s_tm not in ("-", "휴무", "없음", "❌휴무요청"):
+                scheduled_items.append((s_tm, s_nm))
+        if scheduled_items:
+            scheduled_items.sort(key=lambda x: (x[0], x[1]))
+            pills = " ".join(
+                f'<span style="display:inline-block; background:#EEF2FF; border:1px solid #C7D2FE; color:#3730A3; '
+                f'font-size:0.82rem; font-weight:700; padding:2px 9px; border-radius:999px; margin:2px 4px 2px 0;">'
+                f'{nm} {tm}</span>'
+                for tm, nm in scheduled_items
+            )
+            st.markdown(
+                f'<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; '
+                f'padding:0.45rem 0.85rem; margin:0.25rem 0 0.2rem 0; line-height:1.7;">'
+                f'<span style="font-size:0.84rem; font-weight:800; color:#312E81; margin-right:6px;">'
+                f'▪ {sel_date.strftime("%m/%d")}({sel_day_col}) 출근 예정 ({len(scheduled_items)}명):</span> {pills}</div>',
+                unsafe_allow_html=True,
+            )
 
 if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.success(st.session_state["edited_banner"])
@@ -944,6 +935,7 @@ with left_col:
     render_section_banner(
         "2. 출퇴근 시간 입력 / 수정",
         badge=("수정 모드" if mode == "기존 수정" else "신규 입력"),
+        subtitle="신규 입력: 본인 이름 선택 후 저장 | 수정: 표에서 해당 줄 체크",
         accent=("amber" if mode == "기존 수정" else "blue"),
     )
 
@@ -1119,7 +1111,7 @@ with right_col:
     if not is_emp_selected:
         render_section_banner("3. 개인별 월별 근무시간 조회", badge="월별 누적", accent="indigo")
         with st.container(border=True):
-            st.info("좌측 **'2. 출퇴근 시간 입력/수정'**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
+            st.info("좌측 **2. 출퇴근 시간 입력/수정**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
     else:
         render_section_banner(f"3. {real_emp_name} 님 월별 근무시간", badge="월별 누적", accent="indigo")
 
