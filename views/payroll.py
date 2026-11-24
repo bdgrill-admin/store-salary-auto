@@ -36,6 +36,29 @@ from ui_styles import apply_base_theme, render_section_banner
 
 STORES = load_all_stores()
 SENDER_APP_PASSWORD = get_secret("SENDER_APP_PASSWORD", "")
+KST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def kst_today() -> datetime.date:
+    return datetime.datetime.now(KST).date()
+
+
+def get_ongoing_period(ref_date: datetime.date, start_day: int = 5):
+    """현재 날짜(ref_date)가 속해 있는 진행 중 정산 기간(start_day ~ 익월 start_day-1)을 반환합니다."""
+    if ref_date.day >= start_day:
+        m_start = ref_date.replace(day=start_day)
+        if ref_date.month == 12:
+            next_m = ref_date.replace(year=ref_date.year + 1, month=1, day=start_day)
+        else:
+            next_m = ref_date.replace(month=ref_date.month + 1, day=start_day)
+        m_end = next_m - datetime.timedelta(days=1)
+    else:
+        if ref_date.month == 1:
+            m_start = ref_date.replace(year=ref_date.year - 1, month=12, day=start_day)
+        else:
+            m_start = ref_date.replace(month=ref_date.month - 1, day=start_day)
+        m_end = ref_date.replace(day=start_day) - datetime.timedelta(days=1)
+    return m_start, m_end
 
 
 def apply_clean_style():
@@ -211,6 +234,8 @@ def fetch_and_calculate_salary(
     base_tax_rate: float,
     high_tax_rate: float,
     high_tax_threshold: int,
+    ongoing_start: datetime.date = None,
+    ongoing_end: datetime.date = None,
 ):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
@@ -233,6 +258,11 @@ def fetch_and_calculate_salary(
 
     warnings = []
     attendance_map = {}
+    period_all_mins = {}
+    period_pending_cnt = 0
+    ongoing_all_mins = {}
+    ongoing_approved_mins = {}
+    ongoing_pending_cnt = 0
 
     att_rows = values_map.get("통합근태DB", [])
     if len(att_rows) >= 2:
@@ -262,15 +292,26 @@ def fetch_and_calculate_salary(
                 warnings.append(f"⚠️ [{emp_name}] {raw_d} (DB {row_num}행): 날짜 형식 오류")
                 continue
 
+            hm_val = str(r[hm_i]).strip()
+            mins = parse_hhmm_to_minutes(hm_val)
+            is_checked = str(r[app_i]).strip().upper() == "TRUE" if len(r) > app_i else False
+
+            if ongoing_start and ongoing_end and (ongoing_start <= d_obj <= ongoing_end) and mins > 0:
+                ongoing_all_mins[emp_name] = ongoing_all_mins.get(emp_name, 0) + mins
+                if is_checked:
+                    ongoing_approved_mins[emp_name] = ongoing_approved_mins.get(emp_name, 0) + mins
+                else:
+                    ongoing_pending_cnt += 1
+
             if start_date <= d_obj <= end_date:
-                hm_val = str(r[hm_i]).strip()
-                mins = parse_hhmm_to_minutes(hm_val)
                 if mins <= 0:
                     warnings.append(f"⚠️ [{emp_name}] {d_obj.strftime('%m-%d')} (DB {row_num}행): 근무시간 누락/오류 ({hm_val})")
                     continue
 
-                is_checked = str(r[app_i]).strip().upper() == "TRUE" if len(r) > app_i else False
+                period_all_mins[emp_name] = period_all_mins.get(emp_name, 0) + mins
+
                 if not is_checked:
+                    period_pending_cnt += 1
                     s_t = r[s_i].strip() if len(r) > s_i else ""
                     e_t = r[e_i].strip() if len(r) > e_i else ""
                     warnings.append(
@@ -305,6 +346,9 @@ def fetch_and_calculate_salary(
     part_list = []
     processed_lookup_names = set()
 
+    period_all_gross, period_all_net, period_approved_net = 0, 0, 0
+    ongoing_all_gross, ongoing_all_net, ongoing_approved_net = 0, 0, 0
+
     for rec in part_records:
         report_name = str(rec.get("이름", "")).strip()
         if not report_name:
@@ -315,16 +359,40 @@ def fetch_and_calculate_salary(
         if memo_val and "퇴사" not in memo_val and len(memo_val) <= 5:
             lookup_name = memo_val
 
+        wage = clean_int(rec.get("시급", 0))
         processed_lookup_names.add(lookup_name)
+
+        # 선택 기간 실시간 합계 (미승인 포함)
+        p_all_m = period_all_mins.get(lookup_name, 0)
+        if p_all_m > 0:
+            g_all = int(round(wage * (p_all_m / 60.0)))
+            r_all = high_tax_rate if g_all >= high_tax_threshold else base_tax_rate
+            period_all_gross += g_all
+            period_all_net += int(round(g_all * (1.0 - r_all)))
+
+        # 현재 진행 중 정산월 실시간 합계 (미승인 포함)
+        o_all_m = ongoing_all_mins.get(lookup_name, 0)
+        if o_all_m > 0:
+            og_all = int(round(wage * (o_all_m / 60.0)))
+            or_all = high_tax_rate if og_all >= high_tax_threshold else base_tax_rate
+            ongoing_all_gross += og_all
+            ongoing_all_net += int(round(og_all * (1.0 - or_all)))
+
+        o_app_m = ongoing_approved_mins.get(lookup_name, 0)
+        if o_app_m > 0:
+            og_app = int(round(wage * (o_app_m / 60.0)))
+            or_app = high_tax_rate if og_app >= high_tax_threshold else base_tax_rate
+            ongoing_approved_net += int(round(og_app * (1.0 - or_app)))
+
         att = attendance_map.get(lookup_name, {"total_min": 0, "total_hhmm": "00:00", "work_dates": ""})
         if att["total_min"] == 0:
             continue
 
-        wage = clean_int(rec.get("시급", 0))
         gross_pay = int(round(wage * (att["total_min"] / 60.0)))
         rate_float = high_tax_rate if gross_pay >= high_tax_threshold else base_tax_rate
         rate_str = f"{rate_float * 100:g}%"
         net_pay = int(round(gross_pay * (1.0 - rate_float)))
+        period_approved_net += net_pay
 
         part_list.append({
             "이름": report_name,
@@ -416,7 +484,17 @@ def fetch_and_calculate_salary(
     if not df_reg_changes.empty:
         df_reg_changes = df_reg_changes.sort_values(["발생일", "이름"], ascending=[True, True]).reset_index(drop=True)
 
-    return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings, df_reg_changes
+    realtime_info = {
+        "period_all_gross": period_all_gross,
+        "period_all_net": period_all_net,
+        "period_approved_net": period_approved_net,
+        "period_pending_cnt": period_pending_cnt,
+        "ongoing_all_gross": ongoing_all_gross,
+        "ongoing_all_net": ongoing_all_net,
+        "ongoing_approved_net": ongoing_approved_net,
+        "ongoing_pending_cnt": ongoing_pending_cnt,
+    }
+    return pd.DataFrame(ins_list), pd.DataFrame(part_list), warnings, df_reg_changes, realtime_info
 
 
 def mark_reg_changes_settled(db_id: str, start_date: datetime.date, end_date: datetime.date) -> int:
@@ -938,33 +1016,63 @@ tab_calc, tab_trend = st.tabs([
 ])
 
 with tab_calc:
+    today_kst = kst_today()
+    ongoing_s, ongoing_e = get_ongoing_period(today_kst, start_day=payroll_start_day)
+
     with st.container(border=True):
-        ctrl_1, ctrl_2, ctrl_3 = st.columns([1.3, 2.2, 1.1], vertical_alignment="bottom")
+        ctrl_1, ctrl_2 = st.columns([2.2, 1.0], vertical_alignment="bottom")
         with ctrl_1:
-            base_date = st.date_input(f"정산 기준일 (매월 {payroll_start_day}일 기준)", value=datetime.date.today())
-        start_dt, end_dt = get_settlement_period(base_date, start_day=payroll_start_day)
+            base_date = st.date_input(f"정산 기준일 (매월 {payroll_start_day}일 기준)", value=today_kst)
         with ctrl_2:
-            st.markdown(
-                f"""
-                <div style="background:#F1F5F9; border-radius:8px; padding:0.58rem 0.9rem; font-size:0.93rem; color:#1E293B;">
-                    <b>집계 기간:</b> {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')} &nbsp;(매니저 확인 완료 건만 자동 집계)
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with ctrl_3:
             if st.button("시트 새로고침", use_container_width=True):
                 st.cache_data.clear()
                 st.rerun()
 
+        start_dt, end_dt = get_settlement_period(base_date, start_day=payroll_start_day)
+        summary_slot = st.empty()
+
     try:
-        df_ins_raw, df_part_raw, warnings, df_reg_changes = fetch_and_calculate_salary(
+        df_ins_raw, df_part_raw, warnings, df_reg_changes, realtime_info = fetch_and_calculate_salary(
             store_cfg["db_id"],
             start_dt,
             end_dt,
             base_tax_rate,
             high_tax_rate,
             high_tax_threshold,
+            ongoing_s,
+            ongoing_e,
+        )
+
+        # 상단 컨트롤 카드 안에 반응형으로 집계 기간 + 파트타임 실시간 합계(미승인 포함) 표시
+        rt_cards = [
+            f"""
+            <div style="flex:1 1 240px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:10px; padding:0.7rem 0.95rem;">
+                <div style="font-size:0.78rem; font-weight:700; color:#475569;">선택 정산 집계 기간</div>
+                <div style="font-size:1.05rem; font-weight:800; color:#0F172A; margin-top:2px;">{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}</div>
+                <div style="font-size:0.78rem; color:#64748B; margin-top:2px;">확정 정산은 매니저 확인 완료 건만 반영</div>
+            </div>
+            """,
+            f"""
+            <div style="flex:1 1 260px; background:#EFF6FF; border:1px solid #BFDBFE; border-left:4px solid #2563EB; border-radius:10px; padding:0.7rem 0.95rem;">
+                <div style="font-size:0.78rem; font-weight:700; color:#1E40AF;">파트타임 실시간 전체 합계 (미승인 포함)</div>
+                <div style="font-size:1.12rem; font-weight:800; color:#1E3A8A; margin-top:2px;">{realtime_info['period_all_net']:,}원 <span style="font-size:0.8rem; font-weight:600; color:#3B82F6;">(세전 {realtime_info['period_all_gross']:,}원)</span></div>
+                <div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info['period_approved_net']:,}원 · 미승인 {realtime_info['period_pending_cnt']}건 포함</div>
+            </div>
+            """,
+        ]
+        if start_dt != ongoing_s:
+            rt_cards.append(
+                f"""
+                <div style="flex:1 1 260px; background:#ECFDF5; border:1px solid #A7F3D0; border-left:4px solid #059669; border-radius:10px; padding:0.7rem 0.95rem;">
+                    <div style="font-size:0.78rem; font-weight:700; color:#065F46;">현재 진행월 ({ongoing_s.strftime('%m/%d')}~{ongoing_e.strftime('%m/%d')}) 파트타임 실시간 누적</div>
+                    <div style="font-size:1.12rem; font-weight:800; color:#064E3B; margin-top:2px;">{realtime_info['ongoing_all_net']:,}원 <span style="font-size:0.8rem; font-weight:600; color:#059669;">(세전 {realtime_info['ongoing_all_gross']:,}원)</span></div>
+                    <div style="font-size:0.78rem; color:#475569; margin-top:2px;">승인분 {realtime_info['ongoing_approved_net']:,}원 · 미승인 {realtime_info['ongoing_pending_cnt']}건 포함</div>
+                </div>
+                """
+            )
+        summary_slot.markdown(
+            f'<div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:4px;">{"".join(rt_cards)}</div>',
+            unsafe_allow_html=True,
         )
 
         if warnings:
@@ -1441,21 +1549,104 @@ with tab_trend:
             k3.metric(f"최저 지출 월 ({min_row['정산월']})", f"{int(min_row['총인건비']):,}원")
             k4.metric("파트타임(변동급) 비중", f"{part_ratio:.1f}%" if part_ratio > 0 else "-")
 
-        st.markdown('<div class="section-title">1. 월별 매출 · 인건비 및 인건비율 추이</div>', unsafe_allow_html=True)
-        if has_sales:
-            ch1, ch2 = st.columns(2)
-            with ch1:
-                with st.container(border=True):
-                    st.caption("📊 월별 총매출 vs 총인건비 추이")
-                    st.bar_chart(valid_sales_df.set_index("정산월")[["총매출", "총인건비"]], height=300)
-            with ch2:
-                with st.container(border=True):
-                    st.caption("📉 매출 대비 인건비율 추이 (%)")
-                    st.line_chart(valid_sales_df.set_index("정산월")[["인건비율(%)"]], height=300)
-        else:
-            with st.container(border=True):
-                st.bar_chart(df_monthly.set_index("정산월")[["총인건비"]], height=320)
+        def _gradient_cell_style(val, positive_is_good: bool = True, thresholds=(5.0, 15.0, 30.0)):
+            try:
+                num = float(val)
+            except (ValueError, TypeError):
+                return ""
+            if pd.isna(num) or num == 0:
+                return "color: #64748B;"
 
+            is_good = (num > 0) if positive_is_good else (num < 0)
+            mag = abs(num)
+            t1, t2, t3 = thresholds
+            if mag < t1:
+                lvl = 0
+            elif mag < t2:
+                lvl = 1
+            elif mag < t3:
+                lvl = 2
+            else:
+                lvl = 3
+
+            blue_palette = [
+                "color: #3B82F6; background-color: #EFF6FF; font-weight: 600;",
+                "color: #2563EB; background-color: #DBEAFE; font-weight: 700;",
+                "color: #1D4ED8; background-color: #BFDBFE; font-weight: 700;",
+                "color: #1E3A8A; background-color: #93C5FD; font-weight: 800;",
+            ]
+            red_palette = [
+                "color: #EF4444; background-color: #FEF2F2; font-weight: 600;",
+                "color: #DC2626; background-color: #FEE2E2; font-weight: 700;",
+                "color: #B91C1C; background-color: #FECACA; font-weight: 700;",
+                "color: #7F1D1D; background-color: #FCA5A5; font-weight: 800;",
+            ]
+            return blue_palette[lvl] if is_good else red_palette[lvl]
+
+        def _apply_col_style(styler, fn, cols):
+            valid = [c for c in cols if c in styler.data.columns]
+            if not valid:
+                return styler
+            if hasattr(styler, "map"):
+                return styler.map(fn, subset=valid)
+            return styler.applymap(fn, subset=valid)
+
+        # ======================================================================
+        # 1. 월별 매출 · 인건비 상세 내역 (최신순 정렬 + 구간별 그라데이션)
+        # ======================================================================
+        render_section_banner(
+            "1. 월별 매출 · 인건비 상세 내역",
+            badge="최신순",
+            subtitle="파란색(긍정: 인건비 절감 · 목표 이내) / 빨간색(부정: 인건비 증가 · 목표 초과) — 폭이 클수록 진함",
+            accent="blue",
+        )
+        df_monthly_disp = df_monthly.copy()
+        df_monthly_disp["전월대비인건비증감"] = df_monthly_disp["총인건비"].diff().fillna(0).astype(int)
+        df_monthly_disp = df_monthly_disp.sort_values("정산월", ascending=False).reset_index(drop=True)
+
+        if has_sales:
+            disp_cols = [
+                "정산월", "총매출", "정규직", "파트타임", "총인건비",
+                "전월대비인건비증감", "인건비율(%)", "시간당매출(SPLH)"
+            ]
+        else:
+            disp_cols = ["정산월", "정규직", "파트타임", "총인건비", "전월대비인건비증감"]
+
+        styler_monthly = df_monthly_disp[disp_cols].style
+        styler_monthly = _apply_col_style(
+            styler_monthly,
+            lambda v: _gradient_cell_style(v, positive_is_good=False, thresholds=(1_000_000, 2_500_000, 5_000_000)),
+            ["전월대비인건비증감"],
+        )
+        if has_sales:
+            styler_monthly = _apply_col_style(
+                styler_monthly,
+                lambda v: (
+                    "color: #64748B;"
+                    if (pd.isna(v) or float(v) <= 0)
+                    else _gradient_cell_style(float(v) - target_labor_pct, positive_is_good=False, thresholds=(2.0, 5.0, 10.0))
+                ),
+                ["인건비율(%)"],
+            )
+
+        st.dataframe(
+            styler_monthly,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "총매출": st.column_config.NumberColumn("총 매출", format="%,d"),
+                "정규직": st.column_config.NumberColumn("정규직(상세)", format="%,d"),
+                "파트타임": st.column_config.NumberColumn("파트타임(상세)", format="%,d"),
+                "총인건비": st.column_config.NumberColumn("총 인건비", format="%,d"),
+                "전월대비인건비증감": st.column_config.NumberColumn("전월 대비 증감", format="%+,d"),
+                "인건비율(%)": st.column_config.NumberColumn("인건비율", format="%.1f%%"),
+                "시간당매출(SPLH)": st.column_config.NumberColumn("시간당 매출", format="%,d원"),
+            },
+        )
+
+        # ======================================================================
+        # 2. 전년 동월 대비(YoY) 매출 · 인건비 증감 현황 (최신순 + 그라데이션)
+        # ======================================================================
         df_monthly_calc = df_monthly.copy()
         df_monthly_calc["월번호"] = df_monthly_calc["정산월"].str.split(".").str[1]
 
@@ -1471,6 +1662,7 @@ with tab_trend:
                 pct_sales = (diff_sales / pr["총매출"] * 100) if (r["총매출"] > 0 and pr["총매출"] > 0) else 0.0
                 diff_ratio = round(r["인건비율(%)"] - pr["인건비율(%)"], 1) if (r["총매출"] > 0 and pr["총매출"] > 0) else 0.0
                 yoy_records.append({
+                    "_sort_ym": r["정산월"],
                     "비교월": f"{prev_year_ym} → {r['정산월']}",
                     "작년매출": int(pr["총매출"]),
                     "올해매출": int(r["총매출"]),
@@ -1483,10 +1675,42 @@ with tab_trend:
                 })
 
         if yoy_records:
-            st.markdown('<div class="section-title">2. 전년 동월 대비(YoY) 매출 · 인건비 증감 현황</div>', unsafe_allow_html=True)
-            df_yoy = pd.DataFrame(yoy_records)
+            render_section_banner(
+                "2. 전년 동월 대비(YoY) 매출 · 인건비 증감 현황",
+                badge="최신순",
+                subtitle="파란색(긍정: 매출 증가 · 인건비/비율 감소) / 빨간색(부정: 매출 감소 · 인건비/비율 증가)",
+                accent="indigo",
+            )
+            df_yoy = (
+                pd.DataFrame(yoy_records)
+                .sort_values("_sort_ym", ascending=False)
+                .drop(columns=["_sort_ym"])
+                .reset_index(drop=True)
+            )
+            styler_yoy = df_yoy.style
+            styler_yoy = _apply_col_style(
+                styler_yoy,
+                lambda v: _gradient_cell_style(v, positive_is_good=True, thresholds=(5.0, 15.0, 30.0)),
+                ["매출증감률(%)"],
+            )
+            styler_yoy = _apply_col_style(
+                styler_yoy,
+                lambda v: _gradient_cell_style(v, positive_is_good=False, thresholds=(1_000_000, 3_000_000, 5_000_000)),
+                ["인건비증감액"],
+            )
+            styler_yoy = _apply_col_style(
+                styler_yoy,
+                lambda v: _gradient_cell_style(v, positive_is_good=False, thresholds=(5.0, 15.0, 30.0)),
+                ["인건비증감률(%)"],
+            )
+            styler_yoy = _apply_col_style(
+                styler_yoy,
+                lambda v: _gradient_cell_style(v, positive_is_good=False, thresholds=(2.0, 5.0, 10.0)),
+                ["인건비율변화(%p)"],
+            )
+
             st.dataframe(
-                df_yoy,
+                styler_yoy,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -1501,37 +1725,36 @@ with tab_trend:
                 },
             )
 
-        sec_num = "3" if yoy_records else "2"
-        st.markdown(f'<div class="section-title">{sec_num}. 월별 매출 · 인건비 상세 내역</div>', unsafe_allow_html=True)
-        df_monthly_disp = df_monthly.copy()
-        df_monthly_disp["전월대비인건비증감"] = df_monthly_disp["총인건비"].diff().fillna(0).astype(int)
-
-        if has_sales:
-            disp_cols = [
-                "정산월", "총매출", "정규직", "파트타임", "총인건비",
-                "전월대비인건비증감", "인건비율(%)", "시간당매출(SPLH)"
-            ]
-        else:
-            disp_cols = ["정산월", "정규직", "파트타임", "총인건비", "전월대비인건비증감"]
-
-        st.dataframe(
-            df_monthly_disp[disp_cols],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "총매출": st.column_config.NumberColumn("총 매출", format="%,d"),
-                "정규직": st.column_config.NumberColumn("정규직(상세)", format="%,d"),
-                "파트타임": st.column_config.NumberColumn("파트타임(상세)", format="%,d"),
-                "총인건비": st.column_config.NumberColumn("총 인건비", format="%,d"),
-                "전월대비인건비증감": st.column_config.NumberColumn("전월 대비 증감", format="%+,d"),
-                "인건비율(%)": st.column_config.NumberColumn("인건비율", format="%.1f%%"),
-                "시간당매출(SPLH)": st.column_config.NumberColumn("시간당 매출", format="%,d원"),
-            },
+        # ======================================================================
+        # 3. 월별 매출 · 인건비 및 인건비율 추이 (차트)
+        # ======================================================================
+        sec_chart_num = "3" if yoy_records else "2"
+        render_section_banner(
+            f"{sec_chart_num}. 월별 매출 · 인건비 및 인건비율 추이",
+            badge="차트",
+            accent="emerald",
         )
+        if has_sales:
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                with st.container(border=True):
+                    st.caption("월별 총매출 vs 총인건비 추이")
+                    st.bar_chart(valid_sales_df.set_index("정산월")[["총매출", "총인건비"]], height=300)
+            with ch2:
+                with st.container(border=True):
+                    st.caption("매출 대비 인건비율 추이 (%)")
+                    st.line_chart(valid_sales_df.set_index("정산월")[["인건비율(%)"]], height=300)
+        else:
+            with st.container(border=True):
+                st.bar_chart(df_monthly.set_index("정산월")[["총인건비"]], height=320)
 
         if not df_staff.empty:
             sec_staff_num = "4" if yoy_records else "3"
-            st.markdown(f'<div class="section-title">{sec_staff_num}. 직원별 누적 근무시간 · 급여 요약 (상세 내역 기준)</div>', unsafe_allow_html=True)
+            render_section_banner(
+                f"{sec_staff_num}. 직원별 누적 근무시간 · 급여 요약",
+                badge="상세 내역 기준",
+                accent="slate",
+            )
 
             f_col1, _ = st.columns([1, 3])
             with f_col1:
