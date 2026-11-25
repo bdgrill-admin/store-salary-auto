@@ -148,6 +148,11 @@ def apply_clean_style():
                 flex: 0 0 96px !important;
             }
         }
+        /* 매니저 팝업 체크박스 시간 가시성 강화 */
+        div[data-testid="stDialog"] [data-testid="stCheckbox"] label p {
+            font-size: 1.02rem !important;
+            line-height: 1.65 !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -605,7 +610,11 @@ def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
                 st.divider()
                 row_checks = []
                 for _, r in pending_att_df.iterrows():
-                    chk_label = f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}` ({r['총시간(h:m)']})"
+                    chk_label = (
+                        f"[{r['날짜'][5:]}] **{r['이름']}** ({r.get('근무타임', '')}) "
+                        f":blue-background[**{r['시작시간']} ~ {r['종료시간']}**] "
+                        f"**({r['총시간(h:m)']})**"
+                    )
                     checked = st.checkbox(
                         chk_label,
                         value=True,
@@ -657,7 +666,12 @@ def open_manager_dialog(cur_sel_date: datetime.date, cur_date_str: str):
                 with st.form(key=f"dlg_mgr_unapprove_form_{selected_store}", border=False):
                     unapp_checks = []
                     for _, r in approved_day.iterrows():
-                        lbl = f"**{r['이름']}** ({r.get('근무타임', '')}) `{r['시작시간']}~{r['종료시간']}`"
+                        tot_hm = str(r.get("총시간(h:m)", "")).strip()
+                        tot_txt = f" **({tot_hm})**" if tot_hm else ""
+                        lbl = (
+                            f"**{r['이름']}** ({r.get('근무타임', '')}) "
+                            f":blue-background[**{r['시작시간']} ~ {r['종료시간']}**]{tot_txt}"
+                        )
                         chk = st.checkbox(
                             lbl,
                             value=False,
