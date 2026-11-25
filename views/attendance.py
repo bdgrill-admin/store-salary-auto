@@ -94,6 +94,60 @@ def apply_clean_style():
             color: #0F172A !important;
             border-color: #94A3B8 !important;
         }
+        /* 출퇴근기록부 상단 타이틀·날짜·요일·매장·새로고침 반응형 간격 보정 */
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 0.65rem !important;
+        }
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: fit-content !important;
+            padding-right: 0.35rem !important;
+        }
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+            flex: 0 1 180px !important;
+            min-width: 155px !important;
+            max-width: 195px !important;
+        }
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(3) {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: fit-content !important;
+            margin-right: auto !important;
+        }
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(4) {
+            flex: 0 1 190px !important;
+            min-width: 140px !important;
+            max-width: 220px !important;
+        }
+        .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(5) {
+            flex: 0 0 110px !important;
+            min-width: 96px !important;
+            max-width: 130px !important;
+        }
+        @media (max-width: 640px) {
+            .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
+                flex: 1 1 100% !important;
+                width: 100% !important;
+            }
+            .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+                flex: 1 1 58% !important;
+                max-width: none !important;
+            }
+            .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(3) {
+                flex: 0 0 auto !important;
+                margin-right: 0 !important;
+            }
+            .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(4) {
+                flex: 1 1 55% !important;
+                max-width: none !important;
+            }
+            .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(5) {
+                flex: 0 0 96px !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -306,28 +360,30 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
     tracker[store_key] = today_s
 
 
-h_col1, h_date, h_day, h_col2, h_col3 = st.columns([1.35, 1.15, 0.55, 1.0, 0.75], vertical_alignment="center")
-with h_col1:
-    st.markdown('<div class="app-title" style="white-space:nowrap;">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
-with h_col2:
-    selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
-with h_col3:
-    if st.button("새로고침", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+with st.container(key="att_top_header"):
+    h_col1, h_date, h_day, h_col2, h_col3 = st.columns([1.05, 1.0, 0.45, 1.0, 0.7], vertical_alignment="center")
+    with h_col1:
+        st.markdown('<div class="app-title" style="white-space:nowrap;">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
+    with h_col2:
+        selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
+    with h_col3:
+        if st.button("새로고침", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
-date_widget_key = f"att_sel_date_{selected_store}"
-with h_date:
-    sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
-    date_str = sel_date.strftime("%Y-%m-%d")
-with h_day:
-    weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-    w_kr = weekdays_kr[sel_date.weekday()]
-    w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
-    st.markdown(
-        f'<div style="font-size:1.12rem; font-weight:800; color:{w_color}; white-space:nowrap;">{w_kr}</div>',
-        unsafe_allow_html=True,
-    )
+    date_widget_key = f"att_sel_date_{selected_store}"
+    with h_date:
+        sel_date = st.date_input("조회 및 입력 날짜", value=kst_today(), key=date_widget_key, label_visibility="collapsed")
+        date_str = sel_date.strftime("%Y-%m-%d")
+    with h_day:
+        weekdays_kr = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        w_kr = weekdays_kr[sel_date.weekday()]
+        w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
+        st.markdown(
+            f'<div style="font-size:1.05rem; font-weight:800; color:{w_color}; white-space:nowrap; '
+            f'background:#F1F5F9; padding:0.32rem 0.72rem; border-radius:8px; display:inline-block;">{w_kr}</div>',
+            unsafe_allow_html=True,
+        )
 
 store_cfg = STORES[selected_store]
 app_cfg = load_store_settings(store_cfg["db_id"], selected_store)

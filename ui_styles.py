@@ -71,8 +71,9 @@ def apply_base_theme(max_width: int = 1360):
             overflow-wrap: break-word;
         }}
 
-        /* 메인 컨테이너 반응형 여백 */
-        .block-container {{
+        /* 메인 컨테이너 반응형 여백 (Streamlit 1.59+ stMainBlockContainer 동시 대응) */
+        .block-container,
+        div[data-testid="stMainBlockContainer"] {{
             padding-top: 2.3rem !important;
             padding-bottom: 3rem !important;
             padding-left: 1.5rem !important;
@@ -310,9 +311,10 @@ def apply_base_theme(max_width: int = 1360):
             gap: 0.75rem !important;
         }}
 
-        /* ===== 반응형 브레이크포인트 1: 반화면 / 태블릿 (1100px 이하) ===== */
+        /* ===== 반응형 브레이크포인트 1: 반화면 / 태블릿 / 소형 POS (1100px 이하) ===== */
         @media (max-width: 1100px) {{
-            .block-container {{
+            .block-container,
+            div[data-testid="stMainBlockContainer"] {{
                 padding-left: 1rem !important;
                 padding-right: 1rem !important;
                 padding-top: 2rem !important;
@@ -321,9 +323,10 @@ def apply_base_theme(max_width: int = 1360):
                 flex-wrap: wrap !important;
             }}
             div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
-                min-width: min(100%, 240px) !important;
-                flex: 1 1 240px !important;
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+            div[data-testid="stHorizontalBlock"] > div[data-testid="stLayoutWrapper"] {{
+                min-width: min(100%, 200px) !important;
+                flex: 1 1 200px !important;
             }}
             .page-hero-title, .app-title {{
                 font-size: 1.32rem !important;
@@ -335,13 +338,15 @@ def apply_base_theme(max_width: int = 1360):
 
         /* ===== 반응형 브레이크포인트 2: 모바일 (640px 이하) ===== */
         @media (max-width: 640px) {{
-            .block-container {{
+            .block-container,
+            div[data-testid="stMainBlockContainer"] {{
                 padding-left: 0.65rem !important;
                 padding-right: 0.65rem !important;
                 padding-top: 1.6rem !important;
             }}
             div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+            div[data-testid="stHorizontalBlock"] > div[data-testid="stLayoutWrapper"] {{
                 min-width: 100% !important;
                 flex: 1 1 100% !important;
                 width: 100% !important;
