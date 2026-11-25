@@ -92,13 +92,13 @@ def load_staff_sheets(db_id: str):
 
     def read_tab(tab_name: str, expected_cols: list, is_reg: bool = False):
         if tab_name not in titles:
-            return pd.DataFrame(columns=expected_cols)
+            return pd.DataFrame(columns=expected_cols + ["_sheet_row"])
         ws = db_ss.worksheet(tab_name)
         rows = ws.get_all_values()
         out = []
         if len(rows) >= 2:
             headers = [c.strip() for c in rows[0]]
-            for r in rows[1:]:
+            for row_idx, r in enumerate(rows[1:], start=2):
                 d = {headers[j]: (r[j].strip() if j < len(r) else "") for j in range(len(headers)) if headers[j]}
                 if not d.get("이름"):
                     continue
@@ -112,16 +112,19 @@ def load_staff_sheets(db_id: str):
                     d["계약급여"] = str(c_pay) if c_pay > 0 else ""
                     d["제세금"] = str(tax_v) if tax_v > 0 else "0"
                     d["계산급여"] = str(calc_v) if calc_v > 0 else ""
+                d["_sheet_row"] = row_idx
                 out.append(d)
         df = pd.DataFrame(out)
         for col in expected_cols:
             if col not in df.columns:
                 df[col] = "재직" if col == "상태" else ""
+        if "_sheet_row" not in df.columns:
+            df["_sheet_row"] = pd.Series(dtype="int64")
         if "상태" in df.columns:
             df["상태"] = df["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")
         if "은행명" in df.columns:
             df["은행명"] = df["은행명"].apply(normalize_bank_name)
-        return df[expected_cols].copy()
+        return df[expected_cols + ["_sheet_row"]].copy()
 
     df_part = read_tab("파트타임", PART_COLS, is_reg=False)
     df_reg = read_tab("정규직", REG_COLS, is_reg=True)
@@ -196,6 +199,55 @@ def send_contract_link_via_webapp(to_email: str, emp_name: str, sign_url: str, a
         return (True, "이메일 발송 완료") if rj.get("ok") else (False, rj.get("error", "발송 실패"))
     except Exception as e:
         return False, str(e)
+
+
+def notify_single_part_wage_change(emp_name: str, old_w: int, new_w: int, app_cfg: dict, store_key: str):
+    """단건 수정 시 파트타임 시급이 변경된 경우 텔레그램 알림을 전송합니다."""
+    if not emp_name or new_w <= 0 or new_w == old_w:
+        return
+    diff = new_w - old_w
+    store_title = app_cfg.get("store_title", store_key).strip() or store_key
+    msg = f"💵 [{store_title} 파트타임 시급 변경 알림]\n• {emp_name}: {old_w:,}원 ➔ {new_w:,}원 ({diff:+,}원)"
+    dispatch_telegram_alert(app_cfg, "tg_target_wage_change", msg, default_target="대표")
+
+
+def _ensure_tab_headers(ws, expected_cols: list) -> list:
+    headers = [c.strip() for c in ws.row_values(1)]
+    if not headers:
+        headers = list(expected_cols)
+        ws.update(range_name="A1", values=[headers], value_input_option="RAW")
+        return headers
+    missing = [c for c in expected_cols if c not in headers]
+    if missing:
+        headers = headers + missing
+        ws.update(range_name="A1", values=[headers], value_input_option="RAW")
+    return headers
+
+
+def update_single_staff_row(db_id: str, tab_name: str, expected_cols: list, sheet_row: int, updated_dict: dict):
+    """직원 1명의 행만 구글 시트에 즉시 반영합니다 (전체 시트 덮어쓰기 없음)."""
+    gc = get_gspread_client()
+    db_ss = gc.open_by_key(db_id)
+    ws = db_ss.worksheet(tab_name)
+    headers = _ensure_tab_headers(ws, expected_cols)
+    cur_vals = ws.row_values(sheet_row)
+    row_out = []
+    for idx, h in enumerate(headers):
+        if h in updated_dict:
+            row_out.append(str(updated_dict[h]))
+        else:
+            row_out.append(cur_vals[idx] if idx < len(cur_vals) else "")
+    ws.update(range_name=f"A{sheet_row}", values=[row_out], value_input_option="RAW")
+
+
+def append_single_staff_row(db_id: str, tab_name: str, expected_cols: list, new_dict: dict):
+    """신규 직원 1명의 행만 구글 시트 하단에 추가합니다."""
+    gc = get_gspread_client()
+    db_ss = gc.open_by_key(db_id)
+    ws = db_ss.worksheet(tab_name)
+    headers = _ensure_tab_headers(ws, expected_cols)
+    row_out = [str(new_dict.get(h, "")) for h in headers]
+    ws.append_row(row_out, value_input_option="RAW")
 
 
 def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.DataFrame):
@@ -360,9 +412,11 @@ with st.expander("+ 신규 직원 등록하기 (파트타임 · 정규직)", exp
                 st.error("직원 이름을 입력해 주세요.")
             else:
                 join_str = new_join_date.strftime("%Y-%m-%d")
+                h_digits = re.sub(r"\D", "", new_health_exp.strip())
+                clean_health = f"{h_digits[:4]}-{h_digits[4:6]}-{h_digits[6:8]}" if len(h_digits) == 8 else new_health_exp.strip()
                 if is_reg_new:
                     calc_pay = max(0, int(new_wage) - int(new_tax))
-                    new_row = pd.DataFrame([{
+                    new_dict = {
                         "입사일자": join_str,
                         "이름": clean_nm,
                         "주민번호": format_ssn(new_ssn),
@@ -375,12 +429,11 @@ with st.expander("+ 신규 직원 등록하기 (파트타임 · 정규직)", exp
                         "메모": new_memo.strip(),
                         "이메일": new_email.strip(),
                         "텔레그램ID": new_tg.strip(),
-                        "보건증만료일": new_health_exp.strip(),
-                    }])
-                    updated_reg = pd.concat([df_reg, new_row], ignore_index=True)
-                    save_staff_tabs(store_cfg["db_id"], df_part, updated_reg)
+                        "보건증만료일": clean_health,
+                    }
+                    append_single_staff_row(store_cfg["db_id"], "정규직", REG_COLS, new_dict)
                 else:
-                    new_row = pd.DataFrame([{
+                    new_dict = {
                         "입사일자": join_str,
                         "이름": clean_nm,
                         "주민번호": format_ssn(new_ssn),
@@ -391,89 +444,223 @@ with st.expander("+ 신규 직원 등록하기 (파트타임 · 정규직)", exp
                         "메모": new_memo.strip(),
                         "이메일": new_email.strip(),
                         "텔레그램ID": new_tg.strip(),
-                        "보건증만료일": new_health_exp.strip(),
-                    }])
-                    updated_part = pd.concat([df_part, new_row], ignore_index=True)
-                    save_staff_tabs(store_cfg["db_id"], updated_part, df_reg)
+                        "보건증만료일": clean_health,
+                    }
+                    append_single_staff_row(store_cfg["db_id"], "파트타임", PART_COLS, new_dict)
                     notify_new_part_staff(clean_nm, join_str, int(new_wage), new_memo.strip(), app_cfg, selected_store)
 
-                st.success(f"🎉 [{clean_nm}] 님이 신규 등록되었습니다! 아래 전자 근로계약서에서 직원을 선택해 계약서를 발급하세요.")
+                st.session_state["staff_saved_banner"] = f"[{clean_nm}] 님이 신규 등록되었습니다! 아래 전자 근로계약서에서 직원을 선택해 계약서를 발급하세요."
                 st.cache_data.clear()
                 st.rerun()
 
-render_section_banner(
-    "1. 파트타임 직원 명부",
-    badge="시급제",
-    subtitle="시급 · 계좌 · 보건증 · 재직/퇴사 관리",
-    accent="blue",
-)
-df_part_disp = df_part.copy()
-df_part_disp["시급"] = df_part_disp["시급"].apply(clean_int)
+if st.session_state.get("staff_saved_banner"):
+    st.success(st.session_state["staff_saved_banner"])
+    st.session_state["staff_saved_banner"] = ""
 
-edited_part = st.data_editor(
-    df_part_disp,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key=f"part_ed_{selected_store}",
-    column_config={
-        "입사일자": st.column_config.TextColumn("입사일자"),
-        "이름": st.column_config.TextColumn("이름", required=True),
-        "주민번호": st.column_config.TextColumn("주민번호"),
-        "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
-        "계좌번호": st.column_config.TextColumn("계좌번호"),
-        "시급": st.column_config.NumberColumn("시급 (원)", format="%,d"),
-        "상태": st.column_config.SelectboxColumn("상태 (퇴사 시 출퇴근 제외)", options=["재직", "퇴사"], default="재직"),
-        "메모": st.column_config.TextColumn("메모 (실근무자명/퇴사일)"),
-        "이메일": st.column_config.TextColumn("이메일"),
-        "텔레그램ID": st.column_config.TextColumn("텔레그램ID"),
-        "보건증만료일": st.column_config.TextColumn("보건증만료일 (YYYY-MM-DD)"),
-    },
-)
+sel_ver = st.session_state.setdefault("staff_sel_ver", 0)
 
-render_section_banner(
-    "2. 정규직 직원 명부",
-    badge="월급제",
-    subtitle="계약급여 - 제세금 = 계산급여 자동 산출",
-    accent="indigo",
-)
-st.caption("계약급여와 매월 고정 공제되는 제세금(4대보험+소득세)을 입력하면 계산급여(고정 실수령액)가 자동 계산됩니다.")
 
-df_reg_disp = df_reg.copy()
-df_reg_disp["계약급여"] = df_reg_disp["계약급여"].apply(clean_int)
-df_reg_disp["제세금"] = df_reg_disp["제세금"].apply(clean_int)
-df_reg_disp["계산급여"] = (df_reg_disp["계약급여"] - df_reg_disp["제세금"]).clip(lower=0)
+def _norm_date_text(s: str) -> str:
+    t = str(s).strip()
+    digits = re.sub(r"\D", "", t)
+    if len(digits) == 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return t
 
-edited_reg = st.data_editor(
-    df_reg_disp,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key=f"reg_ed_{selected_store}",
-    column_config={
-        "입사일자": st.column_config.TextColumn("입사일자"),
-        "이름": st.column_config.TextColumn("이름", required=True),
-        "주민번호": st.column_config.TextColumn("주민번호"),
-        "은행명": st.column_config.SelectboxColumn("은행명", options=BANK_OPTIONS),
-        "계좌번호": st.column_config.TextColumn("계좌번호"),
-        "계약급여": st.column_config.NumberColumn("계약급여 (원)", format="%,d"),
-        "제세금": st.column_config.NumberColumn("제세금 (공제액)", format="%,d"),
-        "계산급여": st.column_config.NumberColumn("계산급여 (계약-제세금)", format="%,d", disabled=True),
-        "상태": st.column_config.SelectboxColumn("상태 (퇴사 시 정산 제외)", options=["재직", "퇴사"], default="재직"),
-        "메모": st.column_config.TextColumn("메모 (직책/퇴사일)"),
-        "이메일": st.column_config.TextColumn("이메일"),
-        "텔레그램ID": st.column_config.TextColumn("텔레그램ID"),
-        "보건증만료일": st.column_config.TextColumn("보건증만료일 (YYYY-MM-DD)"),
-    },
-)
 
-if st.button("수정된 직원 명부 · 시급/계좌 · 보건증 정보 저장하기", type="primary", use_container_width=True):
-    with st.spinner("통합근태DB 시트에 저장 중..."):
-        save_staff_tabs(store_cfg["db_id"], edited_part, edited_reg)
-        notify_part_wage_changes(df_part, edited_part, app_cfg, selected_store)
-        st.success("파트타임 및 정규직 직원 명부가 모두 저장되었습니다.")
-        st.cache_data.clear()
-        st.rerun()
+# ==============================================================================
+# 1. 파트타임 직원 명부 (선택 → 빠른 단건 수정 폼)
+# ==============================================================================
+p_hdr1, p_hdr2 = st.columns([3.2, 1.0], vertical_alignment="center")
+with p_hdr1:
+    render_section_banner(
+        "1. 파트타임 직원 명부",
+        badge="시급제",
+        subtitle="수정할 직원의 왼쪽 체크박스를 클릭하면 아래에 수정 폼이 열립니다",
+        accent="blue",
+    )
+with p_hdr2:
+    part_only_active = st.checkbox("재직자만 보기", value=True, key=f"part_active_only_{selected_store}")
+
+df_part_view = df_part[df_part["상태"] != "퇴사"].copy() if (part_only_active and not df_part.empty) else df_part.copy()
+df_part_view = df_part_view.reset_index(drop=True)
+
+sel_part_row = None
+if df_part_view.empty:
+    st.info("표시할 파트타임 직원이 없습니다.")
+else:
+    p_disp = df_part_view[PART_COLS].copy()
+    p_disp["시급"] = p_disp["시급"].apply(lambda x: f"{clean_int(x):,}원" if clean_int(x) > 0 else "")
+    p_grid_key = f"part_grid_{selected_store}_{'act' if part_only_active else 'all'}_{sel_ver}"
+    p_height = max(180, min(len(p_disp) * 32 + 42, 380))
+    p_evt = st.dataframe(
+        p_disp,
+        use_container_width=True,
+        hide_index=True,
+        row_height=30,
+        height=p_height,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=p_grid_key,
+    )
+    p_sel_rows = p_evt.selection.rows if p_evt and p_evt.selection else []
+    if p_sel_rows:
+        sel_part_row = df_part_view.iloc[p_sel_rows[0]].to_dict()
+
+if sel_part_row is not None:
+    p_sheet_r = int(sel_part_row["_sheet_row"])
+    p_old_name = str(sel_part_row.get("이름", "")).strip()
+    p_old_wage = clean_int(sel_part_row.get("시급", 0))
+    cur_p_bank = normalize_bank_name(sel_part_row.get("은행명", ""))
+    p_bank_opts = BANK_OPTIONS if (not cur_p_bank or cur_p_bank in BANK_OPTIONS) else [cur_p_bank] + BANK_OPTIONS
+    p_bank_idx = p_bank_opts.index(cur_p_bank) if cur_p_bank in p_bank_opts else 0
+    cur_p_status = str(sel_part_row.get("상태", "재직")).strip()
+    p_status_idx = 1 if cur_p_status == "퇴사" else 0
+
+    with st.container(border=True):
+        st.markdown(f"**▪ [파트타임 수정] {p_old_name}** *(입력 중 새로고침 없이 한 번에 저장됩니다)*")
+        with st.form(key=f"edit_part_form_{selected_store}_{p_sheet_r}_{sel_ver}", border=False):
+            ep1, ep2, ep3, ep4 = st.columns([1.0, 1.0, 1.0, 0.9])
+            e_p_join = ep1.text_input("입사일자", value=str(sel_part_row.get("입사일자", "")))
+            e_p_name = ep2.text_input("이름 (예금주명)*", value=p_old_name)
+            e_p_wage = ep3.number_input("시급 (원)", min_value=0, value=p_old_wage, step=100)
+            e_p_status = ep4.selectbox("상태 (퇴사 시 출퇴근 제외)", options=["재직", "퇴사"], index=p_status_idx)
+
+            ep5, ep6, ep7, ep8 = st.columns([1.0, 1.3, 1.2, 1.1])
+            e_p_bank = ep5.selectbox("은행명", options=p_bank_opts, index=p_bank_idx)
+            e_p_acct = ep6.text_input("계좌번호", value=str(sel_part_row.get("계좌번호", "")))
+            e_p_ssn = ep7.text_input("주민번호", value=str(sel_part_row.get("주민번호", "")))
+            e_p_health = ep8.text_input("보건증만료일 (YYYY-MM-DD)", value=str(sel_part_row.get("보건증만료일", "")))
+
+            ep9, ep10, ep11 = st.columns([1.2, 0.9, 1.6])
+            e_p_email = ep9.text_input("이메일", value=str(sel_part_row.get("이메일", "")))
+            e_p_tg = ep10.text_input("텔레그램ID", value=str(sel_part_row.get("텔레그램ID", "")))
+            e_p_memo = ep11.text_input("메모 (실근무자명/퇴사일)", value=str(sel_part_row.get("메모", "")))
+
+            if st.form_submit_button(f"[{p_old_name}] 파트타임 정보 저장", type="primary", use_container_width=True):
+                if not e_p_name.strip():
+                    st.error("직원 이름은 비워둘 수 없습니다.")
+                else:
+                    upd_dict = {
+                        "입사일자": _norm_date_text(e_p_join),
+                        "이름": e_p_name.strip(),
+                        "주민번호": format_ssn(e_p_ssn),
+                        "은행명": normalize_bank_name(e_p_bank),
+                        "계좌번호": e_p_acct.strip(),
+                        "시급": str(int(e_p_wage)) if int(e_p_wage) > 0 else "",
+                        "상태": e_p_status,
+                        "메모": e_p_memo.strip(),
+                        "이메일": e_p_email.strip(),
+                        "텔레그램ID": e_p_tg.strip(),
+                        "보건증만료일": _norm_date_text(e_p_health),
+                    }
+                    with st.spinner("저장 중..."):
+                        update_single_staff_row(store_cfg["db_id"], "파트타임", PART_COLS, p_sheet_r, upd_dict)
+                        notify_single_part_wage_change(e_p_name.strip(), p_old_wage, int(e_p_wage), app_cfg, selected_store)
+                    st.session_state["staff_sel_ver"] = sel_ver + 1
+                    st.session_state["staff_saved_banner"] = f"[파트타임] {e_p_name.strip()} 님 정보가 저장되었습니다."
+                    st.cache_data.clear()
+                    st.rerun()
+
+# ==============================================================================
+# 2. 정규직 직원 명부 (선택 → 빠른 단건 수정 폼)
+# ==============================================================================
+r_hdr1, r_hdr2 = st.columns([3.2, 1.0], vertical_alignment="center")
+with r_hdr1:
+    render_section_banner(
+        "2. 정규직 직원 명부",
+        badge="월급제",
+        subtitle="수정할 직원의 왼쪽 체크박스를 클릭하면 아래에 수정 폼이 열립니다",
+        accent="indigo",
+    )
+with r_hdr2:
+    reg_only_active = st.checkbox("재직자만 보기", value=True, key=f"reg_active_only_{selected_store}")
+
+df_reg_view = df_reg[df_reg["상태"] != "퇴사"].copy() if (reg_only_active and not df_reg.empty) else df_reg.copy()
+df_reg_view = df_reg_view.reset_index(drop=True)
+
+sel_reg_row = None
+if df_reg_view.empty:
+    st.info("표시할 정규직 직원이 없습니다.")
+else:
+    r_disp = df_reg_view[REG_COLS].copy()
+    r_disp["계약급여"] = r_disp["계약급여"].apply(lambda x: f"{clean_int(x):,}원" if clean_int(x) > 0 else "")
+    r_disp["제세금"] = r_disp["제세금"].apply(lambda x: f"{clean_int(x):,}원")
+    r_disp["계산급여"] = r_disp["계산급여"].apply(lambda x: f"{clean_int(x):,}원" if clean_int(x) > 0 else "")
+    r_grid_key = f"reg_grid_{selected_store}_{'act' if reg_only_active else 'all'}_{sel_ver}"
+    r_height = max(150, min(len(r_disp) * 32 + 42, 300))
+    r_evt = st.dataframe(
+        r_disp,
+        use_container_width=True,
+        hide_index=True,
+        row_height=30,
+        height=r_height,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=r_grid_key,
+    )
+    r_sel_rows = r_evt.selection.rows if r_evt and r_evt.selection else []
+    if r_sel_rows:
+        sel_reg_row = df_reg_view.iloc[r_sel_rows[0]].to_dict()
+
+if sel_reg_row is not None:
+    r_sheet_r = int(sel_reg_row["_sheet_row"])
+    r_old_name = str(sel_reg_row.get("이름", "")).strip()
+    r_old_cpay = clean_int(sel_reg_row.get("계약급여", 0))
+    r_old_tax = clean_int(sel_reg_row.get("제세금", 0))
+    cur_r_bank = normalize_bank_name(sel_reg_row.get("은행명", ""))
+    r_bank_opts = BANK_OPTIONS if (not cur_r_bank or cur_r_bank in BANK_OPTIONS) else [cur_r_bank] + BANK_OPTIONS
+    r_bank_idx = r_bank_opts.index(cur_r_bank) if cur_r_bank in r_bank_opts else 0
+    cur_r_status = str(sel_reg_row.get("상태", "재직")).strip()
+    r_status_idx = 1 if cur_r_status == "퇴사" else 0
+
+    with st.container(border=True):
+        st.markdown(f"**▪ [정규직 수정] {r_old_name}** *(저장 시 계산급여 = 계약급여 - 제세금 자동 산출)*")
+        with st.form(key=f"edit_reg_form_{selected_store}_{r_sheet_r}_{sel_ver}", border=False):
+            er1, er2, er3, er4, er5 = st.columns([1.0, 1.0, 1.1, 1.0, 0.85])
+            e_r_join = er1.text_input("입사일자", value=str(sel_reg_row.get("입사일자", "")))
+            e_r_name = er2.text_input("이름 (예금주명)*", value=r_old_name)
+            e_r_cpay = er3.number_input("계약급여 (원)", min_value=0, value=r_old_cpay, step=50000)
+            e_r_tax = er4.number_input("제세금 (공제액)", min_value=0, value=r_old_tax, step=1000)
+            e_r_status = er5.selectbox("상태 (퇴사 시 정산 제외)", options=["재직", "퇴사"], index=r_status_idx)
+
+            er6, er7, er8, er9 = st.columns([1.0, 1.3, 1.2, 1.1])
+            e_r_bank = er6.selectbox("은행명", options=r_bank_opts, index=r_bank_idx)
+            e_r_acct = er7.text_input("계좌번호", value=str(sel_reg_row.get("계좌번호", "")))
+            e_r_ssn = er8.text_input("주민번호", value=str(sel_reg_row.get("주민번호", "")))
+            e_r_health = er9.text_input("보건증만료일 (YYYY-MM-DD)", value=str(sel_reg_row.get("보건증만료일", "")))
+
+            er10, er11, er12 = st.columns([1.2, 0.9, 1.6])
+            e_r_email = er10.text_input("이메일", value=str(sel_reg_row.get("이메일", "")))
+            e_r_tg = er11.text_input("텔레그램ID", value=str(sel_reg_row.get("텔레그램ID", "")))
+            e_r_memo = er12.text_input("메모 (직책/퇴사일)", value=str(sel_reg_row.get("메모", "")))
+
+            if st.form_submit_button(f"[{r_old_name}] 정규직 정보 저장", type="primary", use_container_width=True):
+                if not e_r_name.strip():
+                    st.error("직원 이름은 비워둘 수 없습니다.")
+                else:
+                    calc_v = max(0, int(e_r_cpay) - int(e_r_tax))
+                    upd_dict = {
+                        "입사일자": _norm_date_text(e_r_join),
+                        "이름": e_r_name.strip(),
+                        "주민번호": format_ssn(e_r_ssn),
+                        "은행명": normalize_bank_name(e_r_bank),
+                        "계좌번호": e_r_acct.strip(),
+                        "계약급여": str(int(e_r_cpay)) if int(e_r_cpay) > 0 else "",
+                        "제세금": str(int(e_r_tax)),
+                        "계산급여": str(calc_v) if calc_v > 0 else "",
+                        "상태": e_r_status,
+                        "메모": e_r_memo.strip(),
+                        "이메일": e_r_email.strip(),
+                        "텔레그램ID": e_r_tg.strip(),
+                        "보건증만료일": _norm_date_text(e_r_health),
+                    }
+                    with st.spinner("저장 중..."):
+                        update_single_staff_row(store_cfg["db_id"], "정규직", REG_COLS, r_sheet_r, upd_dict)
+                    st.session_state["staff_sel_ver"] = sel_ver + 1
+                    st.session_state["staff_saved_banner"] = f"[정규직] {e_r_name.strip()} 님 정보가 저장되었습니다. (계산급여: {calc_v:,}원)"
+                    st.cache_data.clear()
+                    st.rerun()
 
 # ==============================================================================
 # 전자 근로계약서 발급 및 서명 현황 관리
