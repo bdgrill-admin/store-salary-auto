@@ -223,13 +223,17 @@ def save_staff_tabs(db_id: str, df_part_edited: pd.DataFrame, df_reg_edited: pd.
     clean_r = df_reg_edited[REG_COLS].copy()
     clean_r["은행명"] = clean_r["은행명"].apply(normalize_bank_name)
 
-    for idx, row in clean_r.iterrows():
+    c_vals, t_vals, calc_vals = [], [], []
+    for _, row in clean_r.iterrows():
         c_val = clean_int(row.get("계약급여", 0))
         t_val = clean_int(row.get("제세금", 0))
         calc_val = max(0, c_val - t_val)
-        clean_r.at[idx, "계약급여"] = str(c_val) if c_val > 0 else ""
-        clean_r.at[idx, "제세금"] = str(t_val)
-        clean_r.at[idx, "계산급여"] = str(calc_val) if calc_val > 0 else ""
+        c_vals.append(str(c_val) if c_val > 0 else "")
+        t_vals.append(str(t_val))
+        calc_vals.append(str(calc_val) if calc_val > 0 else "")
+    clean_r["계약급여"] = c_vals
+    clean_r["제세금"] = t_vals
+    clean_r["계산급여"] = calc_vals
 
     clean_r["주민번호"] = clean_r["주민번호"].apply(format_ssn)
     clean_r["상태"] = clean_r["상태"].apply(lambda x: x if str(x).strip() in ["재직", "퇴사"] else "재직")

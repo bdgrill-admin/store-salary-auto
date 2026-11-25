@@ -1149,13 +1149,15 @@ with tab_calc:
                     st.session_state["ins_editor_ver"] += 1
                     st.rerun()
 
-            for idx, r in df_ins_raw.iterrows():
-                nm = r["이름"]
-                if nm in st.session_state["prorated_overrides"]:
-                    ov = st.session_state["prorated_overrides"][nm]
-                    df_ins_raw.at[idx, "변동급여"] = ov["변동급여"]
-                    df_ins_raw.at[idx, "변동급여사유"] = ov["변동급여사유"]
-                    df_ins_raw.at[idx, "입금급여"] = clean_int(df_ins_raw.at[idx, "계산급여"]) + ov["변동급여"]
+            if st.session_state["prorated_overrides"]:
+                df_ins_raw["변동급여사유"] = df_ins_raw["변동급여사유"].fillna("").astype(object)
+                for idx, r in df_ins_raw.iterrows():
+                    nm = r["이름"]
+                    if nm in st.session_state["prorated_overrides"]:
+                        ov = st.session_state["prorated_overrides"][nm]
+                        df_ins_raw.at[idx, "변동급여"] = int(ov["변동급여"])
+                        df_ins_raw.at[idx, "변동급여사유"] = str(ov["변동급여사유"])
+                        df_ins_raw.at[idx, "입금급여"] = int(clean_int(df_ins_raw.at[idx, "계산급여"]) + ov["변동급여"])
 
         if df_ins_raw.empty:
             st.caption("ℹ️ '정규직' 탭에 재직 중인 직원이 없습니다.")
@@ -1181,15 +1183,17 @@ with tab_calc:
                     "입금급여": st.column_config.NumberColumn("입금급여 (실이체액)", format="%,d", disabled=True),
                 },
             )
-            for idx, row in df_ins_edited.iterrows():
+            ins_calc_list, ins_in_list = [], []
+            for _, row in df_ins_edited.iterrows():
                 c_pay = clean_int(row.get("계약급여", 0))
                 tax_pay = clean_int(row.get("제세금", 0))
                 var_pay = clean_int(row.get("변동급여", 0))
                 calc_pay = max(0, c_pay - tax_pay)
                 in_pay = max(0, calc_pay + var_pay)
-
-                df_ins_edited.at[idx, "계산급여"] = calc_pay
-                df_ins_edited.at[idx, "입금급여"] = in_pay
+                ins_calc_list.append(calc_pay)
+                ins_in_list.append(in_pay)
+            df_ins_edited["계산급여"] = ins_calc_list
+            df_ins_edited["입금급여"] = ins_in_list
 
         render_section_banner(
             "2. 파트타임 직원 급여 내역",
@@ -1261,6 +1265,7 @@ with tab_calc:
         )
 
         if not df_part_edited.empty:
+            p_gross_list, p_rate_list, p_net_list = [], [], []
             for idx, row in df_part_edited.iterrows():
                 orig_row = df_part_raw.loc[idx] if idx in df_part_raw.index else None
                 wage = clean_int(row.get("시급", 0))
@@ -1280,9 +1285,13 @@ with tab_calc:
 
                 net_pay = int(round(gross_pay * (1.0 - rate_float)))
 
-                df_part_edited.at[idx, "총급여"] = gross_pay
-                df_part_edited.at[idx, "공제율"] = f"{rate_float * 100:g}%"
-                df_part_edited.at[idx, "최종급여"] = net_pay
+                p_gross_list.append(gross_pay)
+                p_rate_list.append(f"{rate_float * 100:g}%")
+                p_net_list.append(net_pay)
+
+            df_part_edited["총급여"] = p_gross_list
+            df_part_edited["공제율"] = p_rate_list
+            df_part_edited["최종급여"] = p_net_list
 
         sum_reg = df_ins_edited["입금급여"].apply(clean_int).sum() if not df_ins_edited.empty else 0
         sum_part = df_part_edited["최종급여"].apply(clean_int).sum() if not df_part_edited.empty else 0
