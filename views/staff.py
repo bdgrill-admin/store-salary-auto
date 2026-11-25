@@ -84,17 +84,26 @@ def format_ssn(ssn_str):
     return str(ssn_str).strip()
 
 
-@st.cache_data(ttl=25, show_spinner="직원 명부를 불러오는 중...")
+@st.cache_data(ttl=120, show_spinner="직원 명부를 불러오는 중...")
 def load_staff_sheets(db_id: str):
     gc = get_gspread_client()
     db_ss = gc.open_by_key(db_id)
-    titles = [s.title.strip() for s in db_ss.worksheets()]
 
-    def read_tab(tab_name: str, expected_cols: list, is_reg: bool = False):
-        if tab_name not in titles:
-            return pd.DataFrame(columns=expected_cols + ["_sheet_row"])
-        ws = db_ss.worksheet(tab_name)
-        rows = ws.get_all_values()
+    raw_map = {"파트타임": [], "정규직": []}
+    try:
+        res = db_ss.values_batch_get(["'파트타임'!A:Z", "'정규직'!A:Z"])
+        vrs = res.get("valueRanges", [])
+        if len(vrs) >= 1:
+            raw_map["파트타임"] = vrs[0].get("values", [])
+        if len(vrs) >= 2:
+            raw_map["정규직"] = vrs[1].get("values", [])
+    except Exception:
+        titles = [s.title.strip() for s in db_ss.worksheets()]
+        for t in ("파트타임", "정규직"):
+            if t in titles:
+                raw_map[t] = db_ss.worksheet(t).get_all_values()
+
+    def parse_tab(rows: list, expected_cols: list, is_reg: bool = False):
         out = []
         if len(rows) >= 2:
             headers = [c.strip() for c in rows[0]]
@@ -126,8 +135,8 @@ def load_staff_sheets(db_id: str):
             df["은행명"] = df["은행명"].apply(normalize_bank_name)
         return df[expected_cols + ["_sheet_row"]].copy()
 
-    df_part = read_tab("파트타임", PART_COLS, is_reg=False)
-    df_reg = read_tab("정규직", REG_COLS, is_reg=True)
+    df_part = parse_tab(raw_map["파트타임"], PART_COLS, is_reg=False)
+    df_reg = parse_tab(raw_map["정규직"], REG_COLS, is_reg=True)
     return df_part, df_reg
 
 
@@ -619,7 +628,7 @@ with st.container(border=True):
                     st.session_state["staff_sel_ver"] = sel_ver + 1
                     st.session_state["staff_prev_p_id"] = None
                     st.session_state["staff_prev_r_id"] = None
-                    st.cache_data.clear()
+                    load_staff_sheets.clear(store_cfg["db_id"])
                     st.rerun()
     else:
         emp_type_choice = st.radio("등록할 직원 구분", ["파트타임 (시급제)", "정규직 (월급제)"], horizontal=True, key=f"new_emp_type_{selected_store}")
@@ -696,7 +705,7 @@ with st.container(border=True):
                         notify_new_part_staff(clean_nm, join_str, int(new_wage), new_memo.strip(), app_cfg, selected_store)
 
                     st.session_state["staff_saved_banner"] = f"[{clean_nm}] 님이 신규 등록되었습니다! 아래 전자 근로계약서에서 직원을 선택해 계약서를 발급하세요."
-                    st.cache_data.clear()
+                    load_staff_sheets.clear(store_cfg["db_id"])
                     st.rerun()
 
 # ==============================================================================
@@ -709,6 +718,11 @@ from contract_utils import (
     delete_contract_by_id,
     extract_birth_and_age_from_rrn,
 )
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_contracts_cached(db_id: str):
+    return load_all_contracts(st.secrets, db_id=db_id)
+
 
 st.divider()
 render_section_banner(
@@ -941,6 +955,7 @@ with st.expander("+ 새 근로계약서 링크 생성하기 (직원 선택 필�
                     "연소근로자여부": "Y" if c_is_minor else "N",
                 }
                 new_cid = create_new_contract(st.secrets, payload, db_id=store_cfg["db_id"])
+                load_contracts_cached.clear(store_cfg["db_id"])
                 sign_url = build_contract_sign_url(new_cid, selected_store)
                 extra_tags = []
                 if c_is_minor:
@@ -953,7 +968,7 @@ with st.expander("+ 새 근로계약서 링크 생성하기 (직원 선택 필�
 
 st.markdown("#### 발급 및 서명 완료 목록")
 try:
-    all_contracts = load_all_contracts(st.secrets, db_id=store_cfg["db_id"])
+    all_contracts = load_contracts_cached(store_cfg["db_id"])
     if not all_contracts:
         st.info("아직 발급된 전자 근로계약서가 없습니다.")
     else:
@@ -996,6 +1011,7 @@ try:
                         with b_col2:
                             if st.button("대기 삭제", key=f"del_c_{selected_store}_{cid_val}", use_container_width=True):
                                 if delete_contract_by_id(st.secrets, cid_val, db_id=store_cfg["db_id"]):
+                                    load_contracts_cached.clear(store_cfg["db_id"])
                                     st.toast(f"[{emp_nm}] 님의 서명대기 계약서를 삭제했습니다.")
                                     st.rerun()
                                 else:

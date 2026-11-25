@@ -226,7 +226,7 @@ if not check_login():
 # =========================================================================
 # 2. 통합근태DB · 파트타임 · 정규직 · 정규직근태변동 시트 로드 및 월 급여 계산
 # =========================================================================
-@st.cache_data(ttl=30, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
+@st.cache_data(ttl=60, show_spinner="통합근태DB에서 근무 및 직원 정보를 불러오는 중...")
 def fetch_and_calculate_salary(
     db_id: str,
     start_date: datetime.date,
@@ -650,16 +650,17 @@ def save_history_to_gsheet(hist_id: str, df_ins: pd.DataFrame, df_part: pd.DataF
     return f"구글 시트 탭 [{sheet_name}] 저장 완료", excel_bytes
 
 
-@st.cache_data(ttl=60, show_spinner="매출 관리 시트에서 월별 매출을 불러오는 중...")
+@st.cache_data(ttl=300, show_spinner="매출 관리 시트에서 월별 매출을 불러오는 중...")
 def load_gsheet_sales(sales_id: str) -> pd.DataFrame:
     if not sales_id:
         return pd.DataFrame(columns=["정산월", "총매출"])
     try:
         gc = get_gspread_client()
         ss = gc.open_by_key(sales_id)
-        titles = [ws.title.strip() for ws in ss.worksheets()]
-        ws = ss.worksheet("월별매출") if "월별매출" in titles else ss.worksheets()[0]
-        rows = ws.get_all_values()
+        try:
+            rows = ss.values_get("'월별매출'!A:C").get("values", [])
+        except Exception:
+            rows = ss.worksheets()[0].get_all_values()
         if len(rows) < 2:
             return pd.DataFrame(columns=["정산월", "총매출"])
 
@@ -684,7 +685,7 @@ def load_gsheet_sales(sales_id: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["정산월", "총매출"])
 
 
-@st.cache_data(ttl=60, show_spinner="구글 히스토리 시트에서 누적 추이를 분석하는 중...")
+@st.cache_data(ttl=300, show_spinner="구글 히스토리 시트에서 누적 추이를 분석하는 중...")
 def load_gsheet_history(hist_id: str, sales_id: str = ""):
     if not hist_id:
         return pd.DataFrame(), pd.DataFrame()

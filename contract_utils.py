@@ -109,10 +109,18 @@ def load_runtime_settings(
     return cfg
 
 
+def _get_cached_gc(secrets_dict):
+    try:
+        from store_registry import get_gspread_client
+        return get_gspread_client()
+    except Exception:
+        creds = get_google_creds(secrets_dict)
+        return gspread.authorize(creds)
+
+
 def get_contract_worksheet(secrets_dict, db_id: str = None):
     target_db_id = (db_id or DB_SPREADSHEET_ID).strip() or DB_SPREADSHEET_ID
-    creds = get_google_creds(secrets_dict)
-    gc = gspread.authorize(creds)
+    gc = _get_cached_gc(secrets_dict)
     ss = gc.open_by_key(target_db_id)
     try:
         ws = ss.worksheet("근로계약서")
@@ -126,8 +134,13 @@ def get_contract_worksheet(secrets_dict, db_id: str = None):
 
 
 def load_all_contracts(secrets_dict, db_id: str = None):
-    ws, _ = get_contract_worksheet(secrets_dict, db_id=db_id)
-    rows = ws.get_all_values()
+    target_db_id = (db_id or DB_SPREADSHEET_ID).strip() or DB_SPREADSHEET_ID
+    gc = _get_cached_gc(secrets_dict)
+    ss = gc.open_by_key(target_db_id)
+    try:
+        rows = ss.values_get("'근로계약서'!A:AI").get("values", [])
+    except Exception:
+        return []
     if len(rows) < 2:
         return []
     headers = rows[0]

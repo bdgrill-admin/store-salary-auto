@@ -70,19 +70,14 @@ def get_default_stores() -> dict:
     }
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_all_stores(include_inactive: bool = False) -> dict:
     """기준 시트의 '매장목록' 탭에서 등록된 지점 정보를 불러옵니다."""
     stores = get_default_stores()
     try:
         gc = get_gspread_client()
         ss = gc.open_by_key(MASTER_DB_ID)
-        titles = [ws.title.strip() for ws in ss.worksheets()]
-        if "매장목록" not in titles:
-            return stores
-
-        ws = ss.worksheet("매장목록")
-        rows = ws.get_all_values()
+        rows = ss.values_get("'매장목록'!A:G").get("values", [])
         if len(rows) < 2:
             return stores
 
@@ -197,18 +192,15 @@ def get_default_store_settings(store_name: str = "분당그릴") -> dict:
     }
 
 
-@st.cache_data(ttl=25, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_store_settings(db_id: str, store_name: str = "분당그릴") -> dict:
     """해당 지점 DB의 '환경설정' 탭에서 설정값을 로드합니다."""
     cfg = get_default_store_settings(store_name)
     try:
         gc = get_gspread_client()
         ss = gc.open_by_key(db_id)
-        titles = [ws.title.strip() for ws in ss.worksheets()]
-        if "환경설정" not in titles:
-            return cfg
-        ws = ss.worksheet("환경설정")
-        for r in ws.get_all_values()[1:]:
+        rows = ss.values_get("'환경설정'!A:C").get("values", [])
+        for r in rows[1:]:
             if len(r) >= 2 and r[0].strip() and r[1].strip() != "":
                 cfg[r[0].strip()] = r[1].strip()
     except Exception:

@@ -266,16 +266,18 @@ def mark_payments_confirmed(db_id: str, sheet_rows: list):
     ws.batch_update(batch_payload, value_input_option="RAW")
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_regular_changes(db_id: str) -> pd.DataFrame:
     gc = get_gspread_client()
     ss = gc.open_by_key(db_id)
-    titles = [s.title.strip() for s in ss.worksheets()]
-    tab_name = "정규직근태변동" if "정규직근태변동" in titles else ("정직원근태변동" if "정직원근태변동" in titles else "")
-    if not tab_name:
-        return pd.DataFrame()
-    ws = ss.worksheet(tab_name)
-    rows = ws.get_all_values()
+    rows = []
+    try:
+        rows = ss.values_get("'정규직근태변동'!A:Z").get("values", [])
+    except Exception:
+        try:
+            rows = ss.values_get("'정직원근태변동'!A:Z").get("values", [])
+        except Exception:
+            return pd.DataFrame()
     if len(rows) < 2:
         return pd.DataFrame()
     headers = [c.strip() for c in rows[0]]
