@@ -153,6 +153,53 @@ def apply_clean_style():
             font-size: 1.02rem !important;
             line-height: 1.65 !important;
         }
+        /* 출퇴근기록부 한눈에 보기 컴팩트 수직 간격 */
+        .block-container,
+        div[data-testid="stMainBlockContainer"] {
+            padding-top: 1.5rem !important;
+            padding-bottom: 1.8rem !important;
+        }
+        .sec-banner {
+            margin: 0.65rem 0 0.42rem 0 !important;
+            padding: 0.48rem 0.85rem !important;
+        }
+        .att-status-pill {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            border-radius: 8px;
+            padding: 0.42rem 0.78rem;
+            margin: 0.25rem 0 0.45rem 0;
+            font-size: 0.86rem;
+            font-weight: 700;
+            line-height: 1.4;
+        }
+        .att-kpi-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0.25rem 0 0.55rem 0;
+        }
+        .att-kpi-box {
+            flex: 1 1 115px;
+            background: #F8FAFC;
+            border: 1px solid #E2E8F0;
+            border-radius: 9px;
+            padding: 0.52rem 0.75rem;
+        }
+        .att-kpi-lbl {
+            font-size: 0.76rem;
+            font-weight: 700;
+            color: #64748B;
+        }
+        .att-kpi-val {
+            font-size: 1.08rem;
+            font-weight: 800;
+            color: #0F172A;
+            margin-top: 2px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -945,56 +992,70 @@ if "edited_banner" in st.session_state and st.session_state["edited_banner"]:
     st.session_state["edited_banner"] = ""
 
 # ==============================================================================
-# [메인 1] 일 근무현황 (화면 전체 폭)
+# [메인 1] 일 근무현황 (화면 전체 폭 · 당일 요약 배지 통합)
 # ==============================================================================
 selected_grid_record = None
 last_edited_row = st.session_state.get("last_edited_sheet_row", None)
 
-render_section_banner("1. 일 근무현황", badge="직원 공용", subtitle="수정할 줄 왼쪽 체크박스를 누르면 아래에서 수정할 수 있습니다", accent="blue")
+day_df = pd.DataFrame()
+day_tot_mins = 0
 if not df_att.empty and "날짜" in df_att.columns:
     day_df = df_att[df_att["날짜"] == date_str].copy().reset_index(drop=True)
-    if not day_df.empty:
-        day_df["확인상태"] = day_df["매니저확인"].apply(
-            lambda x: "✓ 확인완료" if str(x).strip().upper() == "TRUE" else "· 대기중"
-        )
-        show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
-        valid_cols = [c for c in show_cols if c in day_df.columns]
+    if not day_df.empty and "총시간(소수)" in day_df.columns:
+        day_tot_mins = int(round(day_df["총시간(소수)"].sum() * 60))
 
-        prev_sel_rows = []
-        grid_state_key = f"att_grid_{selected_store}_{date_str}"
-        if grid_state_key in st.session_state:
-            prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
+day_badge = f"출근 {len(day_df)}명 · {mins_to_korean(day_tot_mins)}" if not day_df.empty else "출근 0명"
+render_section_banner(
+    "1. 일 근무현황",
+    badge=day_badge,
+    subtitle="수정할 줄 왼쪽 체크박스를 누르면 아래에서 바로 수정됩니다",
+    accent="blue",
+)
+if not day_df.empty:
+    day_df["확인상태"] = day_df["매니저확인"].apply(
+        lambda x: "✓ 확인완료" if str(x).strip().upper() == "TRUE" else "· 대기중"
+    )
+    show_cols = ["이름", "근무타임", "시작시간", "종료시간", "총시간(h:m)", "확인상태", "비고"]
+    valid_cols = [c for c in show_cols if c in day_df.columns]
 
-        def highlight_row(row):
-            idx = row.name
-            sheet_r = day_df.loc[idx, "_sheet_row"]
-            if idx in prev_sel_rows:
-                return ["background-color: #DBEAFE; color: #1E3A8A; font-weight: 600;"] * len(row)
-            if last_edited_row is not None and sheet_r == last_edited_row:
-                return ["background-color: #DCFCE7; color: #14532D; font-weight: 600;"] * len(row)
-            return [""] * len(row)
+    prev_sel_rows = []
+    grid_state_key = f"att_grid_{selected_store}_{date_str}"
+    if grid_state_key in st.session_state:
+        prev_sel_rows = st.session_state[grid_state_key].get("selection", {}).get("rows", [])
 
-        styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
+    def highlight_row(row):
+        idx = row.name
+        sheet_r = day_df.loc[idx, "_sheet_row"]
+        if idx in prev_sel_rows:
+            return ["background-color: #DBEAFE; color: #1E3A8A; font-weight: 600;"] * len(row)
+        if last_edited_row is not None and sheet_r == last_edited_row:
+            return ["background-color: #DCFCE7; color: #14532D; font-weight: 600;"] * len(row)
+        return [""] * len(row)
 
-        grid_height = max(210, min(len(day_df) * 30 + 40, 360))
-        event = st.dataframe(
-            styled_df,
-            use_container_width=True,
-            hide_index=True,
-            row_height=29,
-            height=grid_height,
-            on_select="rerun",
-            selection_mode="single-row",
-            key=grid_state_key,
-        )
+    styled_df = day_df[valid_cols].style.apply(highlight_row, axis=1)
 
-        sel_rows = event.selection.rows if event and event.selection else []
-        if sel_rows:
-            selected_grid_record = day_df.iloc[sel_rows[0]].to_dict()
-    else:
-        st.info("해당 날짜에 등록된 근무 기록이 없습니다.")
+    grid_height = max(145, min(len(day_df) * 31 + 40, 285))
+    event = st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        row_height=29,
+        height=grid_height,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=grid_state_key,
+    )
+
+    sel_rows = event.selection.rows if event and event.selection else []
+    if sel_rows:
+        selected_grid_record = day_df.iloc[sel_rows[0]].to_dict()
 else:
-    st.info("등록된 근무 기록이 없습니다.")
+    st.markdown(
+        '<div style="background:#F8FAFC; border:1px dashed #CBD5E1; border-radius:10px; '
+        'padding:0.72rem 1rem; color:#475569; font-size:0.88rem; font-weight:600;">'
+        f'{date_str}에 등록된 근무 기록이 아직 없습니다. 아래 <b>2. 출퇴근 시간 입력</b>에서 본인 이름을 선택해 등록해 주세요.</div>',
+        unsafe_allow_html=True,
+    )
 
 if "form_reset_ver" not in st.session_state:
     st.session_state["form_reset_ver"] = 0
@@ -1004,7 +1065,7 @@ if st.session_state.get("reset_emp_selector", False):
     st.session_state["form_reset_ver"] += 1
     st.session_state["reset_emp_selector"] = False
 
-left_col, right_col = st.columns([1.5, 1.0])
+left_col, right_col = st.columns([1.65, 1.0])
 
 with left_col:
     if selected_grid_record is not None:
@@ -1023,7 +1084,7 @@ with left_col:
     render_section_banner(
         "2. 출퇴근 시간 입력 / 수정",
         badge=("수정 모드" if mode == "기존 수정" else "신규 입력"),
-        subtitle="신규 입력: 본인 이름 선택 후 저장 | 수정: 표에서 해당 줄 체크",
+        subtitle=("위 표 체크 해제 시 신규 입력으로 복귀" if mode == "기존 수정" else "이름 선택 → 시작·종료시간 입력 후 저장"),
         accent=("amber" if mode == "기존 수정" else "blue"),
     )
 
@@ -1033,13 +1094,16 @@ with left_col:
             st.stop()
 
         if mode == "기존 수정":
-            st.info(
-                f"🔵 표에서 선택된 **[{real_emp_name}] {old_record.get('근무타임', '')} ({old_record.get('시작시간')}~{old_record.get('종료시간')})** 기록을 수정 중입니다. (신규 입력으로 돌아가려면 위 표의 체크를 해제하세요)"
+            st.markdown(
+                f'<div class="att-status-pill" style="background:#EFF6FF; border:1px solid #BFDBFE; color:#1E40AF;">'
+                f'<span>수정 대상: [{real_emp_name}] {old_record.get("근무타임", "")} ({old_record.get("시작시간")} ~ {old_record.get("종료시간")})</span>'
+                f'<span style="font-size:0.78rem; color:#3B82F6;">체크 해제 시 신규 입력</span></div>',
+                unsafe_allow_html=True,
             )
 
         is_locked = (mode == "기존 수정") and (str(old_record.get("매니저확인", "")).strip().upper() == "TRUE")
         if is_locked:
-            st.error("🚫 매니저 확인이 완료된 기록은 수정할 수 없습니다. 수정이 필요하면 매니저에게 확인 해제를 요청하세요.")
+            st.error("매니저 확인이 완료된 기록은 수정할 수 없습니다. 수정이 필요하면 매니저에게 확인 해제를 요청하세요.")
 
         default_shift_idx = 0
         if mode == "기존 수정":
@@ -1058,7 +1122,8 @@ with left_col:
         else:
             def_s, def_e = datetime.time(0, 0), datetime.time(0, 0)
 
-        c_name, c1 = st.columns(2)
+        # 핵심 입력 4종(이름 · 근무타임 · 시작 · 종료)을 1줄로 컴팩트 배치
+        c_name, c1, c2, c3 = st.columns([1.15, 0.95, 0.95, 0.95])
         with c_name:
             if mode == "기존 수정":
                 st.text_input("본인 이름", value=real_emp_name, disabled=True)
@@ -1077,9 +1142,6 @@ with left_col:
                     real_emp_name = ""
                     is_emp_selected = False
 
-        if is_emp_selected and real_emp_name in emp_health_warning_map:
-            st.error(emp_health_warning_map[real_emp_name])
-
         inputs_disabled = is_locked or (not is_emp_selected)
         w_key_sfx = f"{selected_store}_{mode}_{target_sheet_row}_{st.session_state['form_reset_ver']}"
 
@@ -1091,8 +1153,6 @@ with left_col:
                 disabled=inputs_disabled,
                 key=f"shift_{w_key_sfx}",
             )
-
-        c2, c3 = st.columns(2)
         with c2:
             start_t = st.time_input(
                 "시작시간",
@@ -1110,6 +1170,9 @@ with left_col:
                 key=f"end_{w_key_sfx}",
             )
 
+        if is_emp_selected and real_emp_name in emp_health_warning_map:
+            st.error(emp_health_warning_map[real_emp_name])
+
         dt_s = datetime.datetime.combine(sel_date, start_t)
         dt_e = datetime.datetime.combine(sel_date, end_t)
         if dt_e < dt_s:
@@ -1118,38 +1181,47 @@ with left_col:
         hm_str = mins_to_hm(diff_mins)
         dec_hours = round(diff_mins / 60.0, 2)
 
+        # 단일 인라인 상태 바 (중복 안내 박스 제거)
         if not is_emp_selected:
-            st.warning("먼저 좌측의 **본인 이름 선택**에서 이름을 고르면 시간 입력칸이 활성화됩니다.")
+            st.markdown(
+                '<div class="att-status-pill" style="background:#F8FAFC; border:1px solid #E2E8F0; color:#475569;">'
+                '<span>먼저 본인 이름을 선택하면 시간 입력칸이 활성화됩니다.</span>'
+                '<span style="font-size:0.78rem; color:#64748B;">수정: 위 표에서 해당 줄 체크</span></div>',
+                unsafe_allow_html=True,
+            )
         elif diff_mins > 0:
-            st.success(f"계산된 근무시간: **{hm_str}** ({mins_to_korean(diff_mins)})")
-        else:
-            st.warning("시작시간과 종료시간을 입력해 주세요.")
-
-        st.markdown(
-            """
-            <div style="background-color:#FEF3C7; border:1px solid #F59E0B; border-radius:7px; padding:0.48rem 0.75rem; margin:0.35rem 0 0.55rem 0; color:#92400E; font-weight:700; font-size:0.88rem;">
-                ※ 근무시간 수정 시 위의 표에서 해당 내역을 먼저 체크한 후 수정하세요.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        if mode == "기존 수정":
-            edit_reason = st.text_input(
-                "수정 사유 (필수 입력)",
-                placeholder="예: 퇴근 시간 입력 오타 정정",
-                disabled=inputs_disabled,
-                key=f"reason_{w_key_sfx}",
+            st.markdown(
+                f'<div class="att-status-pill" style="background:#ECFDF5; border:1px solid #A7F3D0; color:#065F46;">'
+                f'<span>✓ 계산된 근무시간: {hm_str} ({mins_to_korean(diff_mins)})</span>'
+                f'<span style="font-size:0.78rem; color:#047857;">{start_t.strftime("%H:%M")} ~ {end_t.strftime("%H:%M")}</span></div>',
+                unsafe_allow_html=True,
             )
-            memo_val = str(old_record.get("비고", ""))
         else:
-            edit_reason = ""
-            memo_val = st.text_input(
-                "비고 / 특이사항 (선택)",
-                placeholder="예: 홀 마감 지원, 대타 등",
-                disabled=inputs_disabled,
-                key=f"memo_{w_key_sfx}",
+            st.markdown(
+                '<div class="att-status-pill" style="background:#FFFBEB; border:1px solid #FDE68A; color:#92400E;">'
+                '<span>시작시간과 종료시간을 입력해 주세요.</span></div>',
+                unsafe_allow_html=True,
             )
+
+        # 비고/수정사유 + 저장 버튼 1줄 배치
+        act_c1, act_c2 = st.columns([1.65, 1.0], vertical_alignment="bottom")
+        with act_c1:
+            if mode == "기존 수정":
+                edit_reason = st.text_input(
+                    "수정 사유 (필수 입력)",
+                    placeholder="예: 퇴근 시간 입력 오타 정정",
+                    disabled=inputs_disabled,
+                    key=f"reason_{w_key_sfx}",
+                )
+                memo_val = str(old_record.get("비고", ""))
+            else:
+                edit_reason = ""
+                memo_val = st.text_input(
+                    "비고 / 특이사항 (선택)",
+                    placeholder="예: 홀 마감 지원, 대타 등",
+                    disabled=inputs_disabled,
+                    key=f"memo_{w_key_sfx}",
+                )
 
         can_submit = (
             is_emp_selected
@@ -1159,10 +1231,13 @@ with left_col:
         )
         btn_label = "출퇴근 시간 저장하기" if mode == "신규 등록" else "수정 내역 반영하기"
 
-        if st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit):
+        with act_c2:
+            submit_clicked = st.button(btn_label, type="primary", use_container_width=True, disabled=not can_submit)
+
+        if submit_clicked:
             with st.spinner("출퇴근 기록을 저장하는 중..."):
-                now_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                now_short = datetime.datetime.now().strftime("%m/%d %H:%M:%S")
+                now_full = kst_now().strftime("%Y-%m-%d %H:%M:%S")
+                now_short = kst_now().strftime("%m/%d %H:%M:%S")
                 gc = get_gspread_client()
                 ws = gc.open_by_key(store_cfg["db_id"]).worksheet("통합근태DB")
 
@@ -1198,42 +1273,82 @@ with left_col:
 with right_col:
     if not is_emp_selected:
         render_section_banner("3. 개인별 월별 근무시간 조회", badge="월별 누적", accent="indigo")
+        cur_p_start, cur_p_end = get_payroll_period(kst_today(), start_day=payroll_start_day)
+        day_pending_cnt = (
+            int((day_df["매니저확인"].astype(str).str.upper() != "TRUE").sum())
+            if (not day_df.empty and "매니저확인" in day_df.columns)
+            else 0
+        )
         with st.container(border=True):
-            st.info("좌측 **2. 출퇴근 시간 입력/수정**에서 **본인 이름**을 선택하면, 여기에 본인의 이번 달 누적 출근일수와 근무시간이 표시됩니다.")
+            st.markdown(
+                (
+                    '<div class="att-kpi-grid">'
+                    '<div class="att-kpi-box">'
+                    '<div class="att-kpi-lbl">선택일 출근 인원</div>'
+                    f'<div class="att-kpi-val">{len(day_df)}명</div>'
+                    '</div>'
+                    '<div class="att-kpi-box">'
+                    '<div class="att-kpi-lbl">선택일 총 근무</div>'
+                    f'<div class="att-kpi-val">{mins_to_korean(day_tot_mins) if day_tot_mins > 0 else "0시간"}</div>'
+                    '</div>'
+                    '<div class="att-kpi-box">'
+                    '<div class="att-kpi-lbl">선택일 승인 대기</div>'
+                    f'<div class="att-kpi-val" style="color:{"#D97706" if day_pending_cnt > 0 else "#059669"};">{day_pending_cnt}건</div>'
+                    '</div>'
+                    '</div>'
+                    '<div style="font-size:0.83rem; color:#475569; line-height:1.5; '
+                    'background:#EEF2FF; border:1px solid #C7D2FE; border-radius:8px; padding:0.52rem 0.75rem;">'
+                    f'<b>진행 정산월:</b> {cur_p_start.strftime("%m/%d")} ~ {cur_p_end.strftime("%m/%d")}<br>'
+                    '좌측에서 <b>본인 이름</b>을 선택하면 개인 누적 출근일·시간이 표시됩니다.</div>'
+                ),
+                unsafe_allow_html=True,
+            )
     else:
         render_section_banner(f"3. {real_emp_name} 님 월별 근무시간", badge="월별 누적", accent="indigo")
 
-        month_options = get_recent_payroll_months(kst_today(), start_day=payroll_start_day, count=6)
-        sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)
-        m_start, m_end = month_options[sel_month_label]
+        with st.container(border=True):
+            month_options = get_recent_payroll_months(kst_today(), start_day=payroll_start_day, count=6)
+            sel_month_label = st.selectbox("조회할 정산월 선택", options=list(month_options.keys()), index=0)
+            m_start, m_end = month_options[sel_month_label]
 
-        if not df_att.empty and "이름" in df_att.columns:
-            emp_all = df_att[df_att["이름"] == real_emp_name]
-            m_df = emp_all[(emp_all["날짜_dt"] >= m_start) & (emp_all["날짜_dt"] <= m_end)]
-            m_mins = int(round(m_df["총시간(소수)"].sum() * 60))
-            work_days = m_df["날짜"].nunique() if not m_df.empty else 0
+            if not df_att.empty and "이름" in df_att.columns:
+                emp_all = df_att[df_att["이름"] == real_emp_name]
+                m_df = emp_all[(emp_all["날짜_dt"] >= m_start) & (emp_all["날짜_dt"] <= m_end)]
+                m_mins = int(round(m_df["총시간(소수)"].sum() * 60))
+                work_days = m_df["날짜"].nunique() if not m_df.empty else 0
 
-            st.metric(
-                label="누적 출근일 · 근무시간",
-                value=f"{work_days}일 · {mins_to_korean(m_mins)}",
-            )
+                st.markdown(
+                    (
+                        '<div class="att-kpi-grid">'
+                        '<div class="att-kpi-box" style="border-top:3px solid #4F46E5;">'
+                        '<div class="att-kpi-lbl">누적 출근일</div>'
+                        f'<div class="att-kpi-val">{work_days}일</div>'
+                        '</div>'
+                        '<div class="att-kpi-box" style="border-top:3px solid #2563EB;">'
+                        '<div class="att-kpi-lbl">누적 근무시간</div>'
+                        f'<div class="att-kpi-val">{mins_to_korean(m_mins)}</div>'
+                        '</div>'
+                        '</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-            with st.expander(f"세부 근무 내역 ({len(m_df)}건)", expanded=False):
-                if not m_df.empty:
-                    m_disp = m_df.sort_values("날짜", ascending=False).copy()
-                    m_disp["날짜"] = m_disp["날짜"].apply(format_date_with_weekday)
-                    m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
-                    m_disp["상태"] = m_disp["매니저확인"].apply(
-                        lambda x: "✓ 확인" if str(x).strip().upper() == "TRUE" else "· 대기"
-                    )
-                    m_disp = m_disp.rename(columns={"근무타임": "구분", "총시간(h:m)": "총시간"})
-                    st.dataframe(
-                        m_disp[["날짜", "구분", "근무시간", "총시간", "상태"]],
-                        use_container_width=True,
-                        hide_index=True,
-                        row_height=28,
-                    )
-                else:
-                    st.caption("선택한 정산월에 등록된 근무 기록이 없습니다.")
-        else:
-            st.caption("누적 근무 내역이 없습니다.")
+                with st.expander(f"세부 근무 내역 ({len(m_df)}건)", expanded=False):
+                    if not m_df.empty:
+                        m_disp = m_df.sort_values("날짜", ascending=False).copy()
+                        m_disp["날짜"] = m_disp["날짜"].apply(format_date_with_weekday)
+                        m_disp["근무시간"] = m_disp["시작시간"] + "~" + m_disp["종료시간"]
+                        m_disp["상태"] = m_disp["매니저확인"].apply(
+                            lambda x: "✓ 확인" if str(x).strip().upper() == "TRUE" else "· 대기"
+                        )
+                        m_disp = m_disp.rename(columns={"근무타임": "구분", "총시간(h:m)": "총시간"})
+                        st.dataframe(
+                            m_disp[["날짜", "구분", "근무시간", "총시간", "상태"]],
+                            use_container_width=True,
+                            hide_index=True,
+                            row_height=28,
+                        )
+                    else:
+                        st.caption("선택한 정산월에 등록된 근무 기록이 없습니다.")
+            else:
+                st.caption("누적 근무 내역이 없습니다.")
