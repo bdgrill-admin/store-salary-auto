@@ -95,10 +95,46 @@ def apply_clean_style():
             border-color: #94A3B8 !important;
         }
         /* 출퇴근기록부 상단 타이틀·날짜·요일·매장·새로고침 반응형 간격 보정 */
+        .st-key-att_top_header {
+            padding-top: 8px !important;
+            margin-bottom: 0.35rem !important;
+        }
         .st-key-att_top_header div[data-testid="stHorizontalBlock"] {
             flex-wrap: wrap !important;
             align-items: center !important;
             gap: 0.65rem !important;
+        }
+        .st-key-att_top_header div[data-testid="column"] {
+            display: flex !important;
+            align-items: center !important;
+        }
+        .st-key-att_top_header div[data-testid="column"] > div {
+            width: 100% !important;
+        }
+        .st-key-att_top_header [data-testid="stMarkdownContainer"] p {
+            margin: 0 !important;
+            line-height: 1 !important;
+        }
+        .st-key-att_top_header [data-testid="stDateInput"] {
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        .st-key-att_top_header [data-testid="stDateInput"] > div {
+            margin-top: 0 !important;
+        }
+        .st-key-att_top_header div[data-baseweb="input"] {
+            height: 38px !important;
+            min-height: 38px !important;
+        }
+        .st-key-att_top_header div[data-baseweb="select"] > div {
+            min-height: 38px !important;
+            height: 38px !important;
+        }
+        .st-key-att_top_header button {
+            min-height: 38px !important;
+            height: 38px !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
         }
         .st-key-att_top_header div[data-testid="stHorizontalBlock"] > div:nth-child(1) {
             flex: 0 0 auto !important;
@@ -417,7 +453,7 @@ def auto_send_daily_health_telegram(store_key: str, app_cfg: dict, alert_lines: 
 with st.container(key="att_top_header"):
     h_col1, h_date, h_day, h_col2, h_col3 = st.columns([1.05, 1.0, 0.45, 1.0, 0.7], vertical_alignment="center")
     with h_col1:
-        st.markdown('<div class="app-title" style="white-space:nowrap;">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
+        st.markdown('<div class="app-title" style="white-space:nowrap; height:38px; display:flex; align-items:center;">▪&nbsp;&nbsp;출퇴근기록부</div>', unsafe_allow_html=True)
     with h_col2:
         selected_store = st.selectbox("매장 선택", list(STORES.keys()), index=0, label_visibility="collapsed")
     with h_col3:
@@ -434,8 +470,9 @@ with st.container(key="att_top_header"):
         w_kr = weekdays_kr[sel_date.weekday()]
         w_color = "#DC2626" if sel_date.weekday() >= 5 else "#1E293B"
         st.markdown(
-            f'<div style="font-size:1.05rem; font-weight:800; color:{w_color}; white-space:nowrap; '
-            f'background:#F1F5F9; padding:0.32rem 0.72rem; border-radius:8px; display:inline-block;">{w_kr}</div>',
+            f'<div style="font-size:0.95rem; font-weight:800; color:{w_color}; white-space:nowrap; '
+            f'background:#F1F5F9; border:1px solid #E2E8F0; border-radius:8px; height:38px; display:flex; '
+            f'align-items:center; justify-content:center; padding:0 0.75rem;">{w_kr}</div>',
             unsafe_allow_html=True,
         )
 
