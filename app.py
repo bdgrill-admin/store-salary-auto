@@ -44,6 +44,7 @@ else:
         st.Page("views/schedule.py", title="▪\u00A0\u00A0주간스케줄"),
         st.Page("views/staff.py", title="▪\u00A0\u00A0직원관리"),
         st.Page("views/payroll.py", title="▪\u00A0\u00A0급여정산"),
+        st.Page("views/settlement.py", title="▪\u00A0\u00A0월말정산"),
         st.Page("views/manual.py", title="▪\u00A0\u00A0매니저매뉴얼"),
         st.Page("views/settings.py", title="▪\u00A0\u00A0환경설정"),
     ])
