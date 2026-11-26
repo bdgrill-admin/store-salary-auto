@@ -370,6 +370,7 @@ with tab_input:
                 value=int(cur_sales),
                 key=f"pos_sales_in_{selected_ym}",
             )
+            st.caption(f"입력 금액: **{int(new_sales):,}원**")
         with ac2:
             if st.button("매출 저장", use_container_width=True, key="btn_save_sales"):
                 if store_cfg.get("sales_id"):
@@ -443,7 +444,7 @@ with tab_input:
         column_config={
             "항목명": st.column_config.TextColumn("거래처(항목)", width="medium"),
             "부분합계그룹": st.column_config.TextColumn("분류", width="small"),
-            "금액": st.column_config.NumberColumn("말일 결제금액(원)", format="%d", step=1000),
+            "금액": st.column_config.NumberColumn("말일 결제금액", format="%,d원", step=1000),
             "결제완료": st.column_config.CheckboxColumn("이체완료"),
             "메모": st.column_config.TextColumn("비고/미수메모"),
         },
@@ -466,7 +467,7 @@ with tab_input:
             hide_index=True,
             disabled=["항목명"],
             column_config={
-                "금액": st.column_config.NumberColumn("금액(원)", format="%d", step=1000),
+                "금액": st.column_config.NumberColumn("금액", format="%,d원", step=1000),
                 "결제완료": st.column_config.CheckboxColumn("완료"),
             },
             key=f"ed_fix_{selected_ym}_{ed_ver}",
@@ -487,7 +488,7 @@ with tab_input:
             disabled=["항목명", "납부일"],
             column_config={
                 "납부일": st.column_config.TextColumn("납부일", width="small"),
-                "금액": st.column_config.NumberColumn("금액(원)", format="%d", step=1000),
+                "금액": st.column_config.NumberColumn("금액", format="%,d원", step=1000),
                 "결제완료": st.column_config.CheckboxColumn("완료"),
             },
             key=f"ed_mgmt_{selected_ym}_{ed_ver}",
@@ -509,8 +510,8 @@ with tab_input:
         column_config={
             "항목명": st.column_config.TextColumn("항목명", width="medium"),
             "부분합계그룹": st.column_config.TextColumn("분류", width="small"),
-            "금액": st.column_config.NumberColumn("합계금액(원)", format="%d", step=1000),
-            "횟수": st.column_config.NumberColumn("횟수", format="%d", step=1, min_value=0),
+            "금액": st.column_config.NumberColumn("합계금액", format="%,d원", step=1000),
+            "횟수": st.column_config.NumberColumn("횟수", format="%d회", step=1, min_value=0),
         },
         key=f"ed_pre_{selected_ym}_{ed_ver}",
     )
@@ -532,7 +533,7 @@ with tab_input:
             column_config={
                 "일자": st.column_config.TextColumn("일자 (예: 10.16)", width="small"),
                 "내용": st.column_config.TextColumn("지출 내용", width="medium"),
-                "금액": st.column_config.NumberColumn("금액(원)", format="%d", step=1000),
+                "금액": st.column_config.NumberColumn("금액", format="%,d원", step=1000),
                 "메모": st.column_config.TextColumn("메모"),
             },
             key=f"ed_misc_{selected_ym}_{ed_ver}",
@@ -552,8 +553,8 @@ with tab_input:
             hide_index=True,
             disabled=["부위명"],
             column_config={
-                "kg단가": st.column_config.NumberColumn("1kg 단가(원)", format="%d", step=100),
-                "총량(kg)": st.column_config.NumberColumn("월 총량(kg)", format="%.2f", step=0.5),
+                "kg단가": st.column_config.NumberColumn("1kg 단가", format="%,d원", step=100),
+                "총량(kg)": st.column_config.NumberColumn("월 총량", format="%.2f kg", step=0.5),
             },
             key=f"ed_meat_{selected_ym}_{ed_ver}",
         )
@@ -713,7 +714,7 @@ with tab_import_tx:
                     "출처": st.column_config.TextColumn("출처", disabled=True, width="small"),
                     "일자": st.column_config.TextColumn("일자", width="small"),
                     "거래내용": st.column_config.TextColumn("거래내용(적요/가맹점)", width="large"),
-                    "금액": st.column_config.NumberColumn("금액(원)", format="%d"),
+                    "금액": st.column_config.NumberColumn("금액", format="%,d원"),
                     "분류항목": st.column_config.SelectboxColumn("분류항목", options=item_choices, width="medium"),
                     "구분": st.column_config.TextColumn("구분", disabled=True, width="small"),
                 },
@@ -737,7 +738,10 @@ with tab_import_tx:
                         agg_preview,
                         use_container_width=True,
                         hide_index=True,
-                        column_config={"금액": st.column_config.NumberColumn("합계(원)", format="%d")},
+                        column_config={
+                            "금액": st.column_config.NumberColumn("합계", format="%,d원"),
+                            "횟수": st.column_config.NumberColumn("횟수", format="%d회"),
+                        },
                     )
 
                 apply_mode = st.radio(
@@ -825,15 +829,19 @@ with tab_dash:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "매출": st.column_config.NumberColumn(format="%d"),
-                "매출증감": st.column_config.NumberColumn(format="%+d"),
-                "고기값": st.column_config.NumberColumn(format="%d"),
-                "고기값증감": st.column_config.NumberColumn(format="%+d"),
-                "식자재": st.column_config.NumberColumn(format="%d"),
-                "식자재증감": st.column_config.NumberColumn(format="%+d"),
-                "총지출(인건비제외)": st.column_config.NumberColumn(format="%d"),
-                "인건비": st.column_config.NumberColumn(format="%d"),
-                "순이익": st.column_config.NumberColumn(format="%d"),
+                "매출": st.column_config.NumberColumn("매출", format="%,d원"),
+                "매출증감": st.column_config.NumberColumn("매출증감", format="%+,d원"),
+                "고기값": st.column_config.NumberColumn("고기값", format="%,d원"),
+                "고기값증감": st.column_config.NumberColumn("고기값증감", format="%+,d원"),
+                "식자재": st.column_config.NumberColumn("식자재", format="%,d원"),
+                "식자재증감": st.column_config.NumberColumn("식자재증감", format="%+,d원"),
+                "고기량(kg)": st.column_config.NumberColumn("고기량", format="%.2f kg"),
+                "총지출(인건비제외)": st.column_config.NumberColumn("총지출(인건비제외)", format="%,d원"),
+                "인건비": st.column_config.NumberColumn("인건비", format="%,d원"),
+                "순이익": st.column_config.NumberColumn("순이익", format="%,d원"),
+                "고기+식자재율(%)": st.column_config.NumberColumn("고기+식자재율", format="%.1f%%"),
+                "인건비율(%)": st.column_config.NumberColumn("인건비율", format="%.1f%%"),
+                "영업이익률(%)": st.column_config.NumberColumn("영업이익률", format="%.1f%%"),
             },
         )
 
@@ -852,10 +860,17 @@ with tab_dash:
                 columns=lambda c: c.replace("_원가율(%)", "")
             )
             st.line_chart(chart_mt, height=260)
+        mt_col_cfg = {}
+        for c in df_meat_trend.columns:
+            if c.endswith("_단가") or c.endswith("_원가"):
+                mt_col_cfg[c] = st.column_config.NumberColumn(c, format="%,d원")
+            elif c.endswith("_원가율(%)"):
+                mt_col_cfg[c] = st.column_config.NumberColumn(c.replace("(%)", ""), format="%.1f%%")
         st.dataframe(
             df_meat_trend.sort_values("정산월", ascending=False),
             use_container_width=True,
             hide_index=True,
+            column_config=mt_col_cfg,
         )
 
 
@@ -917,7 +932,7 @@ with tab_config:
             "대분류": st.column_config.SelectboxColumn("대분류", options=["공통", "관리비", "변동매입"]),
             "결제방식": st.column_config.SelectboxColumn("결제방식", options=["자동이체", "고지납부", "말일결제", "선결제/수시"]),
             "부분합계그룹": st.column_config.SelectboxColumn("부분합계그룹", options=["고정비", "관리비", "고기", "식자재", "주류음료", "기타매입"]),
-            "기본금액": st.column_config.NumberColumn("기본금액(원)", format="%d", step=1000),
+            "기본금액": st.column_config.NumberColumn("기본금액", format="%,d원", step=1000),
             "정렬순서": st.column_config.NumberColumn("정렬순서", format="%d", step=10),
             "사용여부": st.column_config.SelectboxColumn("사용여부", options=["TRUE", "FALSE"]),
         },
