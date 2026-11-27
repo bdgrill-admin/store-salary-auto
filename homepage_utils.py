@@ -200,6 +200,9 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                     "현재 정상 영업 중이며, 숙련된 직원이 테이블에서 직접 고기를 구워드립니다."
                 ),
                 "url": site_url,
+                "logo": f"{site_url}img/logo-full.png",
+                "foundingDate": "2018",
+                "award": "한돈자조금관리위원회 공식 한돈인증점",
                 "image": [
                     f"{site_url}img/hero-exterior.jpg",
                     f"{site_url}img/meat-cuts.jpg",
@@ -328,6 +331,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
   <meta name="keywords" content="{esc_name}, 미금역 맛집, 미금역 삼겹살, 미금역 목살, 미금역 구워주는 고기집, 분당 회식, 특숙성목살, 제주젓갈볶음밥" />
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
   <link rel="canonical" href="{site_url}" />
+  <link rel="icon" type="image/png" href="./img/favicon.png" />
+  <link rel="apple-touch-icon" href="./img/favicon.png" />
 
   <meta property="og:type" content="restaurant.restaurant" />
   <meta property="og:locale" content="ko_KR" />
@@ -398,11 +403,18 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
       gap: 16px;
     }}
     .brand {{ display: flex; align-items: center; gap: 10px; }}
-    .brand-seal {{
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 28px; height: 28px; border: 1.5px solid var(--seal);
-      color: var(--seal); font-family: var(--serif); font-size: 0.7rem; font-weight: 700; line-height: 1;
+    .brand-seal-img {{ width: 34px; height: 34px; object-fit: contain; flex-shrink: 0; }}
+    .handon-strip {{
+      display: flex; align-items: center; gap: 14px;
+      margin-top: 14px; padding: 12px 14px;
+      background: var(--bg-warm); border: 1px solid var(--line);
     }}
+    .handon-strip img {{ width: 52px; height: 52px; object-fit: contain; flex-shrink: 0; }}
+    .handon-strip-title {{ font-family: var(--serif); font-size: 0.92rem; font-weight: 700; color: var(--ink); }}
+    .handon-strip-sub {{ font-size: 0.8rem; color: var(--ink-soft); margin-top: 2px; }}
+    .foot-brand-wrap {{ display: flex; align-items: center; gap: 12px; }}
+    .foot-seal {{ width: 32px; height: 32px; object-fit: contain; }}
+    .foot-handon {{ width: 34px; height: 34px; object-fit: contain; opacity: 0.92; }}
     .brand-name {{ font-family: var(--serif); font-size: 1.15rem; font-weight: 700; letter-spacing: 0.04em; }}
     .brand-en {{ font-size: 0.72rem; color: var(--muted); letter-spacing: 0.14em; text-transform: uppercase; margin-left: 2px; }}
     .nav-links {{ display: flex; align-items: center; gap: 26px; font-size: 0.9rem; color: var(--ink-soft); font-weight: 500; }}
@@ -491,7 +503,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
   <nav class="topbar" aria-label="주요 메뉴">
     <div class="container topbar-inner">
       <a class="brand" href="#">
-        <span class="brand-seal" aria-hidden="true">분당</span>
+        <img class="brand-seal-img" src="./img/logo-seal.png" alt="{esc_name} 공식 로고" width="34" height="34" />
         <span class="brand-name">{esc_name}</span>
         <span class="brand-en">Bundang Grill</span>
       </a>
@@ -509,7 +521,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
     <div class="container">
       <div class="hero-head">
         <div>
-          <div class="eyebrow">Migeum · Bundang · Premium Aged Pork</div>
+          <div class="eyebrow">ESTD 2018 · 한돈인증점 · MIGEUM BUNDANG</div>
           <h1 class="hero-title">프리미엄 숙성돼지,<br />참숯의 온도로 굽다.</h1>
         </div>
         <div>
@@ -576,8 +588,15 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
             <div class="craft-points">
               <div class="craft-point">
                 <div class="craft-num">01</div>
-                <h3>최상급 특숙성 원육</h3>
-                <p>육즙이 풍부한 특숙성목살과 특숙성삼겹살부터 갈매기살·가브리살·꼬들살까지, 매일 선별한 최상의 컨디션으로 상에 올립니다.</p>
+                <h3>한돈인증점 · 최상급 특숙성 원육</h3>
+                <p>육즙이 풍부한 특숙성목살과 특숙성삼겹살부터 갈매기살·가브리살·꼬들살까지, 매일 선별한 최상의 국내산 한돈만을 상에 올립니다.</p>
+                <div class="handon-strip">
+                  <img src="./img/handon.png" alt="우리돼지 한돈 공식 인증점 마크" width="52" height="52" loading="lazy" />
+                  <div>
+                    <div class="handon-strip-title">한돈자조금관리위원회 공식 한돈인증점</div>
+                    <div class="handon-strip-sub">엄격한 심사를 통과한 100% 국내산 한돈 전문 매장입니다.</div>
+                  </div>
+                </div>
               </div>
               <div class="craft-point">
                 <div class="craft-num">02</div>
@@ -726,7 +745,11 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 
   <footer>
     <div class="container foot-inner">
-      <div class="foot-brand">{esc_name} · BUNDANG GRILL</div>
+      <div class="foot-brand-wrap">
+        <img class="foot-seal" src="./img/logo-seal.png" alt="{esc_name} 로고" width="32" height="32" />
+        <div class="foot-brand">{esc_name} · BUNDANG GRILL <span style="font-weight:500; color:var(--muted); font-size:0.8rem;">ESTD 2018</span></div>
+        <img class="foot-handon" src="./img/handon.png" alt="한돈인증점" width="34" height="34" />
+      </div>
       <div>{esc_addr} · Tel. {esc_phone}</div>
     </div>
   </footer>
@@ -751,7 +774,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 > **영업 상태: 현재 정상 영업 중 (폐업 아님, 최신 업데이트 {today_iso})**
 
 ## 기본 정보 (NAP)
-- 상호명: {store_name} (Bundang Grill)
+- 상호명: {store_name} (Bundang Grill, ESTD 2018)
+- 인증: 한돈자조금관리위원회 공식 한돈인증점 (100% 국내산 한돈 전문)
 - 영업 상태: **정상 영업 중 (Open)**
 - 주소: {address}
 - 전화번호: {phone}
