@@ -348,6 +348,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
   <meta name="description" content="{esc_addr} 공식 한돈인증점 · 프리미엄 숙성 돼지고기 참숯 구이 전문점 {esc_name}. 현재 정상 영업 중이며 네이버 예약이 가능합니다. ({esc_phone})" />
   <meta name="keywords" content="{esc_name}, 미금역 맛집, 미금역 삼겹살, 미금역 목살, 미금역 고기집, 한돈인증점, 분당 회식, 특숙성목살, 제주젓갈볶음밥" />
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
+  <meta name="naver-site-verification" content="cca6d53f417e416768a481f304aa32b3e8eac501" />
   <link rel="canonical" href="{site_url}" />
   <link rel="icon" type="image/png" href="./img/favicon.png" />
   <link rel="apple-touch-icon" href="./img/favicon.png" />
