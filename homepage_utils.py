@@ -215,7 +215,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                 "servesCuisine": ["한국식 바비큐", "숙성 돼지고기", "삼겹살", "목살", "특수부위", "Korean BBQ"],
                 "acceptsReservations": True,
                 "currenciesAccepted": "KRW",
-                "paymentAccepted": "신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak)",
+                "paymentAccepted": "신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak), 성남시 아동수당 카드",
                 "address": {
                     "@type": "PostalAddress",
                     "streetAddress": "미금일로 74번길 13-3, 1층",
@@ -282,10 +282,10 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                     },
                     {
                         "@type": "Question",
-                        "name": "직원이 고기를 직접 구워주나요?",
+                        "name": f"{store_name}은 한돈인증점인가요? 어떤 원육을 사용하나요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": "네, 숙련된 직원이 테이블에서 참숯으로 처음부터 끝까지 직접 구워드립니다. 회식이나 가족 모임에서도 편하게 식사하실 수 있습니다.",
+                            "text": f"네, {store_name}은 한돈자조금관리위원회의 엄격한 심사를 통과한 공식 한돈인증점입니다. 100% 국내산 최상급 한돈만을 선별해 특숙성 과정을 거쳐 제공합니다.",
                         },
                     },
                     {
@@ -298,10 +298,10 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                     },
                     {
                         "@type": "Question",
-                        "name": "단체 회식 예약과 성남사랑상품권 결제가 가능한가요?",
+                        "name": "단체 회식 예약과 성남사랑상품권·아동수당 카드 결제가 가능한가요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"단체 방문 및 회식은 매장 전화({phone})로 사전 문의해 주시면 좌석을 안내해 드립니다. 신용카드·현금·계좌이체 외에 성남사랑상품권(chak) 결제도 가능합니다.",
+                            "text": f"단체 방문 및 회식은 매장 전화({phone})로 사전 문의해 주시면 좌석을 안내해 드립니다. 신용카드·현금·계좌이체 외에 성남사랑상품권(chak) 및 성남시 아동수당 카드 결제도 가능합니다.",
                         },
                     },
                 ],
@@ -552,7 +552,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
         </div>
         <div class="hero-meta-item">
           <div class="meta-k">문의 및 결제</div>
-          <div class="meta-v">{esc_phone} · 카드 · 성남사랑상품권(chak)</div>
+          <div class="meta-v">{esc_phone} · 성남사랑상품권(chak) · 성남시 아동수당 카드</div>
         </div>
       </div>
     </div>
@@ -705,7 +705,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
               </div>
               <div class="info-row">
                 <dt>결제 수단</dt>
-                <dd>신용카드 · 체크카드 · 현금 · 계좌이체 · 성남사랑상품권(chak)</dd>
+                <dd>신용카드 · 체크카드 · 현금 · 계좌이체 · 성남사랑상품권(chak) · 성남시 아동수당 카드 가맹점</dd>
               </div>
             </dl>
 
@@ -725,16 +725,17 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
               </p>
             </details>
             <details class="faq">
-              <summary>직원이 고기를 직접 구워주나요?</summary>
+              <summary>{esc_name}은 한돈인증점인가요? 어떤 원육을 사용하나요?</summary>
               <p class="faq-body">
-                네, 모든 테이블에 숙련된 직원이 참숯으로 고기를 처음부터 끝까지 직접 구워드리는 그릴링 서비스를 제공합니다.
+                네, {esc_name}은 한돈자조금관리위원회의 엄격한 심사를 통과한 공식 한돈인증점입니다.
+                100% 국내산 최상급 한돈만을 선별해 특숙성 과정을 거쳐 제공합니다.
               </p>
             </details>
             <details class="faq">
-              <summary>단체 회식 예약이나 성남사랑상품권 결제가 가능한가요?</summary>
+              <summary>단체 회식 예약과 성남사랑상품권·아동수당 카드 결제가 가능한가요?</summary>
               <p class="faq-body">
                 단체 방문 및 회식은 매장 전화({esc_phone})로 미리 연락 주시면 좌석을 준비해 드립니다.
-                성남사랑상품권(chak) 결제도 정상 이용 가능합니다.
+                성남사랑상품권(chak)과 성남시 아동수당 카드 가맹점으로 모두 정상 결제 가능합니다.
               </p>
             </details>
           </div>
@@ -781,7 +782,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 - 전화번호: {phone}
 - 평일 영업시간 (월~금): {weekday_hours}
 - 주말 영업시간 (토~일): {weekend_hours} (브레이크타임 {break_time})
-- 결제수단: 신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak)
+- 결제수단: 신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak), 성남시 아동수당 카드 가맹점
 - 공식 웹페이지: {site_url}
 
 ## 공식 차림표 및 가격
@@ -794,8 +795,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 ## 자주 묻는 질문 (FAQ)
 - **Q. {store_name}은 폐업했나요? 현재 영업 중인가요?**
   - A. 폐업하지 않았으며, {address}에서 현재 정상 영업 중입니다.
-- **Q. 고기를 직접 구워주나요?**
-  - A. 네, 직원이 테이블에서 참숯에 직접 구워주는 그릴링 서비스를 제공합니다.
+- **Q. {store_name}은 한돈인증점인가요?**
+  - A. 네, 한돈자조금관리위원회 공식 한돈인증점으로 100% 국내산 최상급 한돈만을 선별해 특숙성하여 제공합니다.
 - **Q. 예약 및 단체 회식이 가능한가요?**
   - A. 매장 전화({phone})로 사전 문의 시 좌석 및 단체 회식 안내를 도와드립니다.
 """
