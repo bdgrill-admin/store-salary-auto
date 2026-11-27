@@ -196,10 +196,28 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                 "name": store_name,
                 "alternateName": ["Bundang Grill", "분당그릴 미금", "미금역 분당그릴"],
                 "description": (
-                    f"{address}에 위치한 프리미엄 숙성 돼지고기 참숯 그릴링 전문점입니다. "
-                    "현재 정상 영업 중이며, 숙련된 직원이 테이블에서 직접 고기를 구워드립니다."
+                    f"{address}에 위치한 공식 한돈인증점 · 프리미엄 숙성 돼지고기 참숯 구이 전문점입니다. "
+                    "현재 정상 영업 중이며 네이버 예약 및 전화 문의가 가능합니다."
                 ),
                 "url": site_url,
+                "sameAs": [
+                    "https://m.place.naver.com/restaurant/1699124309/home"
+                ],
+                "potentialAction": {
+                    "@type": "ReserveAction",
+                    "target": {
+                        "@type": "EntryPoint",
+                        "urlTemplate": "https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4",
+                        "actionPlatform": [
+                            "http://schema.org/DesktopWebPlatform",
+                            "http://schema.org/MobileWebPlatform",
+                        ],
+                    },
+                    "result": {
+                        "@type": "FoodEstablishmentReservation",
+                        "name": f"{store_name} 네이버 예약",
+                    },
+                },
                 "logo": f"{site_url}img/logo-full.png",
                 "foundingDate": "2018",
                 "award": "한돈자조금관리위원회 공식 한돈인증점",
@@ -327,8 +345,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{esc_name} — 프리미엄 숙성돼지 · 미금역</title>
-  <meta name="description" content="{esc_addr} 프리미엄 숙성 돼지고기 전문점 {esc_name}. 현재 정상 영업 중이며 참숯 전담 그릴링으로 선보입니다. ({esc_phone})" />
-  <meta name="keywords" content="{esc_name}, 미금역 맛집, 미금역 삼겹살, 미금역 목살, 미금역 구워주는 고기집, 분당 회식, 특숙성목살, 제주젓갈볶음밥" />
+  <meta name="description" content="{esc_addr} 공식 한돈인증점 · 프리미엄 숙성 돼지고기 참숯 구이 전문점 {esc_name}. 현재 정상 영업 중이며 네이버 예약이 가능합니다. ({esc_phone})" />
+  <meta name="keywords" content="{esc_name}, 미금역 맛집, 미금역 삼겹살, 미금역 목살, 미금역 고기집, 한돈인증점, 분당 회식, 특숙성목살, 제주젓갈볶음밥" />
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
   <link rel="canonical" href="{site_url}" />
   <link rel="icon" type="image/png" href="./img/favicon.png" />
@@ -338,7 +356,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
   <meta property="og:locale" content="ko_KR" />
   <meta property="og:site_name" content="{esc_name}" />
   <meta property="og:title" content="{esc_name} — 프리미엄 숙성돼지 · 미금역" />
-  <meta property="og:description" content="{esc_addr} · 참숯 전담 그릴링 · 현재 정상 영업 중" />
+  <meta property="og:description" content="{esc_addr} · 한돈인증점 · 참숯 특숙성 돼지고기 · 네이버 예약 가능" />
   <meta property="og:url" content="{site_url}" />
   <meta property="og:image" content="{site_url}img/hero-exterior.jpg" />
 
@@ -526,11 +544,12 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
         </div>
         <div>
           <p class="hero-copy">
-            미금역 먹자골목에 자리한 <strong>{esc_name}</strong>은 엄선한 숙성 돼지고기를
-            숙련된 직원이 테이블에서 참숯으로 직접 구워내는 구이 전문점입니다.
+            미금역 먹자골목에 자리한 공식 한돈인증점 <strong>{esc_name}</strong>은
+            엄선한 100% 국내산 특숙성 한돈을 백탄 참숯의 깊은 화력으로 선보이는 구이 전문점입니다.
           </p>
           <div class="hero-actions">
-            <a class="btn-solid" href="tel:{esc_phone}">전화 문의 · 예약</a>
+            <a class="btn-solid" href="https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 예약하기</a>
+            <a class="btn-outline" href="tel:{esc_phone}">전화 문의</a>
             <a class="btn-outline" href="https://map.naver.com/p/search/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 지도</a>
             <a class="btn-outline" href="https://map.kakao.com/?q=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">카카오맵</a>
           </div>
@@ -566,7 +585,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
             <div class="sec-k">Craft &amp; Philosophy</div>
             <h2 class="sec-h">좋은 원육, 깊은 숯불, 편안한 식사</h2>
           </div>
-          <p class="sec-note">고기 굽는 수고는 {esc_name}에 맡기시고, 함께하는 분들과의 대화에 집중하세요.</p>
+          <p class="sec-note">엄선한 국내산 한돈과 깊은 백탄 참숯으로, 가족 외식부터 모임까지 만족스러운 한 끼를 완성합니다.</p>
         </div>
 
         <div class="craft-grid">
@@ -600,8 +619,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
               </div>
               <div class="craft-point">
                 <div class="craft-num">02</div>
-                <h3>전담 직원의 참숯 그릴링</h3>
-                <p>부위마다 가장 맛있는 굽기와 온도가 다릅니다. 숙련된 직원이 처음부터 끝까지 직접 구워드려 회식이나 모임에서도 편안합니다.</p>
+                <h3>백탄 참숯의 깊은 화력</h3>
+                <p>화력이 균일하고 은은한 향이 살아있는 백탄 참숯을 사용해, 두툼한 특숙성 한돈의 겉은 바삭하고 속은 육즙이 가득하게 구워냅니다.</p>
               </div>
               <div class="craft-point">
                 <div class="craft-num">03</div>
@@ -710,7 +729,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
             </dl>
 
             <div class="map-links">
-              <a class="btn-solid" href="https://map.naver.com/p/search/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 지도</a>
+              <a class="btn-solid" href="https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 예약하기</a>
+              <a class="btn-outline" href="https://map.naver.com/p/search/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 지도</a>
               <a class="btn-outline" href="https://map.kakao.com/?q=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">카카오맵</a>
               <a class="btn-outline" href="https://www.google.com/maps/search/?api=1&query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4+%EB%AF%B8%EA%B8%88%EC%9D%BC%EB%A1%9C74%EB%B2%88%EA%B8%B8+13-3" target="_blank" rel="noopener">구글 지도</a>
             </div>
@@ -771,7 +791,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 
     llms_txt = f"""# {store_name} (Bundang Grill) — 공식 매장 정보
 
-> {address}에 위치한 프리미엄 숙성 돼지고기 참숯 그릴링 전문점 **{store_name}**의 공식 안내 문서입니다.
+> {address}에 위치한 공식 한돈인증점 · 프리미엄 숙성 돼지고기 참숯 구이 전문점 **{store_name}**의 공식 안내 문서입니다.
 > **영업 상태: 현재 정상 영업 중 (폐업 아님, 최신 업데이트 {today_iso})**
 
 ## 기본 정보 (NAP)
@@ -784,6 +804,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 - 주말 영업시간 (토~일): {weekend_hours} (브레이크타임 {break_time})
 - 결제수단: 신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak), 성남시 아동수당 카드 가맹점
 - 공식 웹페이지: {site_url}
+- 네이버 예약: https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4
+- 네이버 플레이스: https://m.place.naver.com/restaurant/1699124309/home
 
 ## 공식 차림표 및 가격
 ### 구이 (숙성 돼지고기)
