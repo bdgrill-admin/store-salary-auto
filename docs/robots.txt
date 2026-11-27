@@ -28,4 +28,4 @@ Allow: /
 User-agent: Daum
 Allow: /
 
-Sitemap: https://bdgrill-admin.github.io/store-salary-auto/sitemap.xml
+Sitemap: https://bdgrill.kr/sitemap.xml

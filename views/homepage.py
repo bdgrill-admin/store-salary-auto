@@ -71,7 +71,7 @@ if not (st.session_state.get(auth_key, False) or st.session_state.get("authentic
 # =========================================================================
 df_menu = load_homepage_menu(store_cfg["db_id"])
 
-site_url_def = app_cfg.get("hp_site_url", "https://bdgrill-admin.github.io/store-salary-auto/")
+site_url_def = app_cfg.get("hp_site_url", "https://bdgrill.kr/")
 repo_def = app_cfg.get("hp_github_repo", "bdgrill-admin/store-salary-auto")
 branch_def = app_cfg.get("hp_github_branch", "main")
 wk_def = app_cfg.get("hp_weekday_hours", "16:00 – 22:00")

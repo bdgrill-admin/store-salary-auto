@@ -120,7 +120,7 @@ def save_homepage_menu(db_id: str, df_menu: pd.DataFrame):
 
 def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
     """편집된 메뉴와 매장 정보로 docs/index.html, docs/llms.txt, docs/sitemap.xml을 생성."""
-    site_url = str(info.get("site_url", "https://bdgrill-admin.github.io/store-salary-auto/")).strip()
+    site_url = str(info.get("site_url", "https://bdgrill.kr/")).strip()
     if not site_url.endswith("/"):
         site_url += "/"
     store_name = str(info.get("store_name", "분당그릴")).strip()
