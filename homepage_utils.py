@@ -26,7 +26,7 @@ def get_default_menu_df() -> pd.DataFrame:
     rows = [
         ("구이", "특숙성삼겹세트", "500g", 49000, "국내산 한돈 특숙성 삼겹살과 목살을 한 번에 즐기는 시그니처 2~3인 세트", True, True, 10),
         ("구이", "특수모듬세트(가브리+갈매기+늑간살)", "500g", 51000, "가브리살·갈매기살·늑간살, 한돈 인기 특수부위 3종을 한 판에 담은 모듬", True, True, 15),
-        ("구이", "특숙성목살", "180g", 18000, "두툼하게 썰어 백탄 참숯에 구울수록 육즙이 터지는 분당그릴 대표 부위", True, True, 20),
+        ("구이", "특숙성목살", "180g", 18000, "두툼하게 썰어 참숯에 구울수록 육즙이 터지는 분당그릴 대표 부위", True, True, 20),
         ("구이", "특숙성삼겹살", "180g", 18000, "특숙성으로 감칠맛을 끌어올려 겉은 바삭하고 속은 고소한 한돈 삼겹살", False, True, 30),
         ("구이", "갈매기살", "180g", 19000, "탱글한 탄력과 진한 육향이 살아있어 씹을수록 담백한 한돈 특수부위", False, True, 40),
         ("구이", "가브리살", "180g", 20000, "마블링이 촘촘해 입안에서 부드럽고 고소하게 녹아내리는 프리미엄 등겹살", False, True, 50),
@@ -550,7 +550,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
         <div>
           <p class="hero-copy">
             미금역 먹자골목에 자리한 공식 한돈인증점 <strong>{esc_name}</strong>은
-            엄선한 100% 국내산 특숙성 한돈을 백탄 참숯의 깊은 화력으로 선보이는 구이 전문점입니다.
+            엄선한 100% 국내산 특숙성 한돈을 참숯의 깊은 화력으로 선보이는 구이 전문점입니다.
           </p>
           <div class="hero-actions">
             <a class="btn-solid" href="https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 예약하기</a>
@@ -590,7 +590,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
             <div class="sec-k">Craft &amp; Philosophy</div>
             <h2 class="sec-h">좋은 원육, 깊은 숯불, 편안한 식사</h2>
           </div>
-          <p class="sec-note">엄선한 국내산 한돈과 깊은 백탄 참숯으로, 가족 외식부터 모임까지 만족스러운 한 끼를 완성합니다.</p>
+          <p class="sec-note">엄선한 국내산 한돈과 깊은 참숯으로, 가족 외식부터 모임까지 만족스러운 한 끼를 완성합니다.</p>
         </div>
 
         <div class="craft-grid">
@@ -604,7 +604,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
           <div class="craft-right">
             <div>
               <div class="craft-photo-sq">
-                <img src="./img/charcoal.jpg" alt="{esc_name} 테이블 화로에 담긴 백탄 참숯" width="1200" height="1214" loading="lazy" />
+                <img src="./img/charcoal.jpg" alt="{esc_name} 테이블 화로에 담긴 참숯" width="1200" height="1214" loading="lazy" />
               </div>
               <div class="photo-cap">화력과 은은한 향이 살아있는 참숯 화로</div>
             </div>
@@ -624,8 +624,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
               </div>
               <div class="craft-point">
                 <div class="craft-num">02</div>
-                <h3>백탄 참숯의 깊은 화력</h3>
-                <p>화력이 균일하고 은은한 향이 살아있는 백탄 참숯을 사용해, 두툼한 특숙성 한돈의 겉은 바삭하고 속은 육즙이 가득하게 구워냅니다.</p>
+                <h3>참숯의 깊은 화력</h3>
+                <p>화력이 균일하고 은은한 향이 살아있는 참숯을 사용해, 두툼한 특숙성 한돈의 겉은 바삭하고 속은 육즙이 가득하게 구워냅니다.</p>
               </div>
               <div class="craft-point">
                 <div class="craft-num">03</div>
