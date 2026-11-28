@@ -20,6 +20,7 @@ from store_registry import (
 )
 from ui_styles import apply_base_theme, render_section_banner
 from homepage_utils import (
+    get_default_menu_df,
     load_homepage_menu,
     save_homepage_menu,
     render_homepage_files,
@@ -92,6 +93,19 @@ with tab_edit:
         subtitle="네이버 플레이스 최신 메뉴판에 맞춰 메뉴명·중량·가격을 수정하거나, 품절 메뉴는 [표시] 체크를 해제하세요.",
         accent="amber",
     )
+    if st.button("✨ 최신 추천 한 줄 설명 일괄 불러오기 (구글 시트 동기화)", key="hp_sync_default_desc"):
+        def_map = dict(zip(get_default_menu_df()["메뉴명"], get_default_menu_df()["설명"]))
+        updated_df = df_menu.copy()
+        for idx, r in updated_df.iterrows():
+            nm = str(r["메뉴명"]).strip()
+            if nm in def_map:
+                updated_df.at[idx, "설명"] = def_map[nm]
+            elif "특수모듬" in nm:
+                updated_df.at[idx, "설명"] = def_map.get("특수모듬세트(가브리+갈매기+늑간살)", r["설명"])
+        save_homepage_menu(store_cfg["db_id"], updated_df)
+        st.cache_data.clear()
+        st.success("구글 시트('홈페이지_메뉴')에 최신 추천 한 줄 설명이 반영되었습니다!")
+        st.rerun()
     ed_menu = st.data_editor(
         df_menu,
         use_container_width=True,
