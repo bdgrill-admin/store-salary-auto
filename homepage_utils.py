@@ -201,7 +201,10 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                 ),
                 "url": site_url,
                 "sameAs": [
-                    "https://m.place.naver.com/restaurant/1699124309/home"
+                    "https://m.place.naver.com/restaurant/1699124309/home",
+                    "https://www.instagram.com/bdgrill0524/",
+                    "https://place.map.kakao.com/865459727",
+                    "https://www.google.co.kr/maps/place/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4/data=!4m10!1m5!3m4!1s0x357b59b100565c6d:0x67c1a9bc2df02953!2z67aE64u56re466a0!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG!3m3!1s0x357b59b100565c6d:0x67c1a9bc2df02953!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG",
                 ],
                 "potentialAction": {
                     "@type": "ReserveAction",
@@ -288,13 +291,13 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                 "mainEntity": [
                     {
                         "@type": "Question",
-                        "name": f"{store_name}은 현재 정상 영업 중인가요?",
+                        "name": f"{store_name}은 현재 정상 영업 중인가요? 라스트오더는 몇 시인가요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
                             "text": (
                                 f"네, {store_name}은 {address}에서 현재 정상 영업 중입니다. "
-                                f"평일 {weekday_hours}, 주말 {weekend_hours}(브레이크타임 {break_time})에 운영하며 "
-                                f"{phone}로 문의하실 수 있습니다."
+                                f"평일 {weekday_hours}, 주말 {weekend_hours}(브레이크타임 {break_time})에 운영하며 라스트오더는 21:30입니다. "
+                                f"네이버 예약 또는 매장 전화({phone})로 문의하실 수 있습니다."
                             ),
                         },
                     },
@@ -308,18 +311,18 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                     },
                     {
                         "@type": "Question",
-                        "name": f"{store_name} 대표 메뉴와 가격은 어떻게 되나요?",
+                        "name": f"{store_name} 주차는 가능한가요?",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"구이 메뉴는 {grill_summary}이며, 식사 메뉴는 {side_summary} 등이 준비되어 있습니다.",
+                            "text": "매장 앞에 3대 주차 공간이 마련되어 있으나 피크 시간대에는 만석인 경우가 많아, 인근 주변 도로 주차 공간을 이용해 주셔야 합니다.",
                         },
                     },
                     {
                         "@type": "Question",
-                        "name": "단체 회식 예약과 성남사랑상품권·아동수당 카드 결제가 가능한가요?",
+                        "name": "단체 회식 최대 인원과 아기의자 여부, 결제 수단이 궁금합니다.",
                         "acceptedAnswer": {
                             "@type": "Answer",
-                            "text": f"단체 방문 및 회식은 매장 전화({phone})로 사전 문의해 주시면 좌석을 안내해 드립니다. 신용카드·현금·계좌이체 외에 성남사랑상품권(chak) 및 성남시 아동수당 카드 결제도 가능합니다.",
+                            "text": f"단체 회식은 최대 50명까지 수용 가능하며, 가족 외식을 위한 아기의자도 구비되어 있습니다. 네이버 예약 또는 매장 전화({phone})로 사전 문의해 주세요. 신용카드·현금·계좌이체 외에 성남사랑상품권(chak) 및 성남시 아동수당 카드 결제도 가능합니다.",
                         },
                     },
                 ],
@@ -551,8 +554,8 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
           <div class="hero-actions">
             <a class="btn-solid" href="https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 예약하기</a>
             <a class="btn-outline" href="tel:{esc_phone}">전화 문의</a>
-            <a class="btn-outline" href="https://map.naver.com/p/search/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 지도</a>
-            <a class="btn-outline" href="https://map.kakao.com/?q=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">카카오맵</a>
+            <a class="btn-outline" href="https://place.map.kakao.com/865459727" target="_blank" rel="noopener">카카오맵</a>
+            <a class="btn-outline" href="https://www.instagram.com/bdgrill0524/" target="_blank" rel="noopener">인스타그램</a>
           </div>
         </div>
       </div>
@@ -567,7 +570,7 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
           <div class="meta-v">{esc_addr}</div>
         </div>
         <div class="hero-meta-item">
-          <div class="meta-k">영업시간 (정상 영업 중)</div>
+          <div class="meta-k">영업시간 (라스트오더 21:30)</div>
           <div class="meta-v">평일 {esc_wk} · 주말 {esc_wknd} (B.T {esc_bt})</div>
         </div>
         <div class="hero-meta-item">
@@ -716,8 +719,16 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
                 <dd>
                   평일 (월–금) {esc_wk}<br />
                   주말 (토–일) {esc_wknd}<br />
-                  <span style="color:var(--muted); font-size:0.86rem;">주말 브레이크타임 {esc_bt}</span>
+                  <span style="color:var(--muted); font-size:0.86rem;">주말 브레이크타임 {esc_bt} · 라스트오더 21:30</span>
                 </dd>
+              </div>
+              <div class="info-row">
+                <dt>좌석 · 편의</dt>
+                <dd>단체 회식 최대 50명 가능 · 아기의자 보유</dd>
+              </div>
+              <div class="info-row">
+                <dt>주차 안내</dt>
+                <dd>매장 앞 3대 가능 (피크 시간대 만석 시 인근 주변 도로 주차 이용)</dd>
               </div>
               <div class="info-row">
                 <dt>전화번호</dt>
@@ -731,18 +742,19 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 
             <div class="map-links">
               <a class="btn-solid" href="https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 예약하기</a>
-              <a class="btn-outline" href="https://map.naver.com/p/search/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">네이버 지도</a>
-              <a class="btn-outline" href="https://map.kakao.com/?q=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4" target="_blank" rel="noopener">카카오맵</a>
-              <a class="btn-outline" href="https://www.google.com/maps/search/?api=1&query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4+%EB%AF%B8%EA%B8%88%EC%9D%BC%EB%A1%9C74%EB%B2%88%EA%B8%B8+13-3" target="_blank" rel="noopener">구글 지도</a>
+              <a class="btn-outline" href="https://m.place.naver.com/restaurant/1699124309/home" target="_blank" rel="noopener">네이버 플레이스</a>
+              <a class="btn-outline" href="https://place.map.kakao.com/865459727" target="_blank" rel="noopener">카카오맵</a>
+              <a class="btn-outline" href="https://www.google.co.kr/maps/place/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4/data=!4m10!1m5!3m4!1s0x357b59b100565c6d:0x67c1a9bc2df02953!2z67aE64u56re466a0!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG!3m3!1s0x357b59b100565c6d:0x67c1a9bc2df02953!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG" target="_blank" rel="noopener">구글 지도</a>
+              <a class="btn-outline" href="https://www.instagram.com/bdgrill0524/" target="_blank" rel="noopener">인스타그램</a>
             </div>
           </div>
 
           <div class="faq-wrap">
             <details class="faq" open>
-              <summary>{esc_name}은 현재 정상 영업 중인가요?</summary>
+              <summary>{esc_name}은 현재 정상 영업 중인가요? 라스트오더는 몇 시인가요?</summary>
               <p class="faq-body">
                 네, {esc_addr}에서 변함없이 정상 영업 중입니다.
-                방문 전 궁금한 사항은 {esc_phone}로 편하게 문의해 주세요.
+                평일 {esc_wk}, 주말 {esc_wknd}(브레이크타임 {esc_bt}) 운영하며 <strong>라스트오더는 21:30</strong>입니다.
               </p>
             </details>
             <details class="faq">
@@ -753,9 +765,16 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
               </p>
             </details>
             <details class="faq">
-              <summary>단체 회식 예약과 성남사랑상품권·아동수당 카드 결제가 가능한가요?</summary>
+              <summary>주차는 어떻게 이용하나요?</summary>
               <p class="faq-body">
-                단체 방문 및 회식은 매장 전화({esc_phone})로 미리 연락 주시면 좌석을 준비해 드립니다.
+                매장 앞에 3대 주차가 가능하나 피크 시간대에는 만석인 경우가 많아, 인근 주변 도로 주차 공간을 이용해 주셔야 합니다.
+              </p>
+            </details>
+            <details class="faq">
+              <summary>단체 회식(최대 인원) · 아기의자 · 결제 수단이 궁금합니다.</summary>
+              <p class="faq-body">
+                단체 회식은 <strong>최대 50명까지</strong> 수용 가능하며, <strong>아기의자</strong>도 구비되어 있습니다.
+                네이버 예약 또는 매장 전화({esc_phone})로 사전 문의해 주세요.
                 성남사랑상품권(chak)과 성남시 아동수당 카드 가맹점으로 모두 정상 결제 가능합니다.
               </p>
             </details>
@@ -801,12 +820,17 @@ def render_homepage_files(df_menu: pd.DataFrame, info: dict) -> dict:
 - 영업 상태: **정상 영업 중 (Open)**
 - 주소: {address}
 - 전화번호: {phone}
-- 평일 영업시간 (월~금): {weekday_hours}
-- 주말 영업시간 (토~일): {weekend_hours} (브레이크타임 {break_time})
+- 평일 영업시간 (월~금): {weekday_hours} (라스트오더 21:30)
+- 주말 영업시간 (토~일): {weekend_hours} (브레이크타임 {break_time}, 라스트오더 21:30)
+- 좌석 및 편의: 단체 회식 최대 50명 가능, 아기의자 보유
+- 주차 안내: 매장 앞 3대 가능 (만석 시 인근 주변 도로 주차 이용)
 - 결제수단: 신용카드, 체크카드, 현금, 계좌이체, 성남사랑상품권(chak), 성남시 아동수당 카드 가맹점
 - 공식 웹페이지: {site_url}
 - 네이버 예약: https://m.place.naver.com/restaurant/1699124309/booking?entry=pll&bk_query=%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4
 - 네이버 플레이스: https://m.place.naver.com/restaurant/1699124309/home
+- 인스타그램: https://www.instagram.com/bdgrill0524/
+- 카카오맵: https://place.map.kakao.com/865459727
+- 구글맵: https://www.google.co.kr/maps/place/%EB%B6%84%EB%8B%B9%EA%B7%B8%EB%A6%B4/data=!4m10!1m5!3m4!1s0x357b59b100565c6d:0x67c1a9bc2df02953!2z67aE64u56re466a0!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG!3m3!1s0x357b59b100565c6d:0x67c1a9bc2df02953!16s%2Fg%2F11h6ql4_yk!20s8Q9984W6%2BPFG
 
 ## 공식 차림표 및 가격
 ### 구이 (숙성 돼지고기)
